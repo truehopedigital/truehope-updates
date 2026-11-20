@@ -1,0 +1,476 @@
+/*TRUEHOPE-UPDATE {"id":"th-daily-expenses-20261120","name":"Daily Expenses + Expense Reports","version":"1.4","date":"2026-11-20","description":"Expense cards only on main dashboard (not Quality Dashboard). Expense section placed below dashboard filters, follows selected dates. Dashboard is one direct menu button that opens the full dashboard. Daily expense entry (OPD & Billing menu), voucher + day sheet print, Expense Report, Income vs Expense report, and expense cards on Dashboard and Collection reports."} */
+(function () {
+  if (window.__thExp) return;
+  window.__thExp = true;
+
+  /* ================= data (new keys only) ================= */
+  var DEF_CATS = ["Staff salary / advance", "Doctor visit / referral fee", "Electricity bill", "Rent", "Medicine purchase", "Lab / X-ray consumables",
+    "Surgical items", "Oxygen / gas", "Housekeeping & laundry", "Biomedical waste", "Repair & maintenance", "Equipment AMC", "Stationery & printing",
+    "Tea / canteen / refreshment", "Fuel / transport / ambulance", "Telephone / internet", "Government fees / licence", "Marketing", "Bank charges", "Miscellaneous"];
+  var MODES = ["Cash", "UPI", "Card", "Bank transfer", "Cheque"];
+  function X() { if (!Array.isArray(db.thExpenses)) db.thExpenses = []; return db.thExpenses; }
+  function CATS() {
+    db.settings = db.settings || {};
+    if (!Array.isArray(db.settings.thExpCats) || !db.settings.thExpCats.length) db.settings.thExpCats = DEF_CATS.slice();
+    return db.settings.thExpCats;
+  }
+  function E(s) { try { return esc(String(s == null ? "" : s)); } catch (e) { return String(s == null ? "" : s); } }
+  function iso(d) { d = d || new Date(); return d.getFullYear() + "-" + ("0" + (d.getMonth() + 1)).slice(-2) + "-" + ("0" + d.getDate()).slice(-2); }
+  function todayISO() { return iso(new Date()); }
+  function monthStart() { var d = new Date(); return iso(new Date(d.getFullYear(), d.getMonth(), 1)); }
+  function addDays(s, n) { var d = new Date(s + "T00:00:00"); d.setDate(d.getDate() + n); return iso(d); }
+  function show(s) { if (!s) return ""; var p = s.split("-"); return p.length === 3 ? p[2] + "-" + p[1] + "-" + p[0] : s; }
+  function money(n) { n = Math.round((+n || 0) * 100) / 100; return "₹ " + n.toLocaleString("en-IN", { minimumFractionDigits: n % 1 ? 2 : 0, maximumFractionDigits: 2 }); }
+  function user() { try { return (window.curUser && (curUser.name || curUser.u)) || (document.querySelector("header") && (document.querySelector("header").innerText.match(/(\w+)\s*•\s*\w+/) || [])[1]) || ""; } catch (e) { return ""; } }
+  function between(list, a, b) { return list.filter(function (x) { return x.date >= a && x.date <= b && !x.deleted; }); }
+  function sum(list) { return list.reduce(function (t, x) { return t + (+x.amount || 0); }, 0); }
+  function words(n) {
+    n = Math.floor(+n || 0);
+    if (!n) return "Zero";
+    var a = ["", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten", "Eleven", "Twelve", "Thirteen", "Fourteen", "Fifteen", "Sixteen", "Seventeen", "Eighteen", "Nineteen"];
+    var b = ["", "", "Twenty", "Thirty", "Forty", "Fifty", "Sixty", "Seventy", "Eighty", "Ninety"];
+    function two(x) { return x < 20 ? a[x] : b[Math.floor(x / 10)] + (x % 10 ? " " + a[x % 10] : ""); }
+    function three(x) { return (x >= 100 ? a[Math.floor(x / 100)] + " Hundred" + (x % 100 ? " " : "") : "") + (x % 100 ? two(x % 100) : ""); }
+    var out = [], cr = Math.floor(n / 1e7); n %= 1e7;
+    var lk = Math.floor(n / 1e5); n %= 1e5;
+    var th = Math.floor(n / 1000); n %= 1000;
+    if (cr) out.push(two(cr) + " Crore");
+    if (lk) out.push(two(lk) + " Lakh");
+    if (th) out.push(two(th) + " Thousand");
+    if (n) out.push(three(n));
+    return out.join(" ");
+  }
+
+  /* ================= income (from existing records, best effort) ================= */
+  function normDate(v) {
+    if (!v) return "";
+    var s = String(v);
+    var m = s.match(/^(\d{4})-(\d{2})-(\d{2})/); if (m) return m[1] + "-" + m[2] + "-" + m[3];
+    m = s.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})/); if (m) return m[3] + "-" + ("0" + m[2]).slice(-2) + "-" + ("0" + m[1]).slice(-2);
+    var d = new Date(s); return isNaN(d) ? "" : iso(d);
+  }
+  function num(o, keys) { for (var i = 0; i < keys.length; i++) { var v = o[keys[i]]; if (v !== undefined && v !== null && v !== "" && !isNaN(+v)) return +v; } return 0; }
+  function income(a, b) {
+    var r = { opd: 0, bills: 0, ipd: 0 };
+    (Array.isArray(db.visits) ? db.visits : []).forEach(function (v) {
+      var d = normDate(v.date || v.visitDate || v.dt || v.created);
+      if (d >= a && d <= b && !v.cancelled && !v.deleted) r.opd += num(v, ["paid", "fee", "amount", "opdFee", "charges", "total"]);
+    });
+    (Array.isArray(db.bills) ? db.bills : []).forEach(function (x) {
+      var d = normDate(x.date || x.billDate || x.dt || x.created);
+      if (d >= a && d <= b && !x.cancelled && !x.deleted) r.bills += num(x, ["paid", "received", "net", "total", "amount"]);
+    });
+    (Array.isArray(db.admissions) ? db.admissions : []).forEach(function (A) {
+      ["receipts", "payments", "advances", "rcpts", "ipdReceipts"].forEach(function (k) {
+        if (!Array.isArray(A[k])) return;
+        A[k].forEach(function (p) {
+          var d = normDate(p.date || p.dt || p.on);
+          if (d >= a && d <= b && !p.cancelled) r.ipd += num(p, ["amount", "amt", "paid", "value"]);
+        });
+      });
+    });
+    r.total = r.opd + r.bills + r.ipd;
+    return r;
+  }
+
+  /* ================= style ================= */
+  TH.css([
+    ".thx-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin:8px 0 12px}",
+    ".thx-kpi{border-radius:12px;padding:12px 14px;color:#fff;box-shadow:0 4px 12px rgba(0,0,0,.12)}",
+    ".thx-kpi small{display:block;font-size:12px;opacity:.9}.thx-kpi b{display:block;font-size:22px;margin-top:2px}",
+    ".thx-red{background:linear-gradient(135deg,#b91c1c,#ef4444)}.thx-or{background:linear-gradient(135deg,#b45309,#f59e0b)}",
+    ".thx-gr{background:linear-gradient(135deg,#15803d,#22c55e)}.thx-bl{background:linear-gradient(135deg,#0b2545,#1d4f91)}",
+    ".thx-form{display:grid;grid-template-columns:repeat(4,1fr);gap:8px 12px}",
+    ".thx-form label{display:block;font-size:12px;color:#475569}",
+    ".thx-form input,.thx-form select{width:100%;box-sizing:border-box}",
+    ".thx-form .w2{grid-column:span 2}",
+    ".thx-t td,.thx-t th{font-size:13px}.thx-t td.r,.thx-t th.r{text-align:right}",
+    ".thx-bar{display:flex;align-items:flex-end;gap:6px;height:120px;padding:6px 4px 0;border-bottom:1px solid #cbd5e1}",
+    ".thx-bar div{flex:1;background:linear-gradient(180deg,#ef4444,#b91c1c);border-radius:5px 5px 0 0;position:relative;min-height:2px}",
+    ".thx-bar div span{position:absolute;top:-16px;left:50%;transform:translateX(-50%);font-size:10px;color:#334155;white-space:nowrap}",
+    ".thx-lbl{display:flex;gap:6px;font-size:10px;color:#64748b;padding:3px 4px}.thx-lbl div{flex:1;text-align:center}",
+    ".thx-inj{margin:12px 0}",
+    ".thx-sec{background:#fff;border:1px solid #e2e8f0;border-radius:14px;padding:12px 14px;box-shadow:0 2px 8px rgba(15,23,42,.06);color:#1e293b}",
+    ".thx-sh{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:2px}",
+    ".thx-sh b{font-size:16px;color:#0b2545}.thx-sh span{flex:1;font-size:12px;color:#64748b}",
+    ".thx-chart{border-top:1px solid #eef2f7;padding-top:8px}.thx-ct{font-size:12px;font-weight:600;color:#475569;margin-bottom:16px}",
+    ".thx-print{font-family:'Segoe UI',Arial,sans-serif;font-size:12px;color:#111}",
+    ".thx-print h2{text-align:center;margin:6px 0 10px;font-size:16px;text-transform:uppercase;letter-spacing:.5px;border-top:2px solid #0b2545;border-bottom:2px solid #0b2545;padding:4px 0}",
+    ".thx-print table{width:100%;border-collapse:collapse;margin:6px 0}.thx-print td,.thx-print th{border:1px solid #666;padding:4px 6px;text-align:left}",
+    ".thx-print th{background:#eef2f7}.thx-print .r{text-align:right}.thx-print .sg{display:flex;justify-content:space-between;margin-top:46px}",
+    ".thx-print .sg div{border-top:1px solid #333;width:30%;text-align:center;padding-top:3px}"
+  ].join(""));
+
+  /* ================= state ================= */
+  var ST = window.__thXS = window.__thXS || { date: todayISO(), edit: null, from: monthStart(), to: todayISO(), cat: "", mode: "", ifrom: monthStart(), ito: todayISO() };
+  function refresh(p) { try { go(p || "thExpenses"); } catch (e) {} }
+  function opts(list, sel, blank) { return (blank ? '<option value="">' + blank + "</option>" : "") + list.map(function (c) { return '<option' + (c === sel ? " selected" : "") + ">" + E(c) + "</option>"; }).join(""); }
+
+  /* ================= 1. DAILY EXPENSES screen ================= */
+  TH.addMenuItem("opd", "thExpenses", "Daily Expenses");
+  TH.addMenuItem("bill", "thExpenses", "Daily Expenses");
+  TH.page("thExpenses", function () {
+    var day = between(X(), ST.date, ST.date), e = ST.edit || { date: ST.date, mode: "Cash" };
+    var byMode = {};
+    day.forEach(function (x) { byMode[x.mode] = (byMode[x.mode] || 0) + (+x.amount || 0); });
+    var month = sum(between(X(), ST.date.slice(0, 8) + "01", ST.date.slice(0, 8) + "31"));
+    var inc = income(ST.date, ST.date), totDay = sum(day);
+    var h = "<h2>💸 Daily Expenses</h2>" +
+      '<div class="thx-kpis"><div class="thx-kpi thx-red"><small>Expenses on ' + show(ST.date) + "</small><b>" + money(totDay) + "</b></div>" +
+      '<div class="thx-kpi thx-or"><small>Cash expenses (day)</small><b>' + money(byMode.Cash || 0) + "</b></div>" +
+      '<div class="thx-kpi thx-bl"><small>This month expenses</small><b>' + money(month) + "</b></div>" +
+      '<div class="thx-kpi thx-gr"><small>Collection − Expense (day)*</small><b>' + money(inc.total - totDay) + "</b></div></div>" +
+      '<div class="card"><h3 style="margin-top:0">' + (e.id ? "Edit expense" : "Add expense") + '</h3><div class="thx-form">' +
+      '<div><label>Date</label><input type="date" id="thx_date" value="' + E(e.date) + '"></div>' +
+      '<div class="w2"><label>Category</label><select id="thx_cat">' + opts(CATS(), e.cat, "— select category —") + "</select></div>" +
+      '<div><label>Amount (₹)</label><input type="number" min="0" step="0.01" id="thx_amt" value="' + E(e.amount || "") + '" placeholder="0"></div>' +
+      '<div class="w2"><label>Description / details</label><input id="thx_desc" value="' + E(e.desc || "") + '" placeholder="e.g. Electricity bill Nov-2026"></div>' +
+      '<div><label>Paid to</label><input id="thx_to" value="' + E(e.paidTo || "") + '" placeholder="Name / shop / vendor"></div>' +
+      '<div><label>Payment mode</label><select id="thx_mode">' + opts(MODES, e.mode || "Cash") + "</select></div>" +
+      '<div><label>Bill / voucher no.</label><input id="thx_bill" value="' + E(e.billNo || "") + '"></div>' +
+      '<div><label>Reference (UPI / cheque no.)</label><input id="thx_ref" value="' + E(e.ref || "") + '"></div>' +
+      '<div><label>Approved by</label><input id="thx_appr" value="' + E(e.approvedBy || "") + '"></div>' +
+      '<div><label>Remarks</label><input id="thx_rem" value="' + E(e.remarks || "") + '"></div></div>' +
+      '<div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap"><button class="btn" type="button" onclick="thX.save(false)">' + (e.id ? "Update" : "Save expense") + "</button>" +
+      '<button class="btn sec" type="button" onclick="thX.save(true)">Save &amp; print voucher</button>' +
+      (e.id ? '<button class="btn sec" type="button" onclick="thX.cancel()">Cancel edit</button>' : "") +
+      '<button class="btn sec" type="button" onclick="thX.cats()">Manage categories</button></div></div>';
+
+    h += '<div class="card"><div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><h3 style="margin:0;flex:1">Expenses of ' + show(ST.date) + "</h3>" +
+      '<button class="btn sm sec" type="button" onclick="thX.day(-1)">◀ Prev day</button><input type="date" value="' + ST.date + '" onchange="thX.setDay(this.value)">' +
+      '<button class="btn sm sec" type="button" onclick="thX.day(1)">Next day ▶</button><button class="btn sm" type="button" onclick="thX.printDay()">🖨 Print day sheet</button></div>';
+    if (!day.length) h += '<p style="color:#64748b">No expense entered for this date.</p>';
+    else h += '<table class="table thx-t" style="margin-top:8px"><tr><th>#</th><th>Category</th><th>Description</th><th>Paid to</th><th>Mode</th><th>Bill no.</th><th class="r">Amount</th><th></th></tr>' +
+      day.map(function (x, i) {
+        return "<tr><td>" + (i + 1) + "</td><td>" + E(x.cat) + "</td><td>" + E(x.desc) + "</td><td>" + E(x.paidTo) + "</td><td>" + E(x.mode) + "</td><td>" + E(x.billNo) +
+          '</td><td class="r"><b>' + money(x.amount) + '</b></td><td style="white-space:nowrap"><button class="btn sm sec" type="button" onclick="thX.edit(\'' + x.id + "')\">Edit</button> " +
+          '<button class="btn sm sec" type="button" onclick="thX.voucher(\'' + x.id + "')\">Voucher</button> " +
+          '<button class="btn sm sec" type="button" onclick="thX.del(\'' + x.id + "')\">Delete</button></td></tr>";
+      }).join("") +
+      '<tr><td colspan="6" class="r"><b>Total</b></td><td class="r"><b>' + money(totDay) + "</b></td><td></td></tr></table>" +
+      '<div style="font-size:12px;color:#475569">' + Object.keys(byMode).map(function (m) { return m + ": <b>" + money(byMode[m]) + "</b>"; }).join(" &nbsp;|&nbsp; ") + "</div>";
+    h += '<p style="font-size:11px;color:#94a3b8;margin-bottom:0">* Collection is read from OPD visits, bills and IPD receipts saved in the software (' + money(inc.total) + " on this day). Tally once with your Collection Report.</p></div>";
+    return h;
+  });
+
+  function read() {
+    var g = function (id) { var el = document.getElementById(id); return el ? el.value.trim() : ""; };
+    return { date: g("thx_date"), cat: g("thx_cat"), amount: +g("thx_amt"), desc: g("thx_desc"), paidTo: g("thx_to"), mode: g("thx_mode"), billNo: g("thx_bill"), ref: g("thx_ref"), approvedBy: g("thx_appr"), remarks: g("thx_rem") };
+  }
+
+  window.thX = {
+    save: function (andPrint) {
+      var f = read();
+      if (!f.date) return toast("Select date");
+      if (!f.cat) return toast("Select category");
+      if (!(f.amount > 0)) return toast("Enter amount");
+      var list = X(), id;
+      if (ST.edit && ST.edit.id) {
+        id = ST.edit.id;
+        list.forEach(function (x) { if (x.id === id) { Object.assign(x, f); x.editedBy = user(); x.editedAt = new Date().toISOString(); } });
+        try { audit("Expense edited", f.cat + " " + money(f.amount) + " on " + show(f.date)); } catch (e) {}
+      } else {
+        id = "EXP" + Date.now();
+        var n = list.filter(function (x) { return x.date === f.date; }).length + 1;
+        list.push(Object.assign({ id: id, vno: "EXP/" + f.date.replace(/-/g, "") + "/" + n, by: user(), at: new Date().toISOString() }, f));
+        try { audit("Expense added", f.cat + " " + money(f.amount) + " on " + show(f.date)); } catch (e) {}
+      }
+      save();
+      toast("Expense saved");
+      ST.edit = null; ST.date = f.date;
+      refresh();
+      if (andPrint) thX.voucher(id);
+    },
+    edit: function (id) { var x = X().filter(function (y) { return y.id === id; })[0]; if (x) { ST.edit = Object.assign({}, x); refresh(); } },
+    cancel: function () { ST.edit = null; refresh(); },
+    del: function (id) {
+      var x = X().filter(function (y) { return y.id === id; })[0];
+      if (!x || !confirm("Delete this expense of " + money(x.amount) + "?")) return;
+      x.deleted = true; x.deletedBy = user(); x.deletedAt = new Date().toISOString();   // kept for audit, hidden from totals
+      save();
+      try { audit("Expense deleted", x.cat + " " + money(x.amount) + " on " + show(x.date)); } catch (e) {}
+      refresh();
+    },
+    day: function (n) { ST.date = addDays(ST.date, n); ST.edit = null; refresh(); },
+    setDay: function (v) { if (v) { ST.date = v; ST.edit = null; refresh(); } },
+    cats: function () {
+      var cur = CATS().join("\n");
+      var v = prompt("Expense categories — one per line.\nAdd new lines to add categories. (Existing entries are not changed.)", cur);
+      if (v == null) return;
+      var list = v.split(/\n|,/).map(function (s) { return s.trim(); }).filter(Boolean);
+      if (!list.length) return;
+      db.settings.thExpCats = list;
+      save();
+      toast("Categories saved");
+      refresh();
+    },
+    voucher: function (id) {
+      var x = X().filter(function (y) { return y.id === id; })[0];
+      if (!x) return;
+      printHTML('<div class="thx-print"><h2>Expense / Payment Voucher</h2>' +
+        "<table><tr><th>Voucher no.</th><td>" + E(x.vno || x.id) + "</td><th>Date</th><td>" + show(x.date) + "</td></tr>" +
+        "<tr><th>Paid to</th><td colspan=3>" + E(x.paidTo) + "</td></tr>" +
+        "<tr><th>Category</th><td colspan=3>" + E(x.cat) + "</td></tr>" +
+        "<tr><th>Details</th><td colspan=3>" + E(x.desc) + "</td></tr>" +
+        "<tr><th>Payment mode</th><td>" + E(x.mode) + "</td><th>Bill / Ref no.</th><td>" + E([x.billNo, x.ref].filter(Boolean).join(" / ")) + "</td></tr>" +
+        '<tr><th>Amount</th><td colspan=3><b style="font-size:15px">' + money(x.amount) + "</b> &nbsp; (Rupees " + words(x.amount) + " only)</td></tr>" +
+        (x.remarks ? "<tr><th>Remarks</th><td colspan=3>" + E(x.remarks) + "</td></tr>" : "") + "</table>" +
+        '<div class="sg"><div>Prepared by<br>' + E(x.by || "") + "</div><div>Approved by<br>" + E(x.approvedBy || "") + "</div><div>Receiver's signature</div></div></div>");
+    },
+    printDay: function () {
+      var day = between(X(), ST.date, ST.date), inc = income(ST.date, ST.date);
+      printHTML('<div class="thx-print"><h2>Daily Expense Sheet — ' + show(ST.date) + "</h2>" + table(day) +
+        "<table><tr><th>Collection (as per software)</th><td class=r>" + money(inc.total) + "</td></tr><tr><th>Total expenses</th><td class=r>" + money(sum(day)) +
+        "</td></tr><tr><th>Net (collection − expenses)</th><td class=r><b>" + money(inc.total - sum(day)) + "</b></td></tr></table>" +
+        '<div class="sg"><div>Prepared by</div><div>Checked by (Accounts)</div><div>Approved by (Director)</div></div></div>');
+    }
+  };
+
+  function table(list) {
+    if (!list.length) return "<p>No expenses.</p>";
+    var byMode = {};
+    list.forEach(function (x) { byMode[x.mode] = (byMode[x.mode] || 0) + (+x.amount || 0); });
+    return "<table><tr><th>#</th><th>Date</th><th>Voucher</th><th>Category</th><th>Details</th><th>Paid to</th><th>Mode</th><th class=r>Amount</th></tr>" +
+      list.map(function (x, i) { return "<tr><td>" + (i + 1) + "</td><td>" + show(x.date) + "</td><td>" + E(x.vno || "") + "</td><td>" + E(x.cat) + "</td><td>" + E(x.desc) + "</td><td>" + E(x.paidTo) + "</td><td>" + E(x.mode) + "</td><td class=r>" + money(x.amount) + "</td></tr>"; }).join("") +
+      "<tr><th colspan=7 class=r>Total</th><th class=r>" + money(sum(list)) + "</th></tr></table>" +
+      "<p>" + Object.keys(byMode).map(function (m) { return m + ": <b>" + money(byMode[m]) + "</b>"; }).join(" &nbsp;|&nbsp; ") + "</p>";
+  }
+  function printHTML(body) {
+    var head = "";
+    try { head = printHead() || ""; } catch (e) {}
+    var pa = document.getElementById("printArea");
+    if (!pa) { pa = document.createElement("div"); pa.id = "printArea"; document.body.appendChild(pa); }
+    pa.innerHTML = head + body;
+    window.print();
+  }
+
+  /* ================= 2. EXPENSE REPORT ================= */
+  function groupBy(list, key) { var o = {}; list.forEach(function (x) { var k = x[key] || "—"; o[k] = (o[k] || 0) + (+x.amount || 0); }); return o; }
+  function bars(list, a, b) {
+    var days = [], d = a, n = 0;
+    while (d <= b && n < 62) { days.push(d); d = addDays(d, 1); n++; }
+    var by = groupBy(list, "date"), max = Math.max.apply(null, days.map(function (x) { return by[x] || 0; }).concat([1]));
+    return '<div class="thx-bar">' + days.map(function (x) { var v = by[x] || 0; return '<div title="' + show(x) + ": " + money(v) + '" style="height:' + Math.max(2, v / max * 100) + '%">' + (v && days.length <= 15 ? "<span>" + Math.round(v) + "</span>" : "") + "</div>"; }).join("") + "</div>" +
+      '<div class="thx-lbl">' + days.map(function (x, i) { return "<div>" + (days.length <= 15 || i % 5 === 0 ? x.slice(8) : "") + "</div>"; }).join("") + "</div>";
+  }
+  TH.addMenuItem("rep", "thExpReport", "Expense Report");
+  TH.page("thExpReport", function () {
+    var list = between(X(), ST.from, ST.to).filter(function (x) { return (!ST.cat || x.cat === ST.cat) && (!ST.mode || x.mode === ST.mode); });
+    var bc = groupBy(list, "cat"), tot = sum(list);
+    var h = "<h2>📊 Expense Report</h2>" +
+      '<div class="card"><div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">' +
+      '<div><label style="font-size:12px">From</label><br><input type="date" id="thxr_f" value="' + ST.from + '"></div>' +
+      '<div><label style="font-size:12px">To</label><br><input type="date" id="thxr_t" value="' + ST.to + '"></div>' +
+      '<div><label style="font-size:12px">Category</label><br><select id="thxr_c">' + opts(CATS(), ST.cat, "All categories") + "</select></div>" +
+      '<div><label style="font-size:12px">Mode</label><br><select id="thxr_m">' + opts(MODES, ST.mode, "All modes") + "</select></div>" +
+      '<button class="btn" type="button" onclick="thXR.run()">Show</button>' +
+      '<button class="btn sec" type="button" onclick="thXR.quick(0)">Today</button><button class="btn sec" type="button" onclick="thXR.quick(1)">This month</button><button class="btn sec" type="button" onclick="thXR.quick(2)">Last month</button>' +
+      '<button class="btn sec" type="button" onclick="thXR.print()">🖨 Print</button><button class="btn sec" type="button" onclick="thXR.csv()">⬇ Excel (CSV)</button></div></div>' +
+      '<div class="thx-kpis"><div class="thx-kpi thx-red"><small>Total expenses</small><b>' + money(tot) + '</b></div><div class="thx-kpi thx-bl"><small>Entries</small><b>' + list.length +
+      '</b></div><div class="thx-kpi thx-or"><small>Biggest category</small><b style="font-size:15px">' + E(Object.keys(bc).sort(function (a, b) { return bc[b] - bc[a]; })[0] || "—") + "</b></div></div>" +
+      '<div class="card"><h3 style="margin-top:0">Day-wise</h3>' + bars(list, ST.from, ST.to) + "</div>" +
+      '<div class="card"><h3 style="margin-top:0">Category-wise</h3><table class="table thx-t"><tr><th>Category</th><th class="r">Amount</th><th class="r">%</th></tr>' +
+      Object.keys(bc).sort(function (a, b) { return bc[b] - bc[a]; }).map(function (k) { return "<tr><td>" + E(k) + '</td><td class="r">' + money(bc[k]) + '</td><td class="r">' + (tot ? (bc[k] * 100 / tot).toFixed(1) : 0) + "%</td></tr>"; }).join("") +
+      '<tr><th>Total</th><th class="r">' + money(tot) + "</th><th></th></tr></table></div>" +
+      '<div class="card"><h3 style="margin-top:0">All entries</h3>' + table(list) + "</div>";
+    return h;
+  });
+  window.thXR = {
+    run: function () { ST.from = document.getElementById("thxr_f").value || ST.from; ST.to = document.getElementById("thxr_t").value || ST.to; ST.cat = document.getElementById("thxr_c").value; ST.mode = document.getElementById("thxr_m").value; refresh("thExpReport"); },
+    quick: function (k) {
+      var d = new Date();
+      if (k === 0) { ST.from = ST.to = todayISO(); }
+      if (k === 1) { ST.from = monthStart(); ST.to = todayISO(); }
+      if (k === 2) { ST.from = iso(new Date(d.getFullYear(), d.getMonth() - 1, 1)); ST.to = iso(new Date(d.getFullYear(), d.getMonth(), 0)); }
+      refresh("thExpReport");
+    },
+    print: function () {
+      var list = between(X(), ST.from, ST.to).filter(function (x) { return (!ST.cat || x.cat === ST.cat) && (!ST.mode || x.mode === ST.mode); });
+      var bc = groupBy(list, "cat");
+      printHTML('<div class="thx-print"><h2>Expense Report — ' + show(ST.from) + " to " + show(ST.to) + "</h2>" +
+        "<table><tr><th>Category</th><th class=r>Amount</th></tr>" + Object.keys(bc).map(function (k) { return "<tr><td>" + E(k) + "</td><td class=r>" + money(bc[k]) + "</td></tr>"; }).join("") +
+        "<tr><th>Total</th><th class=r>" + money(sum(list)) + "</th></tr></table>" + table(list) +
+        '<div class="sg"><div>Prepared by</div><div>Checked by</div><div>Approved by</div></div></div>');
+    },
+    csv: function () {
+      var list = between(X(), ST.from, ST.to);
+      var rows = [["Date", "Voucher", "Category", "Description", "Paid to", "Mode", "Bill no", "Reference", "Amount", "Entered by"]].concat(
+        list.map(function (x) { return [show(x.date), x.vno || "", x.cat, x.desc, x.paidTo, x.mode, x.billNo, x.ref, x.amount, x.by || ""]; }));
+      var csv = rows.map(function (r) { return r.map(function (c) { c = String(c == null ? "" : c); return /[",\n]/.test(c) ? '"' + c.replace(/"/g, '""') + '"' : c; }).join(","); }).join("\r\n");
+      var a = document.createElement("a");
+      a.href = URL.createObjectURL(new Blob(["﻿" + csv], { type: "text/csv" }));
+      a.download = "Expenses_" + ST.from + "_to_" + ST.to + ".csv";
+      document.body.appendChild(a); a.click(); a.remove();
+    }
+  };
+
+  /* ================= 3. INCOME vs EXPENSE ================= */
+  TH.addMenuItem("rep", "thProfit", "Income vs Expense");
+  TH.page("thProfit", function () {
+    var a = ST.ifrom, b = ST.ito, inc = income(a, b), ex = between(X(), a, b), tx = sum(ex), net = inc.total - tx;
+    var days = [], d = a, n = 0;
+    while (d <= b && n < 62) { days.push(d); d = addDays(d, 1); n++; }
+    return "<h2>⚖ Income vs Expense</h2>" +
+      '<div class="card"><div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">' +
+      '<div><label style="font-size:12px">From</label><br><input type="date" id="thxp_f" value="' + a + '"></div><div><label style="font-size:12px">To</label><br><input type="date" id="thxp_t" value="' + b + '"></div>' +
+      '<button class="btn" type="button" onclick="thXP.run()">Show</button><button class="btn sec" type="button" onclick="thXP.print()">🖨 Print</button></div></div>' +
+      '<div class="thx-kpis"><div class="thx-kpi thx-gr"><small>Collection</small><b>' + money(inc.total) + '</b></div><div class="thx-kpi thx-red"><small>Expenses</small><b>' + money(tx) +
+      '</b></div><div class="thx-kpi ' + (net >= 0 ? "thx-bl" : "thx-or") + '"><small>Net (Collection − Expenses)</small><b>' + money(net) + "</b></div></div>" +
+      '<div class="card"><table class="table thx-t"><tr><th>Head</th><th class="r">Amount</th></tr>' +
+      '<tr><td>OPD collection</td><td class="r">' + money(inc.opd) + '</td></tr><tr><td>Bills (OPD / other)</td><td class="r">' + money(inc.bills) + '</td></tr><tr><td>IPD receipts / advances</td><td class="r">' + money(inc.ipd) +
+      '</td></tr><tr><th>Total collection</th><th class="r">' + money(inc.total) + '</th></tr><tr><td>Less: expenses</td><td class="r">− ' + money(tx) + '</td></tr><tr><th>Net</th><th class="r">' + money(net) + "</th></tr></table>" +
+      '<p style="font-size:11px;color:#94a3b8">Collection is read from records saved in the software. If a figure looks different from your Collection Report, send a screenshot so the reading can be matched exactly.</p></div>' +
+      '<div class="card"><h3 style="margin-top:0">Day-wise</h3><table class="table thx-t"><tr><th>Date</th><th class="r">Collection</th><th class="r">Expenses</th><th class="r">Net</th></tr>' +
+      days.map(function (x) { var i = income(x, x).total, e = sum(between(X(), x, x)); return (i || e) ? "<tr><td>" + show(x) + '</td><td class="r">' + money(i) + '</td><td class="r">' + money(e) + '</td><td class="r">' + money(i - e) + "</td></tr>" : ""; }).join("") + "</table></div>";
+  });
+  window.thXP = {
+    run: function () { ST.ifrom = document.getElementById("thxp_f").value || ST.ifrom; ST.ito = document.getElementById("thxp_t").value || ST.ito; refresh("thProfit"); },
+    print: function () {
+      var inc = income(ST.ifrom, ST.ito), tx = sum(between(X(), ST.ifrom, ST.ito));
+      printHTML('<div class="thx-print"><h2>Income vs Expense — ' + show(ST.ifrom) + " to " + show(ST.ito) + "</h2><table>" +
+        "<tr><td>OPD collection</td><td class=r>" + money(inc.opd) + "</td></tr><tr><td>Bills</td><td class=r>" + money(inc.bills) + "</td></tr><tr><td>IPD receipts</td><td class=r>" + money(inc.ipd) +
+        "</td></tr><tr><th>Total collection</th><th class=r>" + money(inc.total) + "</th></tr><tr><td>Less: expenses</td><td class=r>" + money(tx) + "</td></tr><tr><th>Net</th><th class=r>" + money(inc.total - tx) + "</th></tr></table>" +
+        '<div class="sg"><div>Prepared by</div><div>Checked by</div><div>Director</div></div></div>');
+    }
+  };
+
+  /* ================= 4. show expenses on Dashboard & Collection reports ================= */
+  function cardHTML(compact, from, to) {
+    var t = todayISO(), td = sum(between(X(), t, t));
+    var a = from || monthStart(), b = to || t;
+    if (a > b) { var z = a; a = b; b = z; }
+    var pe = sum(between(X(), a, b)), pi = income(a, b).total;
+    var lbl = from ? show(a) + " – " + show(b) : "This month";
+    var span = Math.round((new Date(b) - new Date(a)) / 864e5) + 1, ca = span > 31 ? addDays(b, -30) : a;
+    var k = '<div class="thx-kpis">' +
+      '<div class="thx-kpi thx-red"><small>Today’s expenses</small><b>' + money(td) + "</b></div>" +
+      '<div class="thx-kpi thx-or"><small>Expenses · ' + lbl + "</small><b>" + money(pe) + "</b></div>" +
+      '<div class="thx-kpi thx-bl"><small>Collection · ' + lbl + "</small><b>" + money(pi) + "</b></div>" +
+      '<div class="thx-kpi ' + (pi - pe >= 0 ? "thx-gr" : "thx-red") + '"><small>Net (collection − expenses)</small><b>' + money(pi - pe) + "</b></div></div>";
+    if (compact) return '<div class="thx-inj" data-thx="1">' + k + "</div>";
+    return '<div class="thx-inj thx-sec" data-thx="1"><div class="thx-sh"><b>💸 Expenses &amp; Net</b><span>' + lbl + "</span>" +
+      '<button class="btn sm" type="button" onclick="go(\'thExpenses\')">+ Add expense</button>' +
+      '<button class="btn sm sec" type="button" onclick="go(\'thExpReport\')">Expense report</button>' +
+      '<button class="btn sm sec" type="button" onclick="go(\'thProfit\')">Income vs Expense</button></div>' + k +
+      '<div class="thx-chart"><div class="thx-ct">Day-wise expenses' + (ca !== a ? " (last 31 days)" : "") + "</div>" + bars(between(X(), ca, b), ca, b) + "</div></div>";
+  }
+  var busy = false, tm = null;
+
+  /* Dashboard menu -> open the full Statistics Dashboard directly (no extra tap) */
+  function statLink() {
+    var els = document.querySelectorAll("[onclick]");
+    for (var i = 0; i < els.length; i++) {
+      var el = els[i];
+      if (el.closest("#printArea")) continue;
+      if (/statistics\s*dashboard/i.test(el.textContent || "")) {
+        var m = (el.getAttribute("onclick") || "").match(/go\(\s*['"]([\w\-]+)['"]/);
+        if (m) return { key: m[1], el: el };
+      }
+    }
+    return null;
+  }
+  function autoOpenStats(h) {
+    var t = (h.textContent || "").replace(/[^A-Za-z ]/g, "").trim();
+    if (!/^dashboard$/i.test(t) || h.getAttribute("data-thx-go")) return false;
+    var box = h.parentElement || document.body;
+    var tiles = Array.prototype.filter.call(box.querySelectorAll("[onclick]"), function (e) { return !e.closest(".thx-inj") && (e.textContent || "").trim(); });
+    var st = tiles.filter(function (e) { return /statistics\s*dashboard/i.test(e.textContent); })[0];
+    if (!st || tiles.length > 3) return false;
+    h.setAttribute("data-thx-go", "1");
+    var l = statLink();
+    setTimeout(function () { try { if (l && l.key) go(l.key); else st.click(); } catch (e) { try { st.click(); } catch (x) {} } }, 0);
+    return true;
+  }
+
+  /* Sidebar: "Dashboard" becomes one direct button (no sub-folder) */
+  var DASH_KEY = "";
+  function inSidebar(el) {
+    var a = el.parentElement;
+    while (a && a !== document.body) {
+      var t = a.textContent || "";
+      if (/SETTING MENU/i.test(t) && /HOME/.test(t)) return a.getBoundingClientRect().width < 420 ? a : null;
+      a = a.parentElement;
+    }
+    return null;
+  }
+  function fixMenu() {
+    var links = Array.prototype.filter.call(document.querySelectorAll("[onclick]"), function (e) { return /statistics\s*dashboard/i.test(e.textContent || "") && /go\(/.test(e.getAttribute("onclick") || ""); });
+    var sideLink = links.filter(function (e) { return inSidebar(e); })[0] || null;
+    var any = sideLink || links[0];
+    if (any) { var m = any.getAttribute("onclick").match(/go\(\s*['"]([\w\-]+)['"]/); if (m) DASH_KEY = m[1]; }
+    if (!DASH_KEY) return;
+    var root = sideLink ? inSidebar(sideLink) : null;
+    if (!root) { var h0 = Array.prototype.filter.call(document.querySelectorAll("[onclick],div,a,li"), function (e) { return /^dashboard$/i.test((e.textContent || "").replace(/[^A-Za-z ]/g, "").trim()); }).filter(inSidebar)[0]; root = h0 ? inSidebar(h0) : null; }
+    if (!root) return;
+    busy = true;
+    try {
+      Array.prototype.forEach.call(root.querySelectorAll("*"), function (e) {
+        if (e.getAttribute("data-thx-dash")) return;
+        var txt = (e.textContent || "").replace(/[^A-Za-z ]/g, "").trim();
+        if (!/^dashboard$/i.test(txt)) return;
+        if (e.querySelector && Array.prototype.some.call(e.children, function (c) { return /^dashboard$/i.test((c.textContent || "").replace(/[^A-Za-z ]/g, "").trim()); })) return; // use the innermost row only once
+        var row = e;
+        while (row.parentElement && row.parentElement !== root && /^dashboard$/i.test((row.parentElement.textContent || "").replace(/[^A-Za-z ]/g, "").trim())) row = row.parentElement;
+        if (row.getAttribute("data-thx-dash")) return;
+        row.setAttribute("data-thx-dash", "1");
+        var w = document.createTreeWalker(row, NodeFilter.SHOW_TEXT, null), n;
+        while ((n = w.nextNode())) if (/[▸▾►▼▶›]/.test(n.nodeValue)) n.nodeValue = n.nodeValue.replace(/[▸▾►▼▶›]/g, "");
+      });
+      if (sideLink && sideLink.style.display !== "none") {
+        sideLink.style.display = "none";
+        var box = sideLink.parentElement;
+        if (box && box !== root && Array.prototype.every.call(box.children, function (c) { return c === sideLink || c.style.display === "none"; })) box.style.display = "none";
+      }
+    } finally { setTimeout(function () { busy = false; }, 0); }
+  }
+  document.addEventListener("click", function (e) {
+    var d = e.target && e.target.closest ? e.target.closest("[data-thx-dash]") : null;
+    if (!d || !DASH_KEY) return;
+    e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
+    try { go(DASH_KEY); } catch (x) {}
+  }, true);
+
+  function heroOf(h) {
+    var btns = Array.prototype.filter.call(document.querySelectorAll("button"), function (x) {
+      return /^apply$/i.test((x.textContent || "").trim()) && (h.compareDocumentPosition(x) & 4);
+    });
+    if (!btns.length) return null;
+    var a = h.parentElement;
+    while (a && a !== document.body && !a.contains(btns[0])) a = a.parentElement;
+    return a && a !== document.body && a.offsetHeight < 900 ? a : null;
+  }
+  function inject() {
+    if (busy) return;
+    try { fixMenu(); } catch (e) {}
+    var heads = document.querySelectorAll("h1,h2");
+    for (var i = 0; i < heads.length; i++) {
+      var h = heads[i], t = (h.textContent || "").trim();
+      if (h.closest("#printArea") || h.closest(".thx-inj")) continue;
+      if (autoOpenStats(h)) return;
+      var plain = t.replace(/[^A-Za-z ]/g, " ").replace(/\s+/g, " ").trim();
+      var dash = /^(hospital )?(statistics )?dashboard$/i.test(plain) || /^(hospital )?statistics( dashboard)?$/i.test(plain), coll = /collection|billing report|cash report|daily report/i.test(t) && !/expense/i.test(t);
+      if (!dash && !coll) continue;
+      var hero = heroOf(h), target = hero || h;
+      var host = target.parentElement;
+      if (host.querySelector(':scope > [data-thx="1"]') || (hero && hero.querySelector('[data-thx="1"]'))) return;
+      var dates = hero ? hero.querySelectorAll('input[type="date"]') : [];
+      var from = dates.length >= 2 ? dates[0].value : "", to = dates.length >= 2 ? dates[1].value : "";
+      busy = true;
+      try {
+        target.insertAdjacentHTML("afterend", cardHTML(coll, from, to));
+        Array.prototype.forEach.call(dates, function (d) {
+          if (d.__thx) return; d.__thx = 1;
+          d.addEventListener("change", function () { var old = host.querySelector(':scope > [data-thx="1"]'); if (old) old.remove(); inject(); });
+        });
+        if (hero) Array.prototype.forEach.call(hero.querySelectorAll("button"), function (bt) {
+          if (bt.__thx) return; bt.__thx = 1;
+          bt.addEventListener("click", function () { setTimeout(function () { var old = host.querySelector(':scope > [data-thx="1"]'); if (old) old.remove(); inject(); }, 200); });
+        });
+      } catch (e) {}
+      setTimeout(function () { busy = false; }, 0);
+      return;
+    }
+  }
+  new MutationObserver(function () { if (busy) return; clearTimeout(tm); tm = setTimeout(inject, 150); }).observe(document.documentElement, { childList: true, subtree: true });
+})();
+/*TH-SIGN:b0b68b6583775e0a1ad1b29d3b565592*/

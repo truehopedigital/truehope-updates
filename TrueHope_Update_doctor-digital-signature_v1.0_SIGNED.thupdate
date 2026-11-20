@@ -1,0 +1,59 @@
+/*TRUEHOPE-UPDATE {"id":"doctor-digital-signature","name":"Doctor Digital Signature","version":"1.0","date":"2026-11-18","description":"Upload each doctor's signature once — it prints automatically on OPD form, discharge summary, admission record and forms ({{doctor_sign}})."} */
+
+TH.setting('dsOnOpd', true);
+TH.setting('dsOnDis', true);
+TH.setting('dsOnAdm', true);
+TH.addMenuItem('set', 'docsign', 'Doctor Digital Signature');
+
+window.dsImg = function (name, h) {
+  const d = db.doctors.find(x => x.name === name);
+  return d && d.sign ? `<img src="${d.sign}" style="max-height:${h || 48}px;max-width:170px;display:block;margin:0 auto 2px">` : '';
+};
+
+TH.page('docsign', () => `<h2>Doctor Digital Signature</h2>
+  <p class="muted">Upload each doctor's signature <b>one time</b> (photo or scan of signature on white paper). It prints automatically above the doctor's name.</p>
+  <div class="card"><h3 style="margin-top:0">Print signature on</h3><div class="row">
+    ${[['dsOnOpd','OPD consultation form'],['dsOnDis','Discharge summary'],['dsOnAdm','IPD admission record']].map(([k,l]) =>
+      `<label style="display:flex;gap:8px;align-items:center;font-weight:400;color:var(--tx);margin-right:18px"><input type="checkbox" style="width:auto" ${db.settings[k] ? 'checked' : ''} onchange="db.settings['${k}']=this.checked;save(true);toast('Saved')"> ${l}</label>`).join('')}
+  </div><p class="muted" style="font-size:12px;margin-bottom:0">In Forms &amp; Consents templates, use <b>{{doctor_sign}}</b> to print the signature anywhere.</p></div>
+  <table><tr><th>Doctor</th><th>Qualification</th><th style="width:220px">Signature</th><th style="width:330px">Upload / change</th></tr>
+  ${db.doctors.map((d, i) => `<tr><td><b>${esc(d.name)}</b></td><td>${esc(d.qual)}</td>
+    <td style="text-align:center;background:#fff">${d.sign ? `<img src="${d.sign}" style="max-height:55px;max-width:200px">` : '<span class="muted">No signature</span>'}</td>
+    <td><input type="file" accept="image/*" onchange="dsUpload(${i},this)">${d.sign ? ` <button class="btn sm red" onclick="dsRemove(${i})">Remove</button>` : ''}</td></tr>`).join('')}
+  </table>`);
+
+window.dsUpload = function (i, inp) {
+  const f = inp.files[0]; if (!f) return;
+  const r = new FileReader();
+  r.onload = () => {
+    const img = new Image();
+    img.onload = () => {
+      const k = Math.min(1, 420 / img.width, 160 / img.height);
+      const c = document.createElement('canvas'); c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
+      const x = c.getContext('2d'); x.drawImage(img, 0, 0, c.width, c.height);
+      // make near-white background transparent so it looks like ink on paper
+      const px = x.getImageData(0, 0, c.width, c.height), d = px.data;
+      for (let j = 0; j < d.length; j += 4) { if (d[j] > 200 && d[j + 1] > 200 && d[j + 2] > 200) d[j + 3] = 0; }
+      x.putImageData(px, 0, 0);
+      db.doctors[i].sign = c.toDataURL('image/png');
+      audit('Doctor signature uploaded', db.doctors[i].name); save(true); toast('Signature saved'); go('docsign');
+    };
+    img.src = r.result;
+  };
+  r.readAsDataURL(f);
+};
+window.dsRemove = function (i) {
+  if (!confirm('Remove signature of ' + db.doctors[i].name + '?')) return;
+  delete db.doctors[i].sign; audit('Doctor signature removed', db.doctors[i].name); save(true); go('docsign');
+};
+
+function dsPut(name) {
+  const box = document.querySelector('#printArea .sign > div:last-child');
+  const img = dsImg(name);
+  if (box && img) box.insertAdjacentHTML('afterbegin', img);
+}
+TH.after('printVisit', (r, id) => { if (!db.settings.dsOnOpd) return; const v = db.visits.find(x => x.id === id); if (v) dsPut(v.doctor); });
+TH.after('printDischarge', (r, id) => { if (!db.settings.dsOnDis) return; const a = getA(id); if (a) dsPut((a.discharge || {}).doctor || a.doctor); });
+TH.after('printAdmission', (r, id) => { if (!db.settings.dsOnAdm) return; const a = getA(id); if (a) dsPut(a.doctor); });
+TH.placeholder('doctor_sign', (p, v, A) => dsImg((v && v.doctor) || (A && A.doctor)));
+/*TH-SIGN:78478da281a3b64b4e8ba9a91cfcc103*/

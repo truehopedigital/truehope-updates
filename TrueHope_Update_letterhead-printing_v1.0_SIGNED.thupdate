@@ -1,0 +1,53 @@
+/*TRUEHOPE-UPDATE {"id":"letterhead-printing","name":"Letterhead Printing (ask on every print)","version":"1.0","date":"2026-11-19","description":"Before every print asks: plain paper (with hospital header) or pre-printed letterhead (header removed, top and bottom space kept). Spaces set in SETTING MENU → Letterhead Printing."} */
+TH.setting('lhTop', 45); TH.setting('lhBot', 20); TH.setting('lhAsk', true);
+TH.css(`#lhDlg{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:100000;display:flex;align-items:center;justify-content:center}
+#lhDlg .bx{background:#fff;border-radius:12px;padding:22px 24px;max-width:520px;width:92%;box-shadow:0 10px 40px rgba(0,0,0,.3);text-align:center}
+#lhDlg .ch{display:flex;gap:12px;margin:16px 0 8px;flex-wrap:wrap}#lhDlg .ch button{flex:1;min-width:200px;padding:16px 10px;border-radius:10px;border:2px solid var(--g,#11795a);background:#fff;cursor:pointer;font:inherit}
+#lhDlg .ch button b{display:block;font-size:16px;margin:6px 0 2px;color:#1d2939}#lhDlg .ch button span{font-size:12px;color:#667085}#lhDlg .ch button.last{background:#e7f6ef}#lhDlg .ch button .ic{font-size:30px}
+@media print{#lhDlg{display:none!important}}`);
+let LH_BUSY = false;
+function lhApply(pa) {
+  const top = Math.max(0, +db.settings.lhTop || 0), bot = Math.max(0, +db.settings.lhBot || 0);
+  pa.querySelectorAll('.pf .hd').forEach(h => { const sp = document.createElement('div'); sp.className = 'lh-space'; sp.style.cssText = `height:${top}mm`; h.replaceWith(sp) });
+  if (bot) pa.querySelectorAll('.pf').forEach(pf => { const sp = document.createElement('div'); sp.className = 'lh-space'; sp.style.cssText = `height:${bot}mm`; pf.appendChild(sp) });
+  /* if a one-page document now spills a little onto page 2, shrink it slightly (not below 80%) to keep it on one page */
+  try { const pfs = pa.querySelectorAll('.pf'); if (pfs.length === 1) { const PX = 96 / 25.4, PAGE = 297 - 24 - 2; const m = document.createElement('div'); m.style.cssText = 'position:absolute;left:-15000px;top:0;width:186mm;visibility:hidden'; m.innerHTML = pa.innerHTML; document.body.appendChild(m);
+    const h = m.getBoundingClientRect().height / PX; m.remove(); if (h > PAGE && h < PAGE / 0.8) pfs[0].style.zoom = (Math.floor(PAGE / h * 100) / 100).toFixed(2) } } catch (e) { console.error(e) }
+}
+function lhAsk(go2) {
+  const last = localStorage.getItem('th_lh_last') || 'plain'; const d = document.createElement('div'); d.id = 'lhDlg';
+  d.innerHTML = `<div class="bx"><div style="font-size:19px;font-weight:700">🖨 Print on which paper?</div><div class="muted" style="font-size:13px">कोणत्या पेपरवर प्रिंट करायचे?</div>
+   <div class="ch"><button data-c="plain" class="${last === 'plain' ? 'last' : ''}"><div class="ic">🧾</div><b>Plain paper</b><span>Hospital header prints on top<br>साध्या पेपरवर (हेडरसह)</span></button>
+   <button data-c="lh" class="${last === 'lh' ? 'last' : ''}"><div class="ic">📄</div><b>Letterhead paper</b><span>No header — space left for your letterhead<br>लेटरहेडवर (हेडर नाही)</span></button></div>
+   <button class="btn sec" data-c="cancel" style="margin-top:6px">Cancel</button></div>`;
+  document.body.appendChild(d);
+  const done = c => { d.remove(); document.removeEventListener('keydown', kd, true); if (c !== 'cancel') localStorage.setItem('th_lh_last', c); go2(c) };
+  const kd = e => { if (e.key === 'Escape') { e.preventDefault(); done('cancel') } else if (e.key === 'Enter') { e.preventDefault(); done(last) } };
+  document.addEventListener('keydown', kd, true);
+  d.querySelectorAll('[data-c]').forEach(b => b.onclick = () => done(b.dataset.c));
+  setTimeout(() => { const b = d.querySelector('button.last'); b && b.focus() }, 30);
+}
+function lhInstall() {
+  if (window.print.__lh) return; const orig = window.print;
+  const w = function () {
+    const pa = document.getElementById('printArea'), args = arguments;
+    if (LH_BUSY || !db.settings.lhAsk || !pa || !pa.querySelector('.pf .hd')) return orig.apply(window, args);
+    LH_BUSY = true;
+    lhAsk(c => { try { if (c === 'cancel') return; if (c === 'lh') { lhApply(pa); audit('Printed on letterhead', '') } orig.apply(window, args) } finally { LH_BUSY = false } });
+  };
+  w.__lh = true; window.print = w;
+}
+/* install after all other updates so this question comes first */
+TH.after('hdr', () => { try { lhInstall() } catch (e) { console.error(e) } });
+TH.addMenuItem('set', 'lhset', 'Letterhead Printing');
+TH.page('lhset', () => `<h2>📄 Letterhead Printing / लेटरहेड प्रिंटिंग</h2>
+ <div class="card"><p style="margin-top:0">Every time you print, the software asks <b>Plain paper</b> or <b>Letterhead paper</b>. On letterhead paper the hospital header is <b>not printed</b> and blank space is kept for your printed letterhead.</p>
+ <div class="row"><div><label>Top space for letterhead (mm)</label><input id="lh_t" type="number" value="${esc(db.settings.lhTop)}"></div><div><label>Bottom space for letterhead footer (mm)</label><input id="lh_b" type="number" value="${esc(db.settings.lhBot)}"></div>
+ <div><label>Ask before every print</label><select id="lh_a"><option value="1" ${db.settings.lhAsk ? 'selected' : ''}>Yes — ask every time</option><option value="0" ${!db.settings.lhAsk ? 'selected' : ''}>No — always plain paper</option></select></div></div>
+ <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap"><button class="btn" onclick="lhSave()">💾 Save</button><button class="btn sec" onclick="lhSave(1)">🖨 Test print</button></div>
+ <p class="muted" style="margin-bottom:0">How to set: measure your letterhead with a ruler — from the top edge of the paper to just below the printed header (e.g. 45 mm), and the height of the printed footer (e.g. 20 mm). Use "Test print" on a letterhead sheet and adjust.<br>मोजपट्टीने लेटरहेडच्या हेडरची उंची (उदा. 45 mm) व फूटरची उंची (उदा. 20 mm) मोजा व टेस्ट प्रिंट करून तपासा.</p></div>`);
+window.lhSave = function (test) {
+  db.settings.lhTop = Math.max(0, Math.min(120, +val('lh_t') || 0)); db.settings.lhBot = Math.max(0, Math.min(80, +val('lh_b') || 0)); db.settings.lhAsk = val('lh_a') === '1'; save(true); toast('Saved');
+  if (test) { $('#printArea').innerHTML = `<div class="pf">${printHead()}<h3 style="text-align:center">TEST PRINT</h3><p>This is a test page. On letterhead paper the text should start just below your printed header.</p>${'<p>Line of sample text for checking the page layout.</p>'.repeat(6)}<p style="text-align:center">— end —</p></div>`; setTimeout(() => window.print(), 100) }
+};
+/*TH-SIGN:5f21c161fef2e9b18135f7647ea0e44b*/

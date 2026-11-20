@@ -1,0 +1,186 @@
+/*TRUEHOPE-UPDATE {"id":"th-ward-type-icu-fix-20261120","name":"Ward Type Options + Add Ward Fix","version":"1.0","date":"2026-11-20","description":"Adds all ward types (ICU, NICU, PICU, HDU, Semi-Private, Deluxe etc.) to Ward & Bed Master and fixes saving of new wards like ICU."} */
+(function () {
+  /* ---------- 1. Ward type list (editable later from settings) ---------- */
+  var DEFAULT_TYPES = ["General", "Semi-Private", "Private", "Deluxe", "Suite",
+    "ICU", "ICCU", "NICU", "PICU", "HDU", "SICU", "MICU", "Isolation",
+    "Emergency / Casualty", "Day Care", "Labour Room", "Post-Op / Recovery", "Dialysis"];
+
+  function wardTypes() {
+    var list = [];
+    try { list = TH.setting("wardTypes", DEFAULT_TYPES) || DEFAULT_TYPES; } catch (e) { list = DEFAULT_TYPES; }
+    if (typeof list === "string") list = list.split(",");
+    var all = list.map(function (s) { return String(s).trim(); }).filter(Boolean);
+    // keep any custom type already used in existing wards
+    wardsArr().forEach(function (w) { var t = w && (w.type || w.wardType); if (t && all.indexOf(t) < 0) all.push(t); });
+    return all;
+  }
+
+  function wardsArr() {
+    if (!db.wards) db.wards = [];
+    if (Array.isArray(db.wards)) return db.wards;
+    return Object.keys(db.wards).map(function (k) { return db.wards[k]; });
+  }
+
+  /* ---------- 2. Remember current page so we can refresh after save ---------- */
+  try {
+    TH.wrap("go", function (orig) {
+      return function (p, ctx) { window.__thCurPage = p; window.__thCurCtx = ctx; return orig.apply(this, arguments); };
+    });
+  } catch (e) {}
+
+  /* ---------- helpers to find fields on the Ward & Bed Master screen ---------- */
+  function onWardPage() {
+    var hs = document.querySelectorAll("h1,h2,h3,.title,.page-title");
+    for (var i = 0; i < hs.length; i++) if (/ward\s*&?\s*bed\s*master/i.test(hs[i].textContent)) return true;
+    return false;
+  }
+
+  function addCard() {
+    var cards = document.querySelectorAll(".card");
+    for (var i = 0; i < cards.length; i++) if (/add\s+new\s+ward/i.test(cards[i].textContent)) return cards[i];
+    return null;
+  }
+
+  function fieldByLabel(card, re) {
+    var els = card.querySelectorAll("label,div,span,b,small,p");
+    for (var i = 0; i < els.length; i++) {
+      var el = els[i];
+      if (el.querySelector("input,select,textarea")) continue;
+      if (!re.test(el.textContent.trim())) continue;
+      var n = el.nextElementSibling;
+      while (n) {
+        if (/^(INPUT|SELECT|TEXTAREA)$/.test(n.tagName)) return n;
+        var inner = n.querySelector && n.querySelector("input,select,textarea");
+        if (inner) return inner;
+        n = n.nextElementSibling;
+      }
+      var p = el.parentElement && el.parentElement.querySelector("input,select,textarea");
+      if (p) return p;
+    }
+    return null;
+  }
+
+  function fillSelect(sel, keep) {
+    var cur = keep || sel.value || "General";
+    var types = wardTypes();
+    if (cur && types.indexOf(cur) < 0) types.push(cur);
+    var have = Array.prototype.map.call(sel.options, function (o) { return o.value; });
+    if (have.length === types.length && have.every(function (v, i) { return v === types[i]; })) return;
+    sel.innerHTML = types.map(function (t) { return '<option value="' + esc(t) + '">' + esc(t) + "</option>"; }).join("");
+    sel.value = cur;
+  }
+
+  /* ---------- 3. Fill every Type dropdown on the page ---------- */
+  function fixPage() {
+    if (!onWardPage()) return;
+    var cards = document.querySelectorAll(".card");
+    for (var i = 0; i < cards.length; i++) {
+      var s = fieldByLabel(cards[i], /^type\b/i);
+      if (s && s.tagName === "SELECT") fillSelect(s, s.getAttribute("data-th-keep") || s.value);
+    }
+  }
+
+  var timer = null;
+  new MutationObserver(function () {
+    clearTimeout(timer); timer = setTimeout(fixPage, 80);
+  }).observe(document.body, { childList: true, subtree: true });
+
+  /* ---------- 4. Our own Add Ward save (replaces the broken one) ---------- */
+  function makeBed(tpl, name) {
+    if (!tpl || typeof tpl !== "object") return name;
+    var b = {};
+    Object.keys(tpl).forEach(function (k) {
+      var v = tpl[k];
+      if (/^(name|bed|bedno|bedname|no|label|id|code)$/i.test(k)) b[k] = name;
+      else if (/uhid|adm|patient|occup/i.test(k)) b[k] = (typeof v === "boolean") ? false : (typeof v === "number" ? 0 : null);
+      else if (/status/i.test(k)) b[k] = "Vacant";
+      else if (typeof v === "boolean") b[k] = false;
+      else if (typeof v === "number") b[k] = 0;
+      else if (typeof v === "string") b[k] = "";
+      else b[k] = null;
+    });
+    if (!("name" in b)) b.name = name;
+    return b;
+  }
+
+  function addWard(card) {
+    var nameEl = fieldByLabel(card, /^ward\s*name/i);
+    var typeEl = fieldByLabel(card, /^type\b/i);
+    var countEl = fieldByLabel(card, /no\.?\s*of\s*beds/i);
+    var prefEl = fieldByLabel(card, /prefix/i);
+    var rateEl = fieldByLabel(card, /rate/i);
+
+    var name = nameEl ? nameEl.value.trim() : "";
+    var type = typeEl ? typeEl.value.trim() : "General";
+    var count = parseInt(countEl ? countEl.value : "0", 10) || 0;
+    var prefix = (prefEl ? prefEl.value.trim() : "") || name.replace(/[^A-Za-z0-9]/g, "").slice(0, 4).toUpperCase();
+    var rate = parseFloat(rateEl ? rateEl.value : "0") || 0;
+
+    if (!name) { toast("Please enter Ward name"); return; }
+    if (count < 1 || count > 200) { toast("No. of beds should be between 1 and 200"); return; }
+
+    var list = wardsArr();
+    var tpl = list[0] || null;
+    var nameKey = tpl && !("name" in tpl) && ("ward" in tpl) ? "ward" : "name";
+    for (var i = 0; i < list.length; i++) {
+      if (String(list[i][nameKey] || list[i].name || "").toLowerCase() === name.toLowerCase()) {
+        toast("Ward '" + name + "' already exists"); return;
+      }
+    }
+
+    // bed names, skipping any already used in other wards
+    var used = {};
+    list.forEach(function (w) {
+      var bs = w.beds || [];
+      if (typeof bs === "string") bs = bs.split(",");
+      bs.forEach(function (b) { used[String(typeof b === "object" && b ? (b.name || b.bed || b.id) : b).trim().toLowerCase()] = 1; });
+    });
+    var sep = /[-_\/ ]$/.test(prefix) ? "" : "-";
+    var names = [], n = 1;
+    while (names.length < count) {
+      var bn = prefix + sep + n++;
+      if (!used[bn.toLowerCase()]) names.push(bn);
+    }
+
+    var tplBeds = tpl && tpl.beds;
+    var bedTpl = Array.isArray(tplBeds) && tplBeds.length ? tplBeds[0] : null;
+    var beds = (tpl && typeof tplBeds === "string") ? names.join(", ") : names.map(function (b) { return makeBed(bedTpl, b); });
+
+    var w = {};
+    if (tpl) Object.keys(tpl).forEach(function (k) {
+      var v = tpl[k];
+      w[k] = Array.isArray(v) ? [] : (typeof v === "number" ? 0 : (typeof v === "boolean" ? false : (typeof v === "string" ? "" : null)));
+      if (/type/i.test(k)) w[k] = type;
+      if (/rate|charge|tariff/i.test(k) && typeof v !== "object") w[k] = rate;
+    });
+    w[nameKey] = name;
+    w.type = type;
+    w.rate = rate;
+    w.prefix = prefix;
+    w.beds = beds;
+    if (!w.id) w.id = "W" + Date.now();
+
+    if (Array.isArray(db.wards)) db.wards.push(w); else db.wards[w.id] = w;
+    save();
+    try { audit("Ward added", name + " (" + type + "), " + count + " beds @ Rs " + rate + "/day"); } catch (e) {}
+    toast("Ward '" + name + "' added with " + count + " beds");
+
+    if (window.__thCurPage) { try { go(window.__thCurPage, window.__thCurCtx); return; } catch (e) {} }
+    // fallback: clear the form
+    [nameEl, countEl, prefEl, rateEl].forEach(function (el) { if (el) el.value = ""; });
+    toast("Saved. Re-open Ward & Bed Master to see the new ward.");
+  }
+
+  document.addEventListener("click", function (e) {
+    var btn = e.target && e.target.closest ? e.target.closest("button,.btn,input[type=button]") : null;
+    if (!btn) return;
+    var txt = (btn.textContent || btn.value || "").trim();
+    if (!/^add\s*ward$/i.test(txt)) return;
+    if (!onWardPage()) return;
+    var card = btn.closest(".card") || addCard();
+    if (!card || !/add\s+new\s+ward/i.test(card.textContent)) return;
+    e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
+    try { addWard(card); } catch (err) { toast("Add ward error: " + err.message); console.error(err); }
+  }, true);
+})();
+/*TH-SIGN:518f0a13f815a92b8cab1c3c163231df*/

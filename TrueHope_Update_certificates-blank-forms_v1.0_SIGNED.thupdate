@@ -1,0 +1,221 @@
+/*TRUEHOPE-UPDATE {"id":"certificates-blank-forms","name":"Certificates & Blank Forms (lines till footer)","version":"1.0","date":"2026-11-19","description":"OPD Certificates menu (15 types, auto-filled from patient), Blank Forms for every form, and automatic writing lines / rows till the page footer on blank prints."} */
+
+/* =========================================================
+   COMMON
+   ========================================================= */
+const fdt = s => s ? dmy(String(s).slice(0, 10)) + (String(s).length > 10 ? ' ' + t12(String(s).slice(11, 16)) : '') : '';
+const dtNow = () => today() + 'T' + nowTime();
+const BL = mm => `<span class="bl" style="min-width:${mm || 40}mm"></span>`;
+TH.setting('pl', { lineMM: 8, all: false, charts: true });
+TH.css(`
+.pf .fl{height:var(--flh,8mm);border-bottom:0.25mm solid #888}
+.pf .bt td{height:8mm}
+.pf .cert{font-size:14.5px;line-height:2.1;text-align:justify;margin:14px 4px}
+.pf .ctitle{text-align:center;font-size:19px;font-weight:700;letter-spacing:1.5px;text-decoration:underline;margin:10px 0 6px}
+.pf .cmeta{display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px}
+.pf .csig{display:flex;justify-content:space-between;align-items:flex-end;margin-top:34px;font-size:13px}
+.pf .bsec{font-weight:700;margin:8px 0 0}
+.certtile{min-height:92px}
+`);
+
+/* =========================================================
+   1. FILL TO FOOTER (blank lines / empty rows)
+   ========================================================= */
+let FILL = null, FILLT = 0;
+function setFill(m) { FILL = m; FILLT = Date.now(); }
+const MMPX = 96 / 25.4, PAGE_MM = 273 - 7;   // A4 297mm − 2×12mm margins − safety
+function fillToFooter(mode) {
+  const pa = document.getElementById('printArea'); if (!pa || !pa.innerHTML.trim()) return;
+  if (document.getElementById('stkPage') && document.getElementById('stkPage').textContent) return; // sticker sheets: never
+  const lineMM = Math.max(5, Math.min(14, +(db.settings.pl || {}).lineMM || 8));
+  const meas = document.createElement('div'); meas.style.cssText = 'position:absolute;left:-15000px;top:0;width:186mm;visibility:hidden';
+  meas.innerHTML = pa.innerHTML; document.body.appendChild(meas);
+  const root = meas.querySelector('.pf') || meas; root.style.setProperty('--flh', lineMM + 'mm');
+  const H = () => meas.getBoundingClientRect().height / MMPX;
+  const base = H(), pages = Math.max(1, Math.ceil(base / PAGE_MM)), limit = pages * PAGE_MM;
+  if (limit - base < lineMM || (pages > 1 && base - (pages - 1) * PAGE_MM < 70)) { meas.remove(); return; }
+  let tgt = root.querySelector('[data-fill]');
+  if (!tgt && mode === 'rows') { const ts = [...root.querySelectorAll('table')].filter(t => t.rows.length > 1); tgt = ts[ts.length - 1]; if (tgt) tgt.dataset.fill = 'rows'; }
+  let add, remove;
+  if (tgt && tgt.dataset.fill === 'rows' && tgt.tagName === 'TABLE') {
+    const cols = Math.max(...[...tgt.rows].map(r => [...r.cells].reduce((s, c) => s + (c.colSpan || 1), 0)));
+    const body = tgt.tBodies[0] || tgt;
+    add = () => { const tr = document.createElement('tr'); tr.className = 'thfill'; tr.innerHTML = Array.from({ length: cols }, () => `<td style="height:${lineMM}mm">&nbsp;</td>`).join(''); body.appendChild(tr); };
+    remove = () => { const r = body.querySelectorAll('tr.thfill'); if (r.length) r[r.length - 1].remove(); return r.length > 0; };
+  } else {
+    let box = (tgt && tgt.dataset.fill === 'lines') ? tgt : null;
+    if (!box) { box = document.createElement('div'); box.className = 'thlines'; const sig = [...root.querySelectorAll('.sign,.sg,.csig,[data-sign]')].pop();
+      if (sig && sig.parentNode) sig.parentNode.insertBefore(box, sig); else root.appendChild(box); }
+    add = () => { const d = document.createElement('div'); d.className = 'fl thfill'; box.appendChild(d); };
+    remove = () => { const r = box.querySelectorAll('.thfill'); if (r.length) r[r.length - 1].remove(); return r.length > 0; };
+  }
+  let guard = 0; while (H() < limit - lineMM * 0.9 && guard++ < 120) add();
+  while (H() > limit && remove()) { }
+  pa.innerHTML = meas.innerHTML; meas.remove();
+}
+TH.wrap('print', orig => function () {
+  try { const pl = db.settings.pl || {}; const m = (FILL && Date.now() - FILLT < 180000) ? FILL : (pl.all ? 'lines' : null); if (m) fillToFooter(m); } catch (e) { console.error(e); }
+  FILL = null; return orig.apply(window, arguments);
+});
+TH.before('startPrintTpl', (id, uhid, admId) => { if (!uhid) setFill('lines'); return [id, uhid, admId]; });
+['icLogPrint', 'icDrugPrint', 'icIndentPrint'].forEach(fn => TH.before(fn, (...a) => { if ((db.settings.pl || {}).charts !== false) setFill('rows'); return a; }));
+TH.after('go', () => { if (FILL && Date.now() - FILLT > 180000) FILL = null; });
+
+/* =========================================================
+   2. CERTIFICATES
+   ========================================================= */
+const ttl = p => p && p.gender === 'Female' ? 'Ms./Mrs.' : p && p.gender === 'Male' ? 'Mr.' : 'Mr./Ms.';
+const lastV = p => p && p.uhid ? (pVisits(p.uhid)[0] || {}) : {};
+const lastA = p => p && p.uhid ? (pAdms(p.uhid)[0] || null) : null;
+const dxOf = p => { const a = lastA(p), v = lastV(p); return (a && ((a.discharge || {}).dx || a.dx)) || v.diagnosis || ''; };
+const docOf = p => { const a = lastA(p), v = lastV(p); return (a && a.doctor) || v.doctor || ((db.doctors.find(d => d.active) || {}).name) || ''; };
+const addDays = (d, n) => { const x = new Date(d + 'T12:00'); x.setDate(x.getDate() + n); return x.toISOString().slice(0, 10); };
+const CERTS = {
+  fit: { ic: '✅', t: 'Medical Fitness Certificate', f: [['purpose', 'Purpose (job / school / sports / driving / exam)', 'text'], ['exam', 'Examined on', 'date', () => today()], ['result', 'Result', 'sel', ['FIT', 'UNFIT', 'FIT with restrictions']], ['fromdt', 'Fit with effect from', 'date', () => today()], ['bp', 'BP / Pulse / Vision (optional)', 'text'], ['remarks', 'Remarks / restrictions', 'area'], ['idmark', 'Identification mark', 'text']],
+    b: `This is to certify that I have carefully examined {{title}} <b>{{name}}</b>, aged {{age}}, {{sex}}, residing at {{address}}, on {{exam}}.<br>On examination (BP / Pulse / Vision: {{bp}}), he/she is found to be medically <b>{{result}}</b> for <b>{{purpose}}</b> with effect from {{fromdt}}.<br>Remarks: {{remarks}}<br>Identification mark: {{idmark}}`, psign: 1 },
+  leave: { ic: '🛌', t: 'Medical Leave / Sickness Certificate', f: [['dx', 'Diagnosis / illness', 'text', p => dxOf(p), 'diagnosis'], ['from', 'Unfit from', 'date', () => today()], ['to', 'Unfit up to', 'date', () => addDays(today(), 2)], ['for', 'Unfit to attend', 'sel', ['duty', 'school / college', 'office', 'duty / school']], ['advice', 'Advice', 'text', () => 'complete bed rest']],
+    b: `This is to certify that {{title}} <b>{{name}}</b>, aged {{age}}, {{sex}}, residing at {{address}} (UHID {{uhid}}), was under my treatment for <b>{{dx}}</b>.<br>He/she was advised {{advice}} and was medically <b>unfit to attend {{for}}</b> from <b>{{from}}</b> to <b>{{to}}</b> (both days inclusive) — {{days}} day(s).`, psign: 1 },
+  resume: { ic: '💼', t: 'Fitness to Resume Duty Certificate', f: [['dx', 'Illness treated', 'text', p => dxOf(p), 'diagnosis'], ['from', 'Treatment from', 'date', p => lastV(p).date || today()], ['to', 'Treatment up to', 'date', () => today()], ['resume', 'Fit to resume from', 'date', () => addDays(today(), 1)], ['for', 'Resume', 'sel', ['duty', 'school / college', 'normal activities']]],
+    b: `This is to certify that {{title}} <b>{{name}}</b>, aged {{age}}, {{sex}}, was under my treatment for <b>{{dx}}</b> from {{from}} to {{to}}.<br>He/she has now recovered and is medically <b>fit to resume {{for}}</b> from <b>{{resume}}</b>.`, psign: 1 },
+  opdatt: { ic: '🩺', t: 'OPD Attendance Certificate', f: [['vdate', 'Date of OPD visit', 'date', p => lastV(p).date || today()], ['vtime', 'Time (from – to)', 'text', p => lastV(p).time ? t12(lastV(p).time) + ' to ' : ''], ['dx', 'Consulted for', 'text', p => lastV(p).diagnosis || '', 'diagnosis'], ['acc', 'Accompanied by (if any)', 'text']],
+    b: `This is to certify that {{title}} <b>{{name}}</b>, aged {{age}}, {{sex}} (UHID {{uhid}}), attended the OPD of this hospital on <b>{{vdate}}</b> from {{vtime}} for consultation / treatment of <b>{{dx}}</b>.<br>Accompanied by: {{acc}}.` },
+  admcert: { ic: '🏥', t: 'Indoor Admission Certificate', f: [['ipd', 'IPD No.', 'text', p => (lastA(p) || {}).ipdNo || ''], ['adm', 'Admitted on', 'date', p => (lastA(p) || {}).admDate || today()], ['ward', 'Ward / Bed', 'text', p => { const a = lastA(p); return a ? a.ward + ' / ' + a.bed : ''; }], ['dx', 'Diagnosis', 'text', p => dxOf(p), 'diagnosis'], ['stay', 'Likely stay (days)', 'text']],
+    b: `This is to certify that {{title}} <b>{{name}}</b>, aged {{age}}, {{sex}}, residing at {{address}}, has been <b>admitted</b> in this hospital since <b>{{adm}}</b> (IPD No. {{ipd}}, {{ward}}) and is under treatment for <b>{{dx}}</b>.<br>He/she is likely to remain admitted for about {{stay}} day(s). This certificate is issued on request for official purposes.` },
+  discert: { ic: '🏠', t: 'Discharge Certificate', f: [['ipd', 'IPD No.', 'text', p => (lastA(p) || {}).ipdNo || ''], ['adm', 'Admitted on', 'date', p => (lastA(p) || {}).admDate || ''], ['dis', 'Discharged on', 'date', p => (lastA(p) || {}).dDate || today()], ['dx', 'Final diagnosis', 'text', p => dxOf(p), 'diagnosis'], ['proc', 'Procedure / surgery (if any)', 'text', p => ((lastA(p) || {}).discharge || {}).proc || '', 'procedures'], ['rest', 'Advised rest (days)', 'text']],
+    b: `This is to certify that {{title}} <b>{{name}}</b>, aged {{age}}, {{sex}}, residing at {{address}}, was admitted in this hospital (IPD No. {{ipd}}) from <b>{{adm}}</b> to <b>{{dis}}</b> for <b>{{dx}}</b>. Procedure: {{proc}}.<br>He/she has been discharged and is advised rest for {{rest}} day(s) after discharge.` },
+  treat: { ic: '💊', t: 'Treatment Certificate', f: [['since', 'Under treatment since', 'date', p => lastV(p).date || today()], ['dx', 'Diagnosis', 'text', p => dxOf(p), 'diagnosis'], ['dur', 'Expected duration of treatment', 'text'], ['purpose', 'Issued for (purpose)', 'text']],
+    b: `This is to certify that {{title}} <b>{{name}}</b>, aged {{age}}, {{sex}}, residing at {{address}}, is under my treatment since <b>{{since}}</b> for <b>{{dx}}</b>.<br>Expected duration of treatment: {{dur}}. This certificate is issued on request for the purpose of {{purpose}}.` },
+  refer: { ic: '➡️', t: 'Referral Letter', f: [['to', 'Referred to (doctor / hospital)', 'text'], ['reason', 'Reason for referral', 'area'], ['dx', 'Provisional diagnosis', 'text', p => dxOf(p), 'diagnosis'], ['summary', 'Brief history & findings', 'area', p => lastV(p).cc || ''], ['given', 'Treatment given', 'area'], ['vitals', 'Vitals at referral (BP / Pulse / SpO₂ / Temp)', 'text']],
+    b: `To,<br><b>{{to}}</b><br><br>Respected Sir / Madam,<br>I am referring {{title}} <b>{{name}}</b>, aged {{age}}, {{sex}} (UHID {{uhid}}), for further management.<br><b>Reason for referral:</b> {{reason}}<br><b>Provisional diagnosis:</b> {{dx}}<br><b>Brief history & findings:</b> {{summary}}<br><b>Treatment given:</b> {{given}}<br><b>Vitals at referral:</b> {{vitals}}<br>Kindly do the needful. Thank you.` },
+  injury: { ic: '🩹', t: 'Injury Certificate (MLC)', f: [['mlc', 'MLC No.', 'text', p => (lastA(p) || {}).mlcNo || ''], ['ps', 'Police station', 'text'], ['by', 'Brought by', 'text'], ['exdt', 'Date & time of examination', 'dt', () => dtNow()], ['hist', 'History (as told by patient / relative)', 'area'], ['inj', 'Injuries (No., type, size, site)', 'area'], ['nature', 'Nature of injuries', 'sel', ['Simple', 'Grievous', 'Opinion reserved till X-ray / investigations']], ['weapon', 'Probable weapon', 'sel', ['Hard and blunt', 'Sharp', 'Sharp and pointed', 'Firearm', 'Burn', 'Other']], ['age', 'Age of injuries', 'text', () => 'within 6 hours']],
+    b: `MLC No.: <b>{{mlc}}</b> &nbsp; Police station: {{ps}}<br>This is to certify that I have examined {{title}} <b>{{name}}</b>, aged {{age}}, {{sex}}, residing at {{address}}, brought by {{by}} on <b>{{exdt}}</b>.<br><b>History:</b> {{hist}}<br><b>Injuries found:</b> {{inj}}<br><b>Nature of injuries:</b> {{nature}} &nbsp; <b>Probable weapon:</b> {{weapon}} &nbsp; <b>Age of injuries:</b> {{age2}}`, psign: 1 },
+  death: { ic: '🕯️', t: 'Hospital Death Certificate', f: [['ipd', 'IPD No.', 'text', p => (lastA(p) || {}).ipdNo || ''], ['adm', 'Date of admission', 'date', p => (lastA(p) || {}).admDate || ''], ['ddt', 'Date & time of death', 'dt', p => { const a = lastA(p); return a && /death|expired/i.test(a.dType || '') ? a.dDate + 'T' + a.dTime : dtNow(); }], ['c1', 'Immediate cause of death', 'text'], ['c2', 'Antecedent cause', 'text'], ['c3', 'Underlying cause', 'text', p => dxOf(p), 'diagnosis'], ['other', 'Other significant conditions', 'text'], ['mlc', 'MLC case?', 'sel', ['No', 'Yes']]],
+    b: `This is to certify that {{title}} <b>{{name}}</b>, aged {{age}}, {{sex}}, residing at {{address}}, admitted in this hospital on {{adm}} (IPD No. {{ipd}}), <b>expired on {{ddt}}</b>.<br><b>Cause of death:</b><br>(a) Immediate cause: {{c1}}<br>(b) Antecedent cause: {{c2}}<br>(c) Underlying cause: {{c3}}<br>Other significant conditions: {{other}} &nbsp; MLC: {{mlc}}<br><span style="font-size:12px">Note: Medical Certificate of Cause of Death (Form 4 / 4A) must also be issued for registration with the Registrar of Births &amp; Deaths.</span>` },
+  birth: { ic: '👶', t: 'Birth Certificate (Hospital Record)', f: [['father', 'Father\'s name', 'text'], ['bdt', 'Date & time of birth', 'dt', () => dtNow()], ['bsex', 'Sex of baby', 'sel', ['Male', 'Female', 'Ambiguous']], ['wt', 'Birth weight (kg)', 'text'], ['mode', 'Mode of delivery', 'sel', ['Normal vaginal delivery', 'LSCS (Caesarean)', 'Assisted (forceps / vacuum)']], ['ga', 'Gestation (weeks)', 'text'], ['cond', 'Condition of baby', 'sel', ['Healthy, live born', 'Live born — shifted to NICU', 'Still born']]],
+    b: `This is to certify that <b>{{name}}</b> (mother), aged {{age}}, wife of <b>{{father}}</b>, residing at {{address}}, delivered a <b>{{bsex}}</b> baby in this hospital on <b>{{bdt}}</b>.<br>Mode of delivery: {{mode}} &nbsp; Gestation: {{ga}} weeks &nbsp; Birth weight: {{wt}} kg<br>Condition of baby: {{cond}}<br><span style="font-size:12px">This is a hospital record certificate. Birth must be registered with the local Registrar of Births &amp; Deaths within 21 days.</span>` },
+  bg: { ic: '🩸', t: 'Blood Group Certificate', f: [['bgroup', 'Blood group & Rh', 'sel', ['A Positive', 'A Negative', 'B Positive', 'B Negative', 'AB Positive', 'AB Negative', 'O Positive', 'O Negative']], ['tdate', 'Tested on', 'date', () => today()], ['lab', 'Tested at (laboratory)', 'text']],
+    b: `This is to certify that the blood group of {{title}} <b>{{name}}</b>, aged {{age}}, {{sex}} (UHID {{uhid}}), as tested on {{tdate}} at {{lab}}, is <b style="font-size:17px">{{bgroup}}</b>.` },
+  preg: { ic: '🤰', t: 'Pregnancy Certificate', f: [['lmp', 'LMP (last menstrual period)', 'date'], ['edd', 'EDD (auto from LMP if blank)', 'date'], ['ga', 'Gestation (weeks)', 'text'], ['opinion', 'Opinion', 'sel', ['Fit for routine work', 'Fit for light work only', 'Advised rest', 'Fit to travel', 'Not fit to travel']], ['remarks', 'Remarks', 'text']],
+    b: `This is to certify that <b>{{name}}</b>, aged {{age}}, residing at {{address}}, is under my antenatal care. She is pregnant with LMP <b>{{lmp}}</b>, gestational age <b>{{ga}}</b> weeks, and expected date of delivery (EDD) <b>{{edd}}</b>.<br>Opinion: <b>{{opinion}}</b>. Remarks: {{remarks}}` },
+  fly: { ic: '✈️', t: 'Fitness to Travel Certificate', f: [['tdate', 'Date of travel', 'date'], ['mode', 'Mode', 'sel', ['Air', 'Rail', 'Road', 'Sea']], ['dest', 'Destination', 'text'], ['dx', 'Medical condition', 'text', p => dxOf(p), 'diagnosis'], ['cond', 'Conditions (escort / wheelchair / oxygen)', 'text', () => 'None']],
+    b: `This is to certify that I have examined {{title}} <b>{{name}}</b>, aged {{age}}, {{sex}}, known case of {{dx}}. He/she is medically <b>fit to travel by {{mode}}</b> to {{dest}} on <b>{{tdate}}</b>.<br>Special requirements: {{cond}}.` },
+  custom: { ic: '📝', t: 'Medical Certificate (custom)', f: [['ctitle', 'Certificate title', 'text', () => 'MEDICAL CERTIFICATE'], ['text', 'Certificate text', 'area', p => `This is to certify that ${ttl(p)} ${p && p.name ? p.name : ''}, aged ${p && p.uhid ? ageText(p) : ''}, `]],
+    b: `{{text}}` }
+};
+CERTS.injury.f.find(x => x[0] === 'age')[0] = 'age2';
+const allCerts = () => db.patients.flatMap(p => (p.certs || []).map(c => ({ p, c })));
+function nextCertNo() { const y = today().slice(0, 4); return 'CERT-' + y + '-' + pad(allCerts().filter(x => String(x.c.no).startsWith('CERT-' + y)).length + 1, 4); }
+function cFld(f, v) { const [k, l, t, o] = f; const id = 'cf_' + k; v = v ?? '';
+  if (t === 'area') return `<div class="full"><label>${l}</label><textarea id="${id}" ${o && typeof o === 'string' ? `data-cl="${o}"` : ''}>${esc(v)}</textarea></div>`;
+  if (t === 'sel') return `<div><label>${l}</label><select id="${id}">${v ? '' : ''}<option></option>${o.map(x => `<option ${x === v ? 'selected' : ''}>${esc(x)}</option>`).join('')}</select></div>`;
+  if (t === 'date') return `<div><label>${l}</label><input id="${id}" type="date" value="${esc(v)}"></div>`;
+  if (t === 'dt') return `<div><label>${l}</label><input id="${id}" type="datetime-local" value="${esc(v)}"></div>`;
+  return `<div><label>${l}</label><input id="${id}" value="${esc(v)}" ${f[4] ? `data-cl="${f[4]}"` : ''}></div>`; }
+function certBody(type, p, vals) { const C = CERTS[type]; const days = vals.from && vals.to ? Math.round((new Date(vals.to) - new Date(vals.from)) / 864e5) + 1 : '';
+  const base = { title: ttl(p), name: p && p.name, age: p && p.uhid ? ageText(p) : '', sex: p && p.gender, address: p && p.address, uhid: p && p.uhid, mobile: p && p.mobile, days };
+  const dateKeys = Object.fromEntries(C.f.map(f => [f[0], f[2]]));
+  return C.b.replace(/\{\{(\w+)\}\}/g, (m, k) => { let v = k in vals ? vals[k] : base[k]; if (dateKeys[k] === 'date') v = v ? dmy(v) : ''; if (dateKeys[k] === 'dt') v = fdt(v);
+    if (k === 'text') return v ? esc(v).replace(/\n/g, '<br>') : '<div class="fl"></div><div class="fl"></div><div class="fl"></div>';
+    return v !== undefined && v !== null && String(v).trim() !== '' ? esc(v).replace(/\n/g, '<br>') : BL(dateKeys[k] === 'area' ? 120 : 42); }); }
+function certPrint(type, p, vals, meta) { const C = CERTS[type]; const blank = !p || !p.uhid; const d = db.doctors.find(x => x.name === (meta && meta.doctor)) || {};
+  const sig = (typeof dsImg === 'function' && d.name) ? dsImg(d.name) : '';
+  const title = type === 'custom' && vals.ctitle ? vals.ctitle.toUpperCase() : C.t.toUpperCase();
+  $('#printArea').innerHTML = `<div class="pf">${printHead()}<div class="ctitle">${esc(title)}</div>
+   <div class="cmeta"><span>Certificate No.: <b>${blank ? BL(35) : esc(meta.no)}</b></span><span>${blank ? 'UHID: ' + BL(30) : 'UHID: <b>' + esc(p.uhid) + '</b>'}</span><span>Date: <b>${blank ? BL(30) : dmy(meta.date)}</b></span></div>
+   <div class="cert">${certBody(type, blank ? {} : p, vals)}</div>
+   <div class="csig"><div>${C.psign ? 'Signature / thumb of patient:<br><br>______________________' : (blank ? '' : '<span style="font-size:11px">Issued on request of the patient / relative.</span>')}</div>
+    <div style="text-align:center">${sig}${blank ? '<br><br>' : ''}______________________<br><b>${blank ? 'Doctor\'s name' : esc(d.name || meta.doctor || '')}</b>${d.qual ? '<br>' + esc(d.qual) : ''}${d.reg ? '<br>Reg. No. ' + esc(d.reg) : (blank ? '<br>Reg. No.' : '')}<br><span style="font-size:11px">Hospital seal</span></div></div></div>`;
+  if (blank) setFill('lines'); setTimeout(() => window.print(), 120); }
+
+TH.addMenuItem('opd', 'certs', 'Certificates');
+TH.addMenuItem('ipd', 'certs', 'Certificates');
+TH.page('certs', () => {
+  const type = ctx.type, p = ctx.uhid ? getP(ctx.uhid) : null;
+  if (!type) {
+    const recent = allCerts().sort((a, b) => String(b.c.at).localeCompare(String(a.c.at))).slice(0, 15);
+    return `<h2>📜 Certificates</h2>${p ? `<div class="pinfo"><span><b>Patient:</b> ${esc(p.name)}</span><span><b>UHID:</b> ${esc(p.uhid)}</span><span><b>Age/Sex:</b> ${ageText(p)} / ${esc(p.gender)}</span></div>` : '<p class="muted">Step 1 — choose the certificate.</p>'}
+    <div class="tiles">${Object.entries(CERTS).map(([k, c]) => `<div class="tile sm certtile" onclick="go('certs',{type:'${k}'${p ? `,uhid:'${p.uhid}'` : ''}})"><div class="ic" style="font-size:26px">${c.ic}</div><div class="tl">${c.t}</div></div>`).join('')}</div>
+    <h3>Recently issued certificates</h3><table><tr><th>No.</th><th>Date</th><th>Certificate</th><th>Patient</th><th>Doctor</th><th></th></tr>${recent.map(({ p, c }) => `<tr><td>${esc(c.no)}</td><td>${dmy(c.date)}</td><td>${esc((CERTS[c.type] || {}).t || c.type)}</td><td>${esc(p.name)} (${esc(p.uhid)})</td><td>${esc(c.doctor)}</td><td><button class="btn sm" onclick="certReprint('${p.uhid}','${c.no}')">Reprint</button></td></tr>`).join('') || '<tr><td colspan="6" class="muted">None yet</td></tr>'}</table>`;
+  }
+  const C = CERTS[type]; if (!C) return 'Unknown certificate';
+  if (!p) {
+    const q = (ctx.q || '').toLowerCase(); const L = q ? db.patients.filter(x => (x.uhid + ' ' + x.name + ' ' + x.mobile).toLowerCase().includes(q)).slice(0, 40) : db.patients.slice(-15).reverse();
+    return `<h2>${C.ic} ${C.t}</h2><p class="muted">Step 2 — click the patient (or print a blank certificate).</p>
+    <div class="card row"><div style="flex:1"><label>Search UHID / name / mobile</label><input id="cq" value="${esc(ctx.q || '')}" onkeydown="if(event.key==='Enter')go('certs',{type:'${type}',q:this.value})"></div><button class="btn" onclick="go('certs',{type:'${type}',q:val('cq')})">Search</button>
+     <button class="btn sec" onclick="certPrint('${type}',null,{},{})">🖨 Print blank</button><button class="btn sec" onclick="go('certs')">← All certificates</button></div>
+    <table><tr><th>UHID</th><th>Name</th><th>Age/Sex</th><th>Mobile</th><th>Last diagnosis</th><th></th></tr>${L.map(x => `<tr style="cursor:pointer" onclick="go('certs',{type:'${type}',uhid:'${x.uhid}'})"><td>${esc(x.uhid)}</td><td><b>${esc(x.name)}</b></td><td>${ageText(x)} / ${esc(x.gender)}</td><td>${esc(x.mobile)}</td><td>${esc(dxOf(x))}</td><td><button class="btn sm">Select</button></td></tr>`).join('') || '<tr><td colspan="6" class="muted">No patient found</td></tr>'}</table>`;
+  }
+  return `<h2>${C.ic} ${C.t}</h2>
+  <div class="pinfo"><span><b>Patient:</b> ${esc(p.name)}</span><span><b>UHID:</b> ${esc(p.uhid)}</span><span><b>Age/Sex:</b> ${ageText(p)} / ${esc(p.gender)}</span><span><b>Address:</b> ${esc(p.address) || '—'}</span><span><a href="#" onclick="go('certs',{type:'${type}'});return false">change patient</a></span></div>
+  <div class="card"><p class="muted" style="margin-top:0">Step 3 — check the details (already filled from patient records) and click Save &amp; Print.</p><div class="grid">
+   <div><label>Certificate No.</label><input id="cf__no" value="${nextCertNo()}"></div><div><label>Date of issue</label><input id="cf__date" type="date" value="${today()}"></div>
+   <div><label>Issued by (doctor)</label><select id="cf__doc">${db.doctors.filter(d => d.active).map(d => `<option ${d.name === docOf(p) ? 'selected' : ''}>${esc(d.name)}</option>`).join('')}</select></div>
+   ${C.f.map(f => cFld(f, typeof f[3] === 'function' ? f[3](p) : (f[2] === 'sel' && f[0] === 'for' ? f[3][0] : ''))).join('')}</div><br>
+   <div class="row"><button class="btn" onclick="certSave('${type}','${p.uhid}')">💾 Save &amp; Print Certificate</button><button class="btn sec" onclick="go('certs',{uhid:'${p.uhid}'})">Other certificate for this patient</button></div></div>
+  ${(p.certs || []).length ? `<h3>Certificates issued to this patient</h3><table><tr><th>No.</th><th>Date</th><th>Certificate</th><th>Doctor</th><th></th></tr>${p.certs.slice().reverse().map(c => `<tr><td>${esc(c.no)}</td><td>${dmy(c.date)}</td><td>${esc((CERTS[c.type] || {}).t)}</td><td>${esc(c.doctor)}</td><td><button class="btn sm" onclick="certReprint('${p.uhid}','${c.no}')">Reprint</button></td></tr>`).join('')}</table>` : ''}`;
+}, 'certs');
+TH.after('go', () => { if (page === 'certs' && ctx.type === 'preg') { const l = $('#cf_lmp'); if (l) l.onchange = () => { if (!l.value) return; const e = addDays(l.value, 280); $('#cf_edd').value = e; $('#cf_ga').value = Math.floor((new Date(today()) - new Date(l.value)) / (7 * 864e5)); }; } });
+window.certPrint = certPrint;
+window.certSave = function (type, uhid) { const p = getP(uhid), C = CERTS[type]; const vals = {}; C.f.forEach(f => { const e = document.getElementById('cf_' + f[0]); if (e) vals[f[0]] = e.value.trim(); });
+  if (type === 'preg' && vals.lmp && !vals.edd) vals.edd = addDays(vals.lmp, 280);
+  const meta = { no: val('cf__no') || nextCertNo(), date: val('cf__date') || today(), doctor: val('cf__doc') };
+  p.certs = p.certs || []; if (p.certs.some(c => c.no === meta.no) || allCerts().some(x => x.c.no === meta.no && x.p !== p)) meta.no = nextCertNo();
+  p.certs.push({ ...meta, type, vals, by: cur.u, at: new Date().toISOString() }); audit('Certificate issued', meta.no + ' ' + C.t + ' — ' + uhid); save(); toast('Certificate saved: ' + meta.no);
+  go('certs', { type, uhid }); certPrint(type, p, vals, meta); };
+window.certReprint = function (uhid, no) { const p = getP(uhid), c = (p.certs || []).find(x => x.no === no); if (c) { audit('Certificate reprinted', no); certPrint(c.type, p, c.vals, c); } };
+const _histC = P.history; P.history = () => { const h = _histC(); return ctx.uhid ? h.replace('Print Full History</button>', `Print Full History</button><button class="btn sec" onclick="go('certs',{uhid:'${ctx.uhid}'})">📜 Certificate</button>`) : h; };
+/* certificate register */
+const certRegMenu = MENUS.find(m => m.k === 'regs') ? 'regs' : 'rep';
+TH.addMenuItem(certRegMenu, 'certreg', 'Certificate Register');
+TH.page('certreg', () => { const f = ctx.f || today().slice(0, 8) + '01', t = ctx.t || today(); const L = allCerts().filter(x => x.c.date >= f && x.c.date <= t).sort((a, b) => String(a.c.no).localeCompare(String(b.c.no)));
+  const rows = L.map(({ p, c }) => [c.no, dmy(c.date), (CERTS[c.type] || {}).t || c.type, p.uhid, p.name, ageText(p) + ' / ' + (p.gender || ''), c.doctor, c.by]);
+  return `<h2>Certificate Register</h2><div class="card row"><div><label>Month</label><input type="month" value="${f.slice(0, 7)}" onchange="const[y,m]=this.value.split('-');go('certreg',{f:this.value+'-01',t:this.value+'-'+new Date(y,m,0).getDate()})"></div>
+   <div><label>From</label><input id="cr_f" type="date" value="${f}"></div><div><label>To</label><input id="cr_t" type="date" value="${t}"></div><button class="btn" onclick="go('certreg',{f:val('cr_f'),t:val('cr_t')})">Show</button><button class="btn sec" onclick="printReport()">🖨 Print</button>
+   <button class="btn sec" onclick="csv('Certificate_Register_${f}_to_${t}.csv',[['No','Date','Certificate','UHID','Name','Age/Sex','Doctor','Issued by'],...${JSON.stringify(rows).replace(/"/g, '&quot;')}])">Export CSV</button></div>
+   <div id="rep"><h3 style="text-align:center">${esc(db.settings.hospital)} — Certificate Register<br><span style="font-size:13px;font-weight:400">${dmy(f)} to ${dmy(t)} • Total: ${L.length}</span></h3>
+   <table><tr><th>Sr</th><th>Cert. No.</th><th>Date</th><th>Certificate</th><th>UHID</th><th>Name</th><th>Age/Sex</th><th>Doctor</th><th>Issued by</th></tr>${rows.map((r, i) => `<tr><td>${i + 1}</td>${r.map(x => `<td>${esc(x)}</td>`).join('')}</tr>`).join('') || '<tr><td colspan="9" class="muted">None</td></tr>'}</table></div>`; }, 'certreg');
+
+/* =========================================================
+   3. BLANK FORMS
+   ========================================================= */
+const bHead = (title, ipd) => `${printHead()}<div class="tt">${title}</div><table class="it bt"><tr><td style="width:40%"><b>Patient name:</b></td><td><b>UHID:</b></td>${ipd ? '<td><b>IPD No.:</b></td>' : '<td><b>Date:</b></td>'}</tr>
+  <tr><td><b>Age / Sex:</b></td><td><b>${ipd ? 'Ward / Bed:' : 'Mobile:'}</b></td><td><b>${ipd ? 'Consultant:' : 'Doctor:'}</b></td></tr>${ipd ? '<tr><td><b>Date of admission:</b></td><td colspan="2"><b>Diagnosis:</b></td></tr>' : ''}</table>`;
+const bFields = (labels, cols) => { cols = cols || 2; let h = '<table class="it bt" style="margin-top:6px">'; for (let i = 0; i < labels.length; i += cols) h += '<tr>' + labels.slice(i, i + cols).map(l => `<td style="width:${100 / cols}%"><b>${l}:</b></td>`).join('') + '</tr>'; return h + '</table>'; };
+const bLines = (label, n, fill) => `<div class="bsec">${label}</div><div ${fill ? 'data-fill="lines"' : ''}>${'<div class="fl"></div>'.repeat(n)}</div>`;
+const bTable = (cols, n, fill, widths) => `<table class="it bt" style="margin-top:6px" ${fill ? 'data-fill="rows"' : ''}><tr>${cols.map((c, i) => `<th ${widths && widths[i] ? `style="width:${widths[i]}"` : ''}>${c}</th>`).join('')}</tr>${`<tr>${cols.map(() => '<td>&nbsp;</td>').join('')}</tr>`.repeat(n)}</table>`;
+const bSign = (l, r) => `<div class="sign"><div>${l || 'Date & time: ____________'}</div><div style="text-align:center">______________________<br>${r || 'Signature'}</div></div>`;
+const BLANKS = {
+  opd: ['OPD Consultation Form', 'OPD', () => bHead('OPD CONSULTATION FORM') + bTable(['BP', 'Pulse', 'Temp', 'SpO₂', 'Weight', 'RR'], 1) + bLines('Chief complaints', 3) + bLines('Clinical findings', 3) + bLines('Diagnosis', 2)
+    + `<div class="bsec">℞ Treatment / Prescription</div>` + bTable(['Sr', 'Medicine', 'Dose / Freq.', 'Days', 'Instructions'], 6, true, ['8%', '44%', '18%', '10%', '20%']) + bLines('Advice / investigations', 2) + bFields(['Follow-up date', 'Next visit with']) + bSign('', 'Doctor\'s signature')],
+  adm: ['IPD Admission Record', 'IPD', () => bHead('IPD ADMISSION RECORD', 1) + bFields(['Admission type (Planned / Emergency)', 'MLC (Yes / No) & MLC No.', 'Payment type (Cash / MJPJAY / PMJAY / Insurance)', 'Scheme / policy / pre-auth No.', 'Relative name & relation', 'Relative mobile', 'Address', 'Blood group']) + bLines('Reason for admission / complaints', 3) + bLines('Provisional diagnosis', 2)
+    + `<div class="bsec">Consent for admission &amp; treatment</div><p style="font-size:12px;text-align:justify;margin:2px 0">I give my consent for admission and for routine examination, investigations, nursing care and treatment as advised by the treating doctors. The illness, line of treatment, hospital rules and approximate cost have been explained to me in a language I understand.</p>` + bLines('Remarks', 2, true) + bSign('Patient / relative signature', 'Admitting doctor')],
+  dia: ['Doctor Initial Assessment', 'IPD', () => bHead('DOCTOR INITIAL ASSESSMENT', 1) + bLines('Presenting complaints & duration', 2) + bLines('History of present illness', 2) + bFields(['Past history (DM/HTN/IHD/Asthma/TB/Surgery)', 'Current medications', 'Known allergies', 'Family / personal history'])
+    + bTable(['GC', 'Consciousness', 'GCS', 'BP', 'Pulse', 'Temp', 'RR', 'SpO₂', 'Wt', 'Pain'], 1) + bFields(['Pallor / Icterus / Cyanosis / Oedema', 'CVS', 'RS', 'CNS', 'Per abdomen', 'Local examination']) + bLines('Provisional diagnosis', 1) + bLines('Investigations advised', 1) + bLines('Treatment plan / plan of care / goals', 2, true) + bFields(['Expected length of stay', 'Nutritional needs / special risks']) + bSign('Date & time of assessment: ____________', 'Doctor\'s name & signature')],
+  nia: ['Nursing Initial Assessment', 'IPD', () => bHead('NURSING INITIAL ASSESSMENT', 1) + bFields(['Mode of arrival', 'Accompanied by', 'Consciousness', 'Known allergies']) + bTable(['BP', 'Pulse', 'Temp', 'RR', 'SpO₂', 'Weight', 'Height', 'Pain (0-10)'], 1)
+    + bFields(['Fall risk (Morse): Low / Moderate / High', 'Pressure sore risk (Braden)', 'Nutritional screening', 'Mobility', 'Skin condition', 'IV cannula (site / date)', 'Catheter / RT / drains', 'Diet', 'Elimination', 'Psychological status', 'Belongings handed to', 'Orientation to ward given (Y/N)']) + bLines('Patient / relative education given', 2) + bLines('Nursing diagnosis', 2) + bLines('Nursing care plan', 3, true) + bSign('Date & time: ____________', 'Nurse name & signature')],
+  notes: ['Daily Progress Notes', 'IPD', () => bHead('DAILY PROGRESS NOTES', 1) + bTable(['Date & time', 'Progress notes / orders', 'Sign'], 10, true, ['18%', '67%', '15%'])],
+  vitals: ['Vitals / TPR Chart', 'IPD', () => bHead('VITALS / TPR CHART', 1) + bTable(['Date', 'Time', 'BP', 'Pulse', 'Temp', 'RR', 'SpO₂', 'Pain', 'Remarks', 'Sign'], 12, true)],
+  drug: ['Drug Chart / MAR', 'IPD', () => bHead('DRUG CHART / MEDICATION ADMINISTRATION RECORD', 1) + bTable(['Medicine', 'Dose', 'Route', 'Freq.', 'Start', 'Day 1', 'Day 2', 'Day 3', 'Day 4', 'Day 5', 'Day 6', 'Day 7'], 10, true, ['22%', '8%', '7%', '7%', '8%'])],
+  hand: ['Nursing Handover (SBAR)', 'IPD', () => bHead('NURSING HANDOVER (SBAR)', 1) + bTable(['Date / shift', 'Situation', 'Background', 'Assessment', 'Recommendation / pending', 'Given by', 'Taken by'], 6, true)],
+  rbs: ['RBS / Sugar Chart', 'IPD', () => bHead('BLOOD SUGAR (RBS) CHART', 1) + bTable(['Date', 'Time', 'Timing (F/PP/R)', 'Sugar mg/dl', 'Insulin type & units', 'Given by', 'Remarks'], 12, true)],
+  io: ['Intake / Output Chart', 'IPD', () => bHead('INTAKE / OUTPUT CHART', 1) + bTable(['Date / time', 'Oral', 'IV fluids', 'RT feed', 'Total in', 'Urine', 'Drain', 'Vomit / other', 'Total out', 'Sign'], 12, true)],
+  inv: ['Investigation Chart', 'IPD', () => bHead('INVESTIGATION CHART', 1) + bTable(['Date', 'Test', 'Result', 'Unit / normal range', 'Remarks', 'Sign'], 12, true)],
+  dis: ['Discharge Summary', 'IPD', () => bHead('DISCHARGE SUMMARY', 1) + bFields(['Date & time of discharge', 'Type of discharge', 'Condition at discharge', 'Length of stay']) + bLines('Final diagnosis', 1) + bLines('Presenting complaints & brief history', 2) + bLines('Significant findings & investigations', 2) + bLines('Procedures / surgery', 1) + bLines('Course in hospital & treatment given', 2)
+    + `<div class="bsec">Medicines on discharge</div>` + bTable(['Sr', 'Medicine', 'Dose / Freq.', 'Days', 'Instructions'], 3, true, ['8%', '44%', '18%', '10%', '20%']) + bLines('Advice / warning signs', 1) + bFields(['Follow-up date', 'Follow-up with']) + bSign('Patient / relative signature', 'Doctor\'s name, signature & reg. No.')],
+  indent: ['Pharmacy Indent', 'IPD', () => bHead('PHARMACY INDENT / MEDICINE ORDER', 1) + bFields(['Indent No.', 'Date & time'], 2) + bTable(['Sr', 'Medicine', 'Dose', 'Route', 'Freq.', 'Qty', 'Issued qty'], 12, true, ['6%', '40%'])
+    + `<div style="display:flex;justify-content:space-between;margin-top:26px;font-size:12px" data-sign="1"><div>Ordered by (nurse)<br><br>__________</div><div>Doctor<br><br>__________</div><div>Issued by (pharmacist)<br><br>__________</div></div>`],
+  bill: ['IPD Bill (manual)', 'IPD', () => bHead('IPD BILL', 1) + bTable(['Sr', 'Date', 'Particulars', 'Qty', 'Rate', 'Amount (₹)'], 14, true, ['6%', '12%', '46%']) + bFields(['Gross total', 'Discount', 'Advance / paid', 'Net payable / balance']) + bSign('Patient / relative signature', 'Authorised signatory')]
+};
+TH.addMenuItem('opd', 'blankforms', 'Blank Forms (print)');
+TH.addMenuItem('ipd', 'blankforms', 'Blank Forms (print)');
+TH.page('blankforms', () => `<h2>🖨 Blank Forms</h2><p class="muted">Every blank form prints with <b>writing lines / rows up to the footer</b> of the page. Forms printed with patient data stay exactly as they are.</p>
+  <div class="card"><h3 style="margin-top:0">OPD</h3><div class="tiles">${Object.entries(BLANKS).filter(x => x[1][1] === 'OPD').map(([k, b]) => `<div class="tile sm" onclick="blankPrint('${k}')"><div class="tl">${b[0]}</div></div>`).join('')}</div></div>
+  <div class="card"><h3 style="margin-top:0">IPD</h3><div class="tiles">${Object.entries(BLANKS).filter(x => x[1][1] === 'IPD').map(([k, b]) => `<div class="tile sm" onclick="blankPrint('${k}')"><div class="tl">${b[0]}</div></div>`).join('')}</div></div>
+  <div class="card"><h3 style="margin-top:0">Certificates</h3><div class="tiles">${Object.entries(CERTS).map(([k, c]) => `<div class="tile sm" onclick="certPrint('${k}',null,{},{})"><div class="tl">${c.ic} ${c.t}</div></div>`).join('')}</div></div>
+  <div class="card"><h3 style="margin-top:0">Forms &amp; consents library</h3><div class="tiles">${db.templates.map(t => `<div class="tile sm" onclick="startPrintTpl('${t.id}',null)"><div class="tl">${esc(t.name)}</div><div class="ts">${esc(t.category)}</div></div>`).join('') || '<p class="muted">No library forms</p>'}</div></div>
+  <div class="card"><h3 style="margin-top:0">Line settings</h3><div class="row">
+   <div><label>Line spacing (mm)</label><select onchange="db.settings.pl.lineMM=+this.value;save(true)">${[6, 7, 8, 9, 10, 12].map(x => `<option ${+(db.settings.pl.lineMM) === x ? 'selected' : ''}>${x}</option>`).join('')}</select></div>
+   <label style="display:flex;gap:8px;align-items:center;font-weight:400;color:var(--tx);margin:0 14px"><input type="checkbox" style="width:auto" ${db.settings.pl.charts !== false ? 'checked' : ''} onchange="db.settings.pl.charts=this.checked;save(true)"> Add empty rows till footer on IPD chart prints (vitals, notes, drug chart…)</label>
+   <label style="display:flex;gap:8px;align-items:center;font-weight:400;color:var(--tx)"><input type="checkbox" style="width:auto" ${db.settings.pl.all ? 'checked' : ''} onchange="db.settings.pl.all=this.checked;save(true)"> Add lines till footer on ALL prints</label></div></div>`, 'blankforms');
+window.blankPrint = function (k) { const b = BLANKS[k]; $('#printArea').innerHTML = `<div class="pf">${b[2]()}</div>`; audit('Blank form printed', b[0]); save(true); setFill(b[2]().includes('data-fill="rows"') ? 'rows' : 'lines'); setTimeout(() => window.print(), 120); };
+/*TH-SIGN:4264d6273669e41237e804cb516b95db*/

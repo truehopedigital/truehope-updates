@@ -1,0 +1,471 @@
+/*TRUEHOPE-UPDATE {"id":"th-layout-designer-20261120","name":"Layout Designer (drag & drop menus and buttons)","version":"1.1","date":"2026-11-20","description":"Home tiles drag & drop, sub-menu fix. Drag & drop to re-order main menus, sub-menus and screen buttons, move options between menus, rename or hide anything, then apply in one click."} */
+(function () {
+  if (window.__thLayout) return;
+  window.__thLayout = true;
+
+  /* ================= helpers ================= */
+  var applying = false, curPage = "", ORIG = null;
+  function norm(s) { return String(s || "").toLowerCase().replace(/[^a-z0-9ऀ-෿ ]/g, " ").replace(/\s+/g, " ").trim(); }
+  function txt(e) { return ((e && e.textContent) || "").replace(/[▸▾►▼▶›»◂◀]/g, "").replace(/\s+/g, " ").trim(); }
+  function keyOf(e) { var m = ((e && e.getAttribute && e.getAttribute("onclick")) || "").match(/go\(\s*['"]([\w\-]+)['"]/); return m ? m[1] : null; }
+  function linksIn(e) { var a = Array.prototype.filter.call(e.querySelectorAll("[onclick]"), function (x) { return keyOf(x); }); if (keyOf(e)) a.unshift(e); return a; }
+  function E(s) { try { return esc(String(s == null ? "" : s)); } catch (e) { return String(s); } }
+  function L() { return window.__thlTemp || (db.settings && db.settings.thLayout) || null; }
+  function isTopLike(c) { var t = txt(c).replace(/[^A-Za-z ]/g, "").trim(); return !!t && t === t.toUpperCase(); }
+
+  try { TH.wrap("go", function (orig) { return function (p) { curPage = String(p || ""); return orig.apply(this, arguments); }; }); } catch (e) {}
+
+  /* ================= read the sidebar ================= */
+  function sidebarRoot() {
+    var links = Array.prototype.filter.call(document.querySelectorAll("[onclick]"), function (e) { return keyOf(e) && !e.closest("#thl_ed,.thl-bar"); });
+    if (links.length < 3) return null;
+    var first = links.filter(function (e) { var r = e.getBoundingClientRect(); return r.width > 0 && r.left < 260; })[0];
+    if (!first) return null;
+    var el = first.parentElement, need = Math.min(8, Math.ceil(links.length * 0.4));
+    while (el && el !== document.body) {
+      var n = el.querySelectorAll("[onclick]").length;
+      if (n >= need && el.getBoundingClientRect().width < 420) {
+        var up = el.parentElement;
+        if (!up || up === document.body || up.getBoundingClientRect().width >= 420) break;
+      }
+      el = el.parentElement;
+    }
+    if (!el || el === document.body || el.getBoundingClientRect().width >= 420) return null;
+    while (el.children.length === 1 && el.children[0].children.length) el = el.children[0];
+    return el;
+  }
+  function labelEl(block, kind) {
+    if (kind === "group") return Array.prototype.filter.call(block.children, function (x) { return !linksIn(x).length; })[0] || block.firstElementChild || block;
+    return block;
+  }
+  function origLabel(el) {
+    if (!el.hasAttribute("data-thl-orig")) el.setAttribute("data-thl-orig", txt(el));
+    return el.getAttribute("data-thl-orig");
+  }
+  function parse(root) {
+    var model = [], cur = null;
+    Array.prototype.forEach.call(root.children, function (c) {
+      if (c.matches("script,style") || c.classList.contains("thl-bar")) return;
+      var ls = linksIn(c), t = txt(c);
+      // sub-menu box that sits right after its heading (heading + separate box)
+      if (cur && !cur.box && !keyOf(c) && ((ls.length && !Array.prototype.some.call(c.children, function (x) { return !linksIn(x).length; })) || (!ls.length && !t))) {
+        cur.box = c;
+        if (ls.length) { cur.kind = "group"; cur.cont = ls[0].parentElement; cur.subs = ls.map(function (l) { return { id: keyOf(l), label: origLabel(l), el: l }; }); }
+        else cur.cont = c;
+        cur.kind = "group";
+        cur = null;
+        return;
+      }
+      if (ls.length >= 2 || (ls.length >= 1 && !keyOf(c) && c.children.length >= 2 && Array.prototype.some.call(c.children, function (x) { return !linksIn(x).length; }))) {
+        var head = labelEl(c, "group");
+        cur = null;
+        model.push({ id: norm(origLabel(head)), label: origLabel(head), el: c, head: head, kind: "group", cont: ls[0].parentElement,
+          subs: ls.map(function (l) { return { id: keyOf(l), label: origLabel(l), el: l }; }) });
+      } else if (ls.length === 1 && (isTopLike(c) || !cur)) {
+        cur = null;
+        model.push({ id: norm(origLabel(c)), label: origLabel(c), el: c, head: c, kind: "single", subs: [] });
+      } else if (ls.length === 1 && cur) {
+        cur.subs.push({ id: keyOf(ls[0]), label: origLabel(c), el: c });
+      } else if (!ls.length && t) {
+        cur = { id: norm(origLabel(c)), label: origLabel(c), el: c, head: c, kind: "flat", subs: [] };
+        model.push(cur);
+      }
+    });
+    return model;
+  }
+  function snapshot(model) {
+    return { top: model.map(function (m) { return { id: m.id, name: "", hidden: false, subs: m.subs.map(function (s) { return { id: s.id, name: "", hidden: false }; }) }; }) };
+  }
+
+  /* ================= apply layout ================= */
+  function setName(el, name, hint) {
+    if (!el) return;
+    var nodes = [], w = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, null), n;
+    while ((n = w.nextNode())) if (n.nodeValue.trim()) nodes.push(n);
+    if (!nodes.length) return;
+    var hn = norm(hint), pick = hn ? nodes.filter(function (x) { return norm(x.__thlOrig != null ? x.__thlOrig : x.nodeValue).indexOf(hn) >= 0; })[0] : null;
+    var node = pick || nodes.reduce(function (a, b) { return b.nodeValue.trim().length > a.nodeValue.trim().length ? b : a; });
+    if (node.__thlOrig == null) node.__thlOrig = node.nodeValue;
+    var o = node.__thlOrig;
+    if (!name) { if (node.nodeValue !== o) node.nodeValue = o; return; }
+    var m = o.match(/^(\s*(?:[^\w\sऀ-෿]+\s*)?)(.*?)(\s*[▸▾►▼▶›»◂◀]*\s*)$/);
+    var v = m ? m[1] + name + m[3] : name;
+    if (node.nodeValue !== v) node.nodeValue = v;
+  }
+  function setHidden(el, h) {
+    if (!el) return;
+    if (h) { el.setAttribute("data-thl-hidden", "1"); el.style.setProperty("display", "none", "important"); }
+    else if (el.getAttribute("data-thl-hidden")) { el.removeAttribute("data-thl-hidden"); el.style.removeProperty("display"); }
+  }
+
+  function apply() {
+    if (applying) return;
+    var root = sidebarRoot();
+    if (!root) return;
+    var model = parse(root);
+    if (!ORIG && model.length) ORIG = window.__thlOrig = snapshot(model);
+    var lay = L();
+    if (!lay || !lay.top) { tiles(model, null); return; }
+    applying = true;
+    try {
+      var tops = {}, subs = {}, placed = {};
+      model.forEach(function (m) { tops[m.id] = m; m.subs.forEach(function (s) { subs[s.id] = s; }); });
+      lay.top.forEach(function (t) { (t.subs || []).forEach(function (s) { placed[s.id] = 1; }); });
+      var order = [];
+      lay.top.forEach(function (t) { if (tops[t.id]) order.push([tops[t.id], t]); });
+      model.forEach(function (m) { if (!lay.top.some(function (t) { return t.id === m.id; })) order.push([m, null]); });
+      order.forEach(function (pair) {
+        var m = pair[0], t = pair[1], list = [];
+        if (t) (t.subs || []).forEach(function (st) { if (subs[st.id]) list.push([subs[st.id], st]); });
+        m.subs.forEach(function (s) { if (!placed[s.id]) list.push([s, null]); });
+        root.appendChild(m.el);
+        if (m.box) root.appendChild(m.box);
+        list.forEach(function (p) {
+          if (m.kind === "group" && m.cont) m.cont.appendChild(p[0].el);
+          else root.appendChild(p[0].el);
+          setName(p[0].el, p[1] && p[1].name);
+          setHidden(p[0].el, !!(p[1] && p[1].hidden) || !!(t && t.hidden && m.kind === "flat"));
+        });
+        setName(m.head, t && t.name);
+        setHidden(m.el, !!(t && t.hidden));
+        if (m.box) setHidden(m.box, !!(t && t.hidden));
+      });
+    } catch (e) { console.warn("Layout:", e); }
+    finally { setTimeout(function () { applying = false; }, 0); }
+    tiles(model, lay);
+    screenApply();
+  }
+
+  /* home tiles follow the menu order / names / hide */
+  function tiles(model, lay) {
+    if (!lay || !lay.top) return;
+    var manual = !!(lay.screens && lay.screens.home);
+    var side = sidebarRoot();
+    var cands = Array.prototype.filter.call(document.querySelectorAll("div,a,button,li"), function (e) {
+      return /\d+\s+options?/i.test(e.textContent || "") && !e.closest("#thl_ed") && (e.textContent || "").length < 80 && !(side && side.contains(e));
+    });
+    var tilesBy = {};
+    cands.forEach(function (e) {
+      var tile = e;
+      while (tile.parentElement && (tile.parentElement.textContent.match(/options?/gi) || []).length === 1) tile = tile.parentElement;
+      model.forEach(function (m) {
+        var lab = norm(m.label);
+        if (lab && norm(tile.textContent).indexOf(lab) === 0) tilesBy[m.id] = tile;
+      });
+    });
+    var ks = Object.keys(tilesBy);
+    if (ks.length < 3) return;
+    var grid = tilesBy[ks[0]].parentElement;
+    var others = Array.prototype.filter.call(grid.children, function (ch) { return ks.every(function (k) { return tilesBy[k] !== ch; }); });
+    applying = true;
+    try {
+      lay.top.forEach(function (t) {
+        var tl = tilesBy[t.id];
+        if (!tl || tl.parentElement !== grid) return;
+        if (!manual) grid.appendChild(tl);
+        setHidden(tl, !!t.hidden);
+        var mm = model.filter(function (x) { return x.id === t.id; })[0];
+        setName(tl, t.name, mm && mm.label);
+      });
+      if (!manual) others.forEach(function (o) { grid.appendChild(o); });
+    } finally { setTimeout(function () { applying = false; }, 0); }
+  }
+
+  /* ================= screen buttons: arrange mode ================= */
+  var arrange = false, dragBtn = null;
+  function mainRoot() {
+    var sb = sidebarRoot();
+    var m = document.querySelector("main,#main,.main,#content,.content,#page,.page");
+    return { main: m || document.body, side: sb };
+  }
+  function isBtn(e) { return e.matches && e.matches("button,.btn,input[type=button],input[type=submit]") && !e.closest(".thl-bar,#thl_ed,.thdg-fab"); }
+  function btnText(b) { return ((b.innerText || b.textContent || b.value || b.title || "").replace(/\d+\s+options?/gi, "").replace(/\s+/g, " ").trim()).slice(0, 60); }
+  function pageKey() { return curPage || "home"; }
+  function groups() {
+    var r = mainRoot(), seen = [], out = [];
+    Array.prototype.forEach.call(r.main.querySelectorAll("button,.btn,input[type=button],input[type=submit]"), function (b) {
+      if (!isBtn(b) || (r.side && r.side.contains(b))) return;
+      var p = b.parentElement;
+      if (seen.indexOf(p) >= 0) return;
+      seen.push(p);
+      var bs = Array.prototype.filter.call(p.children, isBtn);
+      if (bs.length >= 2) out.push({ p: p, bs: bs, sig: bs.map(btnText).slice().sort().join("|") });
+    });
+    // tiles / cards (e.g. Home screen boxes)
+    Array.prototype.forEach.call(r.main.querySelectorAll("[onclick]"), function (el) {
+      var p = el.parentElement;
+      if (!p || seen.indexOf(p) >= 0 || (r.side && r.side.contains(p)) || p.closest(".thl-bar,#thl_ed")) return;
+      seen.push(p);
+      var kids = Array.prototype.filter.call(p.children, function (k) { return k.hasAttribute("onclick") || getComputedStyle(k).cursor === "pointer"; });
+      if (kids.length >= 3 && kids.length >= p.children.length * 0.8 && !kids.some(function (k) { return /^(INPUT|SELECT|TEXTAREA|OPTION)$/.test(k.tagName); }))
+        out.push({ p: p, bs: kids, sig: kids.map(btnText).slice().sort().join("|") });
+    });
+    return out;
+  }
+  function screenApply() {
+    var lay = L();
+    if (!lay || !lay.screens || !lay.screens[pageKey()]) return;
+    var conf = lay.screens[pageKey()];
+    applying = true;
+    try {
+      groups().forEach(function (g) {
+        var c = conf[g.sig];
+        if (!c) return;
+        var by = {};
+        g.bs.forEach(function (b) { by[btnText(b)] = b; });
+        var want = c.order.map(function (t) { return by[t]; }).filter(Boolean);
+        g.bs.forEach(function (b) { if (want.indexOf(b) < 0) want.push(b); });
+        var marks = g.bs.map(function (b) { var mk = document.createComment("thl"); b.parentNode.insertBefore(mk, b); return mk; });
+        want.forEach(function (b, i) { marks[i].parentNode.insertBefore(b, marks[i]); });
+        marks.forEach(function (mk) { mk.remove(); });
+        g.bs.forEach(function (b) { b.classList.toggle("thl-shid", (c.hidden || []).indexOf(btnText(b)) >= 0 && !arrange); });
+      });
+    } finally { setTimeout(function () { applying = false; }, 0); }
+  }
+
+  function arrangeOn() {
+    arrange = true;
+    document.body.classList.add("thl-arr");
+    var bar = document.querySelector(".thl-bar");
+    if (!bar) {
+      bar = document.createElement("div");
+      bar.className = "thl-bar";
+      bar.innerHTML = "<b>✋ Arrange buttons &amp; tiles</b><span>Drag a button or Home tile to move it • Right-click to hide / show it</span>" +
+        '<button type="button" data-a="save">✔ Save this screen</button><button type="button" data-a="reset">Reset this screen</button><button type="button" data-a="exit">Exit</button>';
+      bar.addEventListener("click", function (e) {
+        var a = e.target.getAttribute("data-a");
+        if (a === "save") saveScreen();
+        if (a === "reset") { var lay = db.settings.thLayout; if (lay && lay.screens) delete lay.screens[pageKey()]; save(); toast("Screen reset — reopen it to see original order"); }
+        if (a === "exit") arrangeOff();
+      });
+      document.body.appendChild(bar);
+    }
+    markScreen();
+  }
+  function arrangeOff() {
+    arrange = false;
+    document.body.classList.remove("thl-arr");
+    var bar = document.querySelector(".thl-bar");
+    if (bar) bar.remove();
+    Array.prototype.forEach.call(document.querySelectorAll("[data-thl-g]"), function (p) { p.removeAttribute("data-thl-g"); });
+    Array.prototype.forEach.call(document.querySelectorAll("[data-thl-b]"), function (b) { b.removeAttribute("data-thl-b"); b.removeAttribute("draggable"); b.classList.remove("thl-off"); });
+    screenApply();
+  }
+  function markScreen() {
+    if (!arrange) return;
+    var lay = L(), conf = (lay && lay.screens && lay.screens[pageKey()]) || {};
+    groups().forEach(function (g) {
+      g.p.setAttribute("data-thl-g", "1");
+      var hid = (conf[g.sig] && conf[g.sig].hidden) || [];
+      g.bs.forEach(function (b) {
+        if (b.getAttribute("data-thl-b")) return;
+        b.setAttribute("data-thl-b", "1");
+        b.setAttribute("draggable", "true");
+        if (hid.indexOf(btnText(b)) >= 0) { b.classList.add("thl-off"); b.classList.remove("thl-shid"); }
+      });
+    });
+  }
+  function saveScreen() {
+    db.settings = db.settings || {};
+    var lay = db.settings.thLayout = db.settings.thLayout || { top: null, screens: {} };
+    lay.screens = lay.screens || {};
+    var conf = {};
+    groups().forEach(function (g) {
+      conf[g.sig] = { order: g.bs.map(btnText), hidden: g.bs.filter(function (b) { return b.classList.contains("thl-off"); }).map(btnText) };
+    });
+    lay.screens[pageKey()] = conf;
+    save();
+    try { audit("Screen layout saved", curPage); } catch (e) {}
+    toast("Button layout saved for this screen");
+  }
+  // arrange-mode events
+  document.addEventListener("click", function (e) {
+    if (!arrange) return;
+    var b = e.target.closest && e.target.closest("[data-thl-b]");
+    if (b) { e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation(); }
+  }, true);
+  document.addEventListener("contextmenu", function (e) {
+    if (!arrange) return;
+    var b = e.target.closest && e.target.closest("[data-thl-b]");
+    if (b) { e.preventDefault(); b.classList.toggle("thl-off"); }
+  }, true);
+  document.addEventListener("dragstart", function (e) {
+    if (arrange) {
+      var b = e.target.closest && e.target.closest("[data-thl-b]");
+      if (b) { dragBtn = b; b.classList.add("thl-dragging"); try { e.dataTransfer.setData("text/plain", "b"); } catch (x) {} return; }
+    }
+    var h = e.target.closest && e.target.closest(".thl-h");
+    if (h) { edDrag = h.closest(".thl-card,.thl-sub"); edDrag.classList.add("thl-dragging"); try { e.dataTransfer.setData("text/plain", "m"); } catch (x) {} e.dataTransfer.effectAllowed = "move"; }
+  }, true);
+  document.addEventListener("dragend", function () {
+    if (dragBtn) { dragBtn.classList.remove("thl-dragging"); dragBtn = null; }
+    if (edDrag) { edDrag.classList.remove("thl-dragging"); edDrag = null; }
+  }, true);
+  document.addEventListener("dragover", function (e) {
+    if (dragBtn) {
+      var t = e.target.closest && e.target.closest("[data-thl-b]");
+      if (!t || t === dragBtn || t.parentElement !== dragBtn.parentElement) { if (t && t.parentElement === dragBtn.parentElement) e.preventDefault(); return; }
+      e.preventDefault();
+      var r = t.getBoundingClientRect(), before = e.clientY < r.top + 4 || (e.clientY <= r.bottom && e.clientX < r.left + r.width / 2);
+      t.parentElement.insertBefore(dragBtn, before ? t : t.nextSibling);
+      return;
+    }
+    if (edDrag) edOver(e);
+  }, true);
+  document.addEventListener("drop", function (e) { if (dragBtn || edDrag) e.preventDefault(); }, true);
+
+  /* ================= style ================= */
+  TH.css([
+    ".thl-arr [data-thl-g]{outline:2px dashed #16a34a;outline-offset:4px;border-radius:6px}",
+    ".thl-arr [data-thl-b]{cursor:grab !important;box-shadow:0 0 0 2px rgba(22,163,74,.35)}",
+    ".thl-arr .thl-off{opacity:.35;text-decoration:line-through}",
+    ".thl-dragging{opacity:.4}",
+    ".thl-shid{display:none !important}",
+    ".thl-bar{position:fixed;top:8px;left:50%;transform:translateX(-50%);z-index:99995;background:#0b2545;color:#fff;border-radius:10px;padding:8px 12px;display:flex;gap:10px;align-items:center;box-shadow:0 8px 24px rgba(0,0,0,.35);font:13px 'Segoe UI',Arial}",
+    ".thl-bar span{opacity:.8;font-size:12px}",
+    ".thl-bar button{border:0;border-radius:7px;padding:6px 10px;cursor:pointer;font-weight:600}",
+    ".thl-bar button[data-a=save]{background:#16a34a;color:#fff}",
+    "#thl_ed{display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:16px;align-items:start}",
+    "#thl_tops{display:flex;flex-direction:column;gap:8px}",
+    ".thl-card{border:1px solid #cbd5e1;border-radius:10px;background:#fff;padding:8px 10px;box-shadow:0 1px 3px rgba(0,0,0,.06)}",
+    ".thl-card.thl-hid,.thl-sub.thl-hid{opacity:.5;background:#f1f5f9}",
+    ".thl-row{display:flex;align-items:center;gap:8px}",
+    ".thl-row input.thl-name{flex:1;font-weight:700;min-width:120px}",
+    ".thl-row small{color:#64748b;font-size:11px;white-space:nowrap}",
+    ".thl-h{cursor:grab;font-size:18px;color:#64748b;user-select:none;padding:0 4px}",
+    ".thl-subs{margin:8px 0 2px 26px;min-height:26px;border:1.5px dashed #e2e8f0;border-radius:8px;padding:4px;display:flex;flex-direction:column;gap:4px}",
+    ".thl-subs:empty::after{content:'Drop sub-menu options here';color:#94a3b8;font-size:12px;padding:3px 6px}",
+    ".thl-sub{display:flex;align-items:center;gap:8px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:7px;padding:4px 8px}",
+    ".thl-sub input.thl-name{flex:1;font-weight:500}",
+    ".thl-side{position:sticky;top:10px}"
+  ].join(""));
+
+  /* ================= keep layout applied ================= */
+  var tm = null;
+  new MutationObserver(function () {
+    if (applying) return;
+    clearTimeout(tm);
+    tm = setTimeout(function () { apply(); if (arrange) markScreen(); }, 120);
+  }).observe(document.documentElement, { childList: true, subtree: true });
+  setTimeout(apply, 300);
+
+  /* ================= LAYOUT DESIGNER screen ================= */
+  var edDrag = null;
+  function edOver(e) {
+    var isSub = edDrag.classList.contains("thl-sub"), list;
+    if (isSub) {
+      list = e.target.closest && e.target.closest(".thl-subs");
+      if (!list) { var card = e.target.closest && e.target.closest(".thl-card"); list = card && card.querySelector(".thl-subs"); }
+    } else list = e.target.closest && e.target.closest("#thl_tops");
+    if (!list) return;
+    e.preventDefault();
+    var sel = isSub ? ".thl-sub" : ".thl-card", after = null;
+    var items = Array.prototype.filter.call(list.children, function (c) { return c.matches(sel) && c !== edDrag; });
+    for (var i = 0; i < items.length; i++) { var r = items[i].getBoundingClientRect(); if (e.clientY < r.top + r.height / 2) { after = items[i]; break; } }
+    if (after) list.insertBefore(edDrag, after); else list.appendChild(edDrag);
+  }
+
+  function edModel() {
+    var root = sidebarRoot(), model = root ? parse(root) : [], lay = (db.settings && db.settings.thLayout) || null, out = [];
+    var byTop = {}, bySub = {};
+    model.forEach(function (m) { byTop[m.id] = m; m.subs.forEach(function (s) { bySub[s.id] = s; }); });
+    var used = {};
+    if (lay && lay.top) lay.top.forEach(function (t) {
+      var m = byTop[t.id];
+      if (!m) return;
+      used[t.id] = 1;
+      out.push({ id: t.id, label: m.label, kind: m.kind, name: t.name || "", hidden: !!t.hidden,
+        subs: (t.subs || []).filter(function (s) { return bySub[s.id]; }).map(function (s) { bySub[s.id].__u = 1; return { id: s.id, label: bySub[s.id].label, name: s.name || "", hidden: !!s.hidden }; }) });
+    });
+    model.forEach(function (m) {
+      var o = used[m.id] ? out.filter(function (x) { return x.id === m.id; })[0] : null;
+      if (!o) { o = { id: m.id, label: m.label, kind: m.kind, name: "", hidden: false, subs: [] }; out.push(o); }
+      m.subs.forEach(function (s) { if (!s.__u) { o.subs.push({ id: s.id, label: s.label, name: "", hidden: false }); } delete s.__u; });
+    });
+    return out;
+  }
+  function subRow(s) {
+    return '<div class="thl-sub' + (s.hidden ? " thl-hid" : "") + '" data-id="' + E(s.id) + '"><span class="thl-h" draggable="true" title="Drag">⠿</span>' +
+      '<input class="thl-name" value="' + E(s.name) + '" placeholder="' + E(s.label) + '"><small>' + E(s.label) + "</small>" +
+      '<label style="font-size:12px;white-space:nowrap"><input type="checkbox" class="thl-show"' + (s.hidden ? "" : " checked") + ' onchange="this.closest(\'.thl-sub\').classList.toggle(\'thl-hid\',!this.checked)"> Show</label></div>';
+  }
+
+  TH.addMenuItem("set", "thLayout", "Layout Designer (drag & drop)");
+  TH.page("thLayout", function () {
+    var m = edModel();
+    if (!m.length) return "<h2>Layout Designer</h2><div class='card'>Menu not found on this screen. Please open the software normally (after login) and try again.</div>";
+    var h = "<h2>🧩 Layout Designer</h2>" +
+      '<div id="thl_ed"><div><div class="card" style="margin-bottom:10px;font-size:13px">Drag <b>⠿</b> to move a <b>main menu</b> up / down, or to move a <b>sub-menu option</b> inside the same menu or <b>into another menu</b>. Type a new name to rename (leave blank = original name). Untick <b>Show</b> to hide. Press <b>Preview</b> to see it on the left menu, then <b>Apply &amp; Save</b>.</div>' +
+      '<div id="thl_tops">' +
+      m.map(function (t) {
+        return '<div class="thl-card' + (t.hidden ? " thl-hid" : "") + '" data-id="' + E(t.id) + '" data-kind="' + t.kind + '"><div class="thl-row"><span class="thl-h" draggable="true" title="Drag">⠿</span>' +
+          '<input class="thl-name" value="' + E(t.name) + '" placeholder="' + E(t.label) + '"><small>' + E(t.label) + "</small>" +
+          '<label style="font-size:12px;white-space:nowrap"><input type="checkbox" class="thl-show"' + (t.hidden ? "" : " checked") + ' onchange="this.closest(\'.thl-card\').classList.toggle(\'thl-hid\',!this.checked)"> Show</label></div>' +
+          (t.kind === "single" ? "" : '<div class="thl-subs">' + t.subs.map(subRow).join("") + "</div>") + "</div>";
+      }).join("") + "</div></div>" +
+      '<div class="thl-side"><div class="card"><h3 style="margin-top:0">Menus</h3>' +
+      '<button class="btn" type="button" style="width:100%;margin-bottom:6px" onclick="thLay.saveMenu()">✔ Apply &amp; Save</button>' +
+      '<button class="btn sec" type="button" style="width:100%;margin-bottom:6px" onclick="thLay.preview()">👁 Preview on left menu</button>' +
+      '<button class="btn sec" type="button" style="width:100%;margin-bottom:6px" onclick="thLay.undo()">↶ Undo unsaved changes</button>' +
+      '<button class="btn sec" type="button" style="width:100%" onclick="thLay.reset()">⟲ Reset to original menu</button>' +
+      '<p style="font-size:12px;color:#64748b">Home screen tiles follow the same order, names and hide settings — or arrange the tiles yourself with “Start arranging” below.</p></div>' +
+      '<div class="card"><h3 style="margin-top:0">Screen buttons</h3><p style="font-size:13px;margin-top:0">Arrange the buttons inside any screen and the <b>Home screen tiles</b> (e.g. put <i>Save</i> first, LOG OUT tile last, hide unused tiles).</p>' +
+      '<button class="btn" type="button" style="width:100%;margin-bottom:6px" onclick="thLay.arrange()">✋ Start arranging buttons</button>' +
+      '<button class="btn sec" type="button" style="width:100%" onclick="thLay.resetScreens()">⟲ Reset all screen buttons</button>' +
+      '<p style="font-size:12px;color:#64748b">After starting, open any screen, drag the buttons, right-click to hide, then press “Save this screen” in the green bar at the top.</p></div></div></div>';
+    return h;
+  });
+
+  function readEditor() {
+    return {
+      top: Array.prototype.map.call(document.querySelectorAll("#thl_tops > .thl-card"), function (c) {
+        return {
+          id: c.getAttribute("data-id"),
+          name: c.querySelector(".thl-row .thl-name").value.trim(),
+          hidden: !c.querySelector(".thl-row .thl-show").checked,
+          subs: Array.prototype.map.call(c.querySelectorAll(".thl-sub"), function (s) {
+            return { id: s.getAttribute("data-id"), name: s.querySelector(".thl-name").value.trim(), hidden: !s.querySelector(".thl-show").checked };
+          })
+        };
+      })
+    };
+  }
+
+  window.thLay = {
+    preview: function () {
+      var cur = (db.settings && db.settings.thLayout) || {};
+      window.__thlTemp = { top: readEditor().top, screens: cur.screens || {} };
+      apply();
+      toast("Preview applied on the left menu — press Apply & Save to keep it");
+    },
+    saveMenu: function () {
+      db.settings = db.settings || {};
+      var lay = db.settings.thLayout = db.settings.thLayout || { screens: {} };
+      lay.top = readEditor().top;
+      window.__thlTemp = null;
+      save();
+      try { audit("Menu layout saved", lay.top.length + " menus"); } catch (e) {}
+      apply();
+      toast("Menu layout saved");
+    },
+    undo: function () { window.__thlTemp = null; apply(); try { go("thLayout"); } catch (e) {} },
+    reset: function () {
+      if (!confirm("Reset the menu to the original order and names?")) return;
+      var lay = db.settings && db.settings.thLayout;
+      if (ORIG) { window.__thlTemp = { top: ORIG.top, screens: {} }; apply(); }
+      window.__thlTemp = null;
+      if (lay) lay.top = null;
+      save();
+      toast("Menu reset to original");
+      try { go("thLayout"); } catch (e) {}
+    },
+    arrange: function () { arrangeOn(); toast("Arrange mode ON — open any screen and drag its buttons"); },
+    resetScreens: function () {
+      if (!confirm("Reset button order on ALL screens?")) return;
+      if (db.settings && db.settings.thLayout) db.settings.thLayout.screens = {};
+      save();
+      toast("All screen buttons reset — reopen screens to see original order");
+    }
+  };
+})();
+/*TH-SIGN:d507b3b3dee9b0d2f663827a2f6169dd*/

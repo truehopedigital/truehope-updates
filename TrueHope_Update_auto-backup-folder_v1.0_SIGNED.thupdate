@@ -1,0 +1,107 @@
+/*TRUEHOPE-UPDATE {"id":"auto-backup-folder","name":"Auto Backup Folder (auto-create)","version":"1.0","date":"2026-11-18","description":"Creates its own backup folder TrueHope_Hospital_Backup automatically, saves every hour and on logout; falls back to Downloads if Chrome refuses."} */
+
+const isSrv = () => (typeof SERVER !== 'undefined' && SERVER);
+const BK_SUB = 'TrueHope_Hospital_Backup';
+
+/* ---- download backup (always works) ---- */
+window.bkDownload = function () {
+  const d = new Date();
+  const name = 'TrueHope_AutoBackup_' + today() + '_' + pad(d.getHours(), 2) + 'h' + pad(d.getMinutes(), 2) + '.json';
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([JSON.stringify(db)], { type: 'application/json' }));
+  a.download = name; document.body.appendChild(a); a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 4000);
+  localStorage.setItem('th_last_bk', String(Date.now())); localStorage.setItem('th_last_bk_name', name);
+  bkInd('✓ Backup downloaded ' + d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }));
+  return true;
+};
+
+window.bkUseDownload = function (why) {
+  if (!confirm((why ? why + '\n\n' : '') + 'Use AUTOMATIC DOWNLOAD backup instead?\n\nA backup file will be saved in Chrome\'s Downloads folder every ' + (db.settings.bkHours || 1) + ' hour(s) and on logout.\nIf Chrome asks "Download multiple files?", click ALLOW.')) return;
+  db.settings.bkOn = true; db.settings.bkMode = 'download'; db.settings.bkFolder = 'Chrome Downloads folder';
+  audit('Auto-backup set', 'download mode'); save(true); bkDownload(); go('backup');
+};
+
+/* ---- pick a place, auto-create the backup folder inside it ---- */
+window.chooseBkFolder = async function () {
+  if (!('showDirectoryPicker' in window)) { bkUseDownload('This browser cannot pick a folder.'); return; }
+  let h;
+  try { h = await window.showDirectoryPicker({ id: 'truehope-backup', mode: 'readwrite' }); }
+  catch (e) {
+    if (e && e.name === 'AbortError' && !/secur|not allowed/i.test(e.message || '')) return; // user pressed Cancel
+    bkUseDownload('Chrome did not allow choosing that folder (' + ((e && e.name) || 'error') + ').\nTip: choose Documents or Desktop, not a whole drive like D:\\.');
+    return;
+  }
+  let sub;
+  try { sub = await h.getDirectoryHandle(BK_SUB, { create: true }); }
+  catch (e) { bkUseDownload('Chrome did not allow creating a folder there (' + e.name + '). Please choose Documents or Desktop next time.'); return; }
+  bkDir = sub;
+  try { await IDB.set('dir', sub); } catch (e) { }
+  db.settings.bkOn = true; db.settings.bkMode = 'folder'; db.settings.bkFolder = h.name + '\\' + BK_SUB;
+  audit('Auto-backup folder set', db.settings.bkFolder); save(true);
+  const ok = await runBackup();
+  if (ok) alert('✓ Backup folder created: ' + db.settings.bkFolder + '\nA backup was saved there now, and will be saved automatically every ' + (db.settings.bkHours || 1) + ' hour(s) and on logout.');
+  else bkUseDownload('Could not write into that folder.');
+  go('backup');
+};
+
+/* ---- the backup itself ---- */
+window.runBackup = async function () {
+  if (db.settings.bkMode === 'download') return bkDownload();
+  try { if (!bkDir) bkDir = await IDB.get('dir'); } catch (e) { }
+  if (!bkDir) { bkInd('⚠ Backup folder not set'); return false; }
+  if (!await bkPerm(false)) { bkInd('⚠ Backup paused — click here to allow'); return false; }
+  try {
+    const d = new Date();
+    const name = 'TrueHope_AutoBackup_' + today() + '_' + pad(d.getHours(), 2) + 'h.json';
+    const fh = await bkDir.getFileHandle(name, { create: true });
+    const w = await fh.createWritable(); await w.write(JSON.stringify(db)); await w.close();
+    localStorage.setItem('th_last_bk', String(Date.now())); localStorage.setItem('th_last_bk_name', name);
+    try { await pruneBk(); } catch (e) { }
+    bkInd('✓ Backup ' + d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }));
+    return true;
+  } catch (e) { bkInd('⚠ Backup failed — ' + e.message); return false; }
+};
+
+window.bkOnLogin = async function () {
+  if (isSrv()) return;
+  if (!db.settings.bkOn) { bkInd('Auto-backup OFF'); return; }
+  if (db.settings.bkMode === 'download') { bkInd('✓ Auto-backup ON (Downloads)'); await bkTick(); return; }
+  try { bkDir = await IDB.get('dir'); } catch (e) { }
+  if (!bkDir) { bkInd('⚠ Backup folder not set'); return; }
+  await bkPerm(true); await bkTick();
+  if (!bkState) bkInd('✓ Auto-backup ON');
+};
+
+window.bkClick = async function () {
+  if (db.settings.bkOn && db.settings.bkMode !== 'download' && await bkPerm(true) && await runBackup()) {
+    alert('✓ Backup saved in folder: ' + (db.settings.bkFolder || '')); return;
+  }
+  bkDownload();
+};
+
+window.logout = async function () {
+  if (cur && db.settings.bkOn && !isSrv()) {
+    try { await runBackup(); } catch (e) { }
+    if (db.settings.bkMode === 'download') await new Promise(r => setTimeout(r, 1200));
+  }
+  if (cur) { audit('Logout', cur.u); save(true); }
+  sessionStorage.removeItem('opd_user'); location.reload();
+};
+
+/* ---- new Backup screen card ---- */
+window.autoBkCard = function () {
+  if (isSrv() && typeof srvBkCard === 'function') return srvBkCard();
+  const s = db.settings, last = +localStorage.getItem('th_last_bk') || 0;
+  return `<div class="card" style="border-color:var(--g)"><h3 style="margin-top:0">⏱ Automatic Backup</h3>
+  <p>Status: <b style="color:${s.bkOn ? 'var(--g)' : 'var(--red)'}">${s.bkOn ? 'ON' : 'OFF'}</b>${s.bkOn ? ' &nbsp; Saving to: <b>' + esc(s.bkMode === 'download' ? 'Chrome Downloads folder' : s.bkFolder || '') + '</b>' : ''}${last ? ' &nbsp; Last backup: <b>' + new Date(last).toLocaleString('en-IN') + '</b>' : ''}</p>
+  <div style="background:#eef9f2;border:1px solid #9fd3b6;border-radius:8px;padding:10px 12px;margin-bottom:10px;font-size:13px"><b>How:</b> Click the green button → a window opens → click <b>Documents</b> (or Desktop, or any folder like D:\\Hospital) → click <b>Select Folder</b> → click <b>Allow / Save changes</b>.<br>
+   The software <b>creates a folder named "${BK_SUB}"</b> there by itself and saves all backups in it. ⚠ Do <b>not</b> select a whole drive like C:\\ or D:\\ — Chrome does not allow that.</div>
+  <div class="row"><button class="btn" onclick="chooseBkFolder()">📁 Create backup folder &amp; turn ON auto-backup</button>
+   <button class="btn sec" onclick="bkUseDownload('')">Use Downloads folder instead</button>
+   <button class="btn sec" onclick="bkClick().then(()=>go('backup'))">Backup now</button></div>
+  <div class="row" style="margin-top:8px"><div><label>Every</label><select onchange="db.settings.bkHours=+this.value;save(true)">${[1, 2, 4, 8, 24].map(h => `<option value="${h}" ${+s.bkHours === h ? 'selected' : ''}>${h} hour${h > 1 ? 's' : ''}</option>`).join('')}</select></div>
+   ${s.bkOn ? `<button class="btn sec red" onclick="db.settings.bkOn=false;save(true);bkInd('Auto-backup OFF');go('backup')">Turn OFF</button>` : ''}</div>
+  <p class="muted" style="font-size:12px;margin-bottom:0">Backup files are named like <b>TrueHope_AutoBackup_2026-11-18_10h.json</b>. If Chrome asks <b>"Download multiple files?"</b> — click <b>Allow</b>. To restore: Restore below → pick the latest backup file.</p></div>`;
+};
+/*TH-SIGN:56c764cc918de6430f6c16b22ccab2a0*/

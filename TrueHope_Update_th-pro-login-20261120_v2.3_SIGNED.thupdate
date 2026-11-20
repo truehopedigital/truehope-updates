@@ -1,0 +1,448 @@
+/*TRUEHOPE-UPDATE {"id":"th-pro-login-20261120","name":"Professional Login Screen","version":"2.3","date":"2026-11-20","description":"Design settings now fully applied (button, box colours). Fixed login stuck after v1.0. Compact professional login: typed username (user list hidden), caps-lock warning, clock, plus Setting Menu > Login Page Design to customise everything."} */
+(function () {
+  /* ================= SETTINGS ================= */
+  var DEF = {
+    title: "TRUE HOPE DIGITAL SOLUTIONS", subtitle: "Hospital Management Software", welcome: "Sign in to continue",
+    badgeText: "TH", logo: "", g1: "#16a34a", g2: "#0f5132", titleColor: "#0b2545",
+    userMode: "type", rememberUser: true, showHospital: true, btnText: "Login",
+    width: 360, position: "center", radius: 16, cardColor: "#ffffff", cardOpacity: 96, overlay: 55, bg: "",
+    accent: "#16a34a", b1: "#0b2545", b2: "#16a34a",
+    showClock: true, showSecure: true,
+    support: "Support: 7972655342 • www.Truehopehealthcaresolutions.com",
+    copyright: "© 2026 TRUE HOPE HEALTHCARE SOLUTIONS. All rights reserved."
+  };
+  function C() {
+    db.settings = db.settings || {};
+    var s = db.settings.thLogin || {}, o = {};
+    for (var k in DEF) o[k] = (k in s) ? s[k] : DEF[k];
+    return o;
+  }
+  function stamp() { return String((db.settings && db.settings.thLoginStamp) || 0); }
+  function rgba(h, a) {
+    h = String(h || "#ffffff").replace("#", "");
+    if (h.length === 3) h = h.replace(/(.)/g, "$1$1");
+    var n = parseInt(h, 16) || 0;
+    return "rgba(" + (n >> 16 & 255) + "," + (n >> 8 & 255) + "," + (n & 255) + "," + a + ")";
+  }
+  function vars(el, c) {
+    var s = el.style;
+    s.setProperty("--th-w", (+c.width || 360) + "px");
+    s.setProperty("--th-r", (+c.radius || 16) + "px");
+    s.setProperty("--th-card", rgba(c.cardColor, (+c.cardOpacity || 96) / 100));
+    s.setProperty("--th-acc", c.accent); s.setProperty("--th-b1", c.b1); s.setProperty("--th-b2", c.b2);
+    s.setProperty("--th-g1", c.g1); s.setProperty("--th-g2", c.g2); s.setProperty("--th-tc", c.titleColor);
+  }
+
+  /* ================= STYLE (compact) ================= */
+  TH.css([
+    /* NOTE: never force display on the login screen, so the software can hide it after login */
+    ".th-login-screen.th-pos-left .th-login-card{align-self:flex-start;margin-left:7vw !important;margin-right:auto !important}",
+    ".th-login-screen.th-pos-right .th-login-card{align-self:flex-end;margin-right:7vw !important;margin-left:auto !important}",
+    ".th-hide{display:none !important}",
+    ".th-login-card{width:var(--th-w,360px) !important;max-width:92vw !important;max-height:96vh;overflow:auto;margin-left:auto;margin-right:auto;padding:22px 26px 14px !important;",
+    "border-radius:var(--th-r,16px) !important;background:var(--th-card,rgba(255,255,255,.96)) !important;box-shadow:0 24px 60px rgba(0,0,0,.45) !important;",
+    "font-family:'Segoe UI',Roboto,Arial,sans-serif !important;box-sizing:border-box !important;text-align:left;animation:thPop .35s ease-out}",
+    "@keyframes thPop{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}",
+    ".th-brand{text-align:center;margin-bottom:12px}",
+    ".th-badge{width:48px;height:48px;margin:0 auto 8px;border-radius:12px;display:flex;align-items:center;justify-content:center;overflow:hidden;",
+    "background:linear-gradient(135deg,var(--th-g1),var(--th-g2));color:#fff;font:800 18px/1 'Segoe UI',Arial;letter-spacing:.5px;box-shadow:0 6px 16px rgba(0,0,0,.2)}",
+    ".th-badge.img{background:transparent;box-shadow:none;width:auto;max-width:180px;height:52px}",
+    ".th-badge img{max-height:52px;max-width:180px;object-fit:contain}",
+    ".th-app{font:800 14.5px/1.25 'Segoe UI',Arial;letter-spacing:1.2px;color:var(--th-tc);margin:0}",
+    ".th-sub{font-size:11.5px;color:#64748b;margin-top:2px}",
+    ".th-welc{font-size:12px;color:#475569;margin-top:10px}",
+    ".th-divider{height:1px;background:linear-gradient(90deg,transparent,#cbd5e1,transparent);margin:12px 0 10px}",
+    ".th-login-card .th-hosp{display:block;text-align:center;font:700 13.5px/1.3 'Segoe UI',Arial !important;color:var(--th-acc) !important;",
+    "background:color-mix(in srgb,var(--th-acc) 9%,#fff);border:1px solid color-mix(in srgb,var(--th-acc) 30%,#fff);border-radius:8px;padding:6px 10px;margin:0 0 12px !important}",
+    ".th-login-card label,.th-login-card .th-lbl{display:block;font-size:11px !important;font-weight:600 !important;color:#475569 !important;margin:0 0 4px !important;text-transform:uppercase;letter-spacing:.6px}",
+    ".th-login-card input:not([type=checkbox]):not([type=radio]):not([type=file]),.th-login-card select{width:100% !important;height:40px !important;box-sizing:border-box !important;",
+    "border:1.5px solid #d4dbe6 !important;border-radius:9px !important;background:#f8fafc !important;font-size:14px !important;color:#0f172a !important;",
+    "padding-left:38px !important;margin-bottom:12px !important;outline:none !important;transition:border-color .15s,box-shadow .15s}",
+    ".th-login-card input:focus,.th-login-card select:focus{border-color:var(--th-acc) !important;background:#fff !important;box-shadow:0 0 0 3px color-mix(in srgb,var(--th-acc) 18%,transparent) !important}",
+    ".th-ico{position:relative;display:block}",
+    ".th-ico>svg.th-i{position:absolute;left:11px;top:11px;width:18px;height:18px;color:#64748b;pointer-events:none;z-index:2}",
+    ".th-login-card .th-btn{width:100% !important;height:42px !important;border:0 !important;border-radius:9px !important;cursor:pointer;",
+    "background:linear-gradient(135deg,var(--th-b1),var(--th-b2)) !important;color:#fff !important;font:700 14.5px 'Segoe UI',Arial !important;letter-spacing:.8px;",
+    "box-shadow:0 8px 18px rgba(11,37,69,.3) !important;margin-top:2px !important}",
+    ".th-login-card .th-btn:hover{filter:brightness(1.08)}",
+    ".th-caps,.th-err{display:none;margin:-6px 0 10px;font-size:11.5px;border-radius:7px;padding:5px 9px}",
+    ".th-caps{color:#b45309;background:#fffbeb;border:1px solid #fde68a}",
+    ".th-err{color:#b91c1c;background:#fef2f2;border:1px solid #fecaca;margin:0 0 10px}",
+    ".th-caps.on,.th-err.on{display:block}",
+    ".th-foot{margin-top:12px;padding-top:10px;border-top:1px solid #e2e8f0;text-align:center;font-size:10.5px;color:#64748b;line-height:1.55}",
+    ".th-clock{font:600 11.5px 'Segoe UI',Arial;color:var(--th-tc)}",
+    ".th-secure{display:inline-flex;align-items:center;gap:4px;color:#15803d;font-weight:600}",
+    /* settings page */
+    ".lg-wrap{display:grid;grid-template-columns:minmax(0,1fr) 420px;gap:16px;align-items:start}",
+    ".lg-sec{font-weight:700;color:#0b2545;margin:14px 0 6px;font-size:13px;border-bottom:1px solid #e2e8f0;padding-bottom:4px}",
+    ".lg-g{display:grid;grid-template-columns:1fr 1fr;gap:8px 12px}",
+    ".lg-g label{font-size:12px;color:#475569;display:block}",
+    ".lg-g input:not([type=checkbox]),.lg-g select{width:100%;box-sizing:border-box}",
+    ".lg-g input[type=color]{height:34px;padding:2px}",
+    ".lg-prev{position:sticky;top:10px;height:520px;border-radius:12px;overflow:hidden;display:flex;flex-direction:column;justify-content:center;",
+    "background:linear-gradient(135deg,#0a1f44,#0e4a6e);background-size:cover;background-position:center}",
+    ".lg-prev .th-login-card{transform:scale(.88);transform-origin:center;max-width:94% !important;animation:none}",
+    "@media(max-width:1100px){.lg-wrap{grid-template-columns:1fr}}"
+  ].join(""));
+
+  var I_USER = '<svg class="th-i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-7 8-7s8 3 8 7"/></svg>';
+  var I_LOCK = '<svg class="th-i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>';
+  var I_SHIELD = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l8 4v6c0 5-3.5 9-8 10-4.5-1-8-5-8-10V6z"/><path d="M9 12l2 2 4-4"/></svg>';
+
+  function force(el, map) { for (var k in map) el.style.setProperty(k, map[k], "important"); }
+  function txt(el) { return (el.textContent || "").replace(/\s+/g, " ").trim(); }
+
+  function brandHTML(c) {
+    var badge = c.logo ? '<div class="th-badge img"><img src="' + c.logo + '" alt=""></div>'
+      : (c.badgeText ? '<div class="th-badge">' + esc(c.badgeText) + "</div>" : "");
+    return badge + (c.title ? '<h1 class="th-app">' + esc(c.title) + "</h1>" : "") +
+      (c.subtitle ? '<div class="th-sub">' + esc(c.subtitle) + "</div>" : "") +
+      (c.welcome ? '<div class="th-welc">' + esc(c.welcome) + "</div>" : "") +
+      '<div class="th-divider"></div>';
+  }
+  function footHTML(c) {
+    return (c.showClock ? '<div class="th-clock"></div>' : "") +
+      (c.showSecure ? '<div><span class="th-secure">' + I_SHIELD + " Secure offline login</span></div>" : "") +
+      (c.support ? "<div>" + esc(c.support) + "</div>" : "") +
+      (c.copyright ? '<div style="font-size:9.5px;color:#94a3b8">' + esc(c.copyright) + "</div>" : "");
+  }
+  function startClock(el) {
+    if (!el) return;
+    function tick() {
+      if (!document.body.contains(el)) return clearInterval(id);
+      var d = new Date();
+      el.textContent = d.toLocaleDateString("en-IN", { weekday: "short", day: "2-digit", month: "short", year: "numeric" }) +
+        "  •  " + d.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+    }
+    var id = setInterval(tick, 1000); tick();
+  }
+  function wrapIcon(field, icon) {
+    if (!field || field.getAttribute("data-th-ico")) return;
+    field.setAttribute("data-th-ico", "1");
+    var host = field.parentElement;
+    if (host && /th-pw-wrap/.test(host.className)) { host.classList.add("th-ico"); host.insertAdjacentHTML("afterbegin", icon); return; }
+    var w = document.createElement("span");
+    w.className = "th-ico";
+    host.insertBefore(w, field); w.appendChild(field);
+    w.insertAdjacentHTML("afterbegin", icon);
+  }
+  function findScreen(card) {
+    var el = card.parentElement;
+    while (el && el !== document.body) { if (el.offsetHeight >= window.innerHeight * 0.8) return el; el = el.parentElement; }
+    return card.parentElement || document.body;
+  }
+  function optName(o) { return (o.text.split(/\s[—–-]\s/)[0] || o.text).trim().toLowerCase(); }
+  function matchOpt(sel, v) {
+    v = String(v || "").trim().toLowerCase();
+    if (!v) return null;
+    for (var i = 0; i < sel.options.length; i++) {
+      var o = sel.options[i];
+      if (!o.value) continue;
+      if (o.value.toLowerCase() === v || optName(o) === v) return o;
+    }
+    return null;
+  }
+  function lsGet(k) { try { return localStorage.getItem(k) || ""; } catch (e) { return ""; } }
+  function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
+
+  /* ================= LOGIN SCREEN ================= */
+  var cur = null; // {card, btn, sel, userBox, err}
+  var lastScreen = null;
+
+  // after login: give the main screen back its normal layout
+  function cleanup() {
+    if (!lastScreen) return;
+    lastScreen.classList.remove("th-login-screen", "th-pos-left", "th-pos-right");
+    lastScreen.style.boxShadow = "";
+    if (lastScreen.getAttribute("data-th-bg")) { lastScreen.style.backgroundImage = ""; lastScreen.removeAttribute("data-th-bg"); }
+    lastScreen = null; cur = null;
+  }
+
+  function build() {
+    if (cur && !(document.body.contains(cur.btn) && cur.btn.offsetParent)) cleanup();
+    var pw = document.querySelector('input[type="password"],input[data-th-eye]');
+    if (!pw) return;
+    var card = pw.parentElement, btn = null;
+    while (card && card !== document.body) {
+      var bs = card.querySelectorAll("button,input[type=submit],input[type=button]");
+      for (var i = 0; i < bs.length; i++) if (/^(login|log in|sign in)$/i.test(bs[i].getAttribute("data-th-orig") || txt(bs[i]) || bs[i].value || "")) { btn = bs[i]; break; }
+      if (btn) break;
+      card = card.parentElement;
+    }
+    if (!btn || !card || card === document.body) return;
+    if (/change\s+(my\s+)?password/i.test(txt(card))) return;
+    if (card.getAttribute("data-th-login") === stamp()) return;
+
+    var c = C();
+    // clean anything from an older build of this update
+    var old = card.querySelectorAll(".th-inj");
+    for (var r = 0; r < old.length; r++) old[r].parentNode.removeChild(old[r]);
+    card.setAttribute("data-th-login", stamp());
+    card.classList.add("th-login-card");
+    vars(card, c);
+    force(card, {
+      "background": rgba(c.cardColor, (+c.cardOpacity || 96) / 100),
+      "border-radius": (+c.radius || 16) + "px",
+      "width": (+c.width || 360) + "px"
+    });
+
+    var screen = findScreen(card);
+    screen.classList.add("th-login-screen");
+    screen.classList.remove("th-pos-left", "th-pos-right");
+    if (c.position === "left") screen.classList.add("th-pos-left");
+    if (c.position === "right") screen.classList.add("th-pos-right");
+    screen.style.boxShadow = "inset 0 0 0 200vmax rgba(4,14,32," + ((+c.overlay || 0) / 100) + ")";
+    if (c.bg) { screen.style.backgroundImage = "url(" + c.bg + ")"; screen.style.backgroundSize = "cover"; screen.style.backgroundPosition = "center"; screen.setAttribute("data-th-bg", "1"); }
+    lastScreen = screen;
+
+    // hide the old outside title / support lines
+    var outs = screen.querySelectorAll("h1,h2,h3,h4,p,div,span,small");
+    for (var j = 0; j < outs.length; j++) {
+      var o = outs[j];
+      if (card.contains(o) || o.contains(card) || o.children.length > 3) continue;
+      if (/TRUE HOPE DIGITAL|Hospital Management Software|support\s*:|^©/i.test(txt(o))) o.classList.add("th-hide");
+    }
+
+    // hospital name
+    var heads = card.querySelectorAll("h1,h2,h3,h4,h5,b,strong,div");
+    for (var k = 0; k < heads.length; k++) {
+      var h = heads[k];
+      if (h.closest(".th-inj") || h.querySelector("input,select,button")) continue;
+      var ht = txt(h);
+      if (ht && !/username|password|login|user/i.test(ht) && ht.length < 80) { h.classList.add("th-hosp"); h.classList.toggle("th-hide", !c.showHospital); break; }
+    }
+
+    var brand = document.createElement("div");
+    brand.className = "th-brand th-inj";
+    brand.innerHTML = brandHTML(c);
+    card.insertBefore(brand, card.firstChild);
+
+    // ---- username ----
+    var sel = card.querySelector("select");
+    var userBox = null;
+    var oldUser = card.querySelector(".th-userwrap");
+    if (sel && c.userMode === "type") {
+      sel.classList.add("th-hide");
+      if (oldUser) userBox = oldUser.querySelector("input");
+      else {
+        var uw = document.createElement("span");
+        uw.className = "th-ico th-userwrap";
+        uw.innerHTML = I_USER + '<input type="text" autocomplete="off" spellcheck="false" placeholder="Enter username">';
+        sel.parentNode.insertBefore(uw, sel);
+        userBox = uw.querySelector("input");
+        userBox.addEventListener("input", function () {
+          var m = matchOpt(sel, userBox.value);
+          sel.value = m ? m.value : "";
+          sel.dispatchEvent(new Event("change", { bubbles: true }));
+          if (cur && cur.err) cur.err.classList.remove("on");
+        });
+        userBox.addEventListener("keydown", function (e) { if (e.key === "Enter") { e.preventDefault(); pw.focus(); } });
+      }
+      var remembered = c.rememberUser ? lsGet("thLastUser") : "";
+      userBox.value = remembered;
+      var m0 = matchOpt(sel, remembered);
+      sel.value = m0 ? m0.value : "";
+    } else if (sel) {
+      sel.classList.remove("th-hide");
+      if (oldUser) oldUser.parentNode.removeChild(oldUser);
+      wrapIcon(sel, I_USER);
+    }
+    wrapIcon(pw, I_LOCK);
+
+    // ---- button ----
+    if (!btn.getAttribute("data-th-orig")) btn.setAttribute("data-th-orig", txt(btn) || btn.value || "Login");
+    btn.classList.add("th-btn");
+    force(btn, {
+      "background": "linear-gradient(135deg," + c.b1 + "," + c.b2 + ")",
+      "background-image": "linear-gradient(135deg," + c.b1 + "," + c.b2 + ")",
+      "color": "#fff", "border": "0", "border-radius": "9px", "height": "42px", "width": "100%"
+    });
+    var inputs = card.querySelectorAll("input:not([type=checkbox]):not([type=radio]),select");
+    for (var q = 0; q < inputs.length; q++) {
+      (function (el) {
+        if (el.getAttribute("data-th-focus")) return;
+        el.setAttribute("data-th-focus", "1");
+        el.addEventListener("focus", function () { var cc = (cur && cur.c) || C(); force(el, { "border-color": cc.accent, "box-shadow": "0 0 0 3px " + rgba(cc.accent, .18) }); });
+        el.addEventListener("blur", function () { force(el, { "border-color": "#d4dbe6", "box-shadow": "none" }); });
+      })(inputs[q]);
+    }
+    if (btn.tagName === "INPUT") btn.value = c.btnText || "Login"; else btn.textContent = c.btnText || "Login";
+
+    // ---- caps lock + error ----
+    var pwBlock = pw.closest(".th-ico") || pw;
+    var caps = document.createElement("div");
+    caps.className = "th-caps th-inj";
+    caps.textContent = "⚠ Caps Lock is ON";
+    pwBlock.parentNode.insertBefore(caps, pwBlock.nextSibling);
+    var err = document.createElement("div");
+    err.className = "th-err th-inj";
+    err.textContent = "Invalid username or password";
+    btn.parentNode.insertBefore(err, btn);
+    if (!pw.getAttribute("data-th-keys")) {
+      pw.setAttribute("data-th-keys", "1");
+      var capsCheck = function (e) { var cp = document.querySelector(".th-caps"); if (cp && e.getModifierState) cp.classList.toggle("on", e.getModifierState("CapsLock")); };
+      pw.addEventListener("keyup", capsCheck);
+      pw.addEventListener("keydown", capsCheck);
+    }
+
+    // ---- footer ----
+    var foot = document.createElement("div");
+    foot.className = "th-foot th-inj";
+    foot.innerHTML = footHTML(c);
+    card.appendChild(foot);
+    startClock(foot.querySelector(".th-clock"));
+
+    cur = { card: card, btn: btn, sel: sel, userBox: userBox, err: err, c: c };
+    setTimeout(function () { try { (userBox && !userBox.value ? userBox : pw).focus(); } catch (e) {} }, 100);
+  }
+
+  // check typed username before the software's own login runs
+  function watchResult() {
+    var me = cur;
+    setTimeout(function () {
+      // still on login screen after clicking -> login failed: show a clear message
+      if (me && me === cur && document.body.contains(me.btn) && me.btn.offsetParent) me.err.classList.add("on");
+      else build();
+    }, 900);
+  }
+
+  document.addEventListener("click", function (e) {
+    if (!cur || !document.body.contains(cur.btn)) return;
+    var b = e.target && e.target.closest ? e.target.closest("button,input[type=submit],input[type=button]") : null;
+    if (b !== cur.btn) return;
+    cur.err.classList.remove("on");
+    if (!cur.userBox) { watchResult(); return; }
+    var m = matchOpt(cur.sel, cur.userBox.value);
+    if (!m) {
+      e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
+      cur.err.classList.add("on");
+      cur.userBox.focus();
+      return;
+    }
+    cur.sel.value = m.value;
+    cur.sel.dispatchEvent(new Event("change", { bubbles: true }));
+    if (cur.c.rememberUser) lsSet("thLastUser", cur.userBox.value.trim());
+    watchResult();
+  }, true);
+
+  var t = null;
+  new MutationObserver(function () { clearTimeout(t); t = setTimeout(build, 60); })
+    .observe(document.documentElement, { childList: true, subtree: true });
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", build); else build();
+
+  /* ================= SETTINGS PAGE ================= */
+  TH.addMenuItem("set", "loginDesign", "Login Page Design");
+
+  function inp(id, label, v, type) {
+    return '<div><label>' + label + '</label><input id="lg_' + id + '" type="' + (type || "text") + '" value="' + esc(String(v)) + '"></div>';
+  }
+  function rng(id, label, v, min, max) {
+    return '<div><label>' + label + ' <b id="lgv_' + id + '">' + v + '</b></label><input id="lg_' + id + '" type="range" min="' + min + '" max="' + max + '" value="' + v + '" oninput="document.getElementById(\'lgv_' + id + '\').textContent=this.value"></div>';
+  }
+  function chk(id, label, v) {
+    return '<div><label><input id="lg_' + id + '" type="checkbox"' + (v ? " checked" : "") + '> ' + label + '</label></div>';
+  }
+  function opt(id, label, v, list) {
+    return '<div><label>' + label + '</label><select id="lg_' + id + '">' + list.map(function (x) {
+      return '<option value="' + x[0] + '"' + (x[0] === v ? " selected" : "") + ">" + x[1] + "</option>";
+    }).join("") + "</select></div>";
+  }
+
+  TH.page("loginDesign", function () {
+    var c = C();
+    window.__thLg = { logo: c.logo, bg: c.bg };
+    setTimeout(window.thLgPrev, 30);
+    return '<h2>Login Page Design</h2>' +
+      '<div class="lg-wrap"><div class="card" oninput="thLgPrev()" onchange="thLgPrev()">' +
+      '<div class="lg-sec">Branding</div><div class="lg-g">' +
+      inp("title", "Software name", c.title) + inp("subtitle", "Tag line", c.subtitle) +
+      inp("welcome", "Welcome line (blank = hide)", c.welcome) + inp("badgeText", "Badge letters (blank = hide)", c.badgeText) +
+      '<div><label>Logo image (replaces badge)</label><input type="file" accept="image/*" onchange="thLgFile(this,\'logo\')"> <button class="btn sm sec" type="button" onclick="__thLg.logo=\'\';thLgPrev()">Remove logo</button></div>' +
+      inp("titleColor", "Name colour", c.titleColor, "color") +
+      inp("g1", "Badge colour 1", c.g1, "color") + inp("g2", "Badge colour 2", c.g2, "color") +
+      '</div><div class="lg-sec">Login box</div><div class="lg-g">' +
+      opt("userMode", "Username", c.userMode, [["type", "Type username (user list hidden)"], ["list", "Show user list (dropdown)"]]) +
+      inp("btnText", "Button text", c.btnText) +
+      chk("rememberUser", "Remember last username", c.rememberUser) + chk("showHospital", "Show hospital name", c.showHospital) +
+      '</div><div class="lg-sec">Size &amp; position</div><div class="lg-g">' +
+      rng("width", "Box width (px)", c.width, 300, 480) + rng("radius", "Corner round", c.radius, 0, 28) +
+      opt("position", "Box position", c.position, [["center", "Center"], ["left", "Left"], ["right", "Right"]]) +
+      rng("cardOpacity", "Box opacity %", c.cardOpacity, 60, 100) +
+      inp("cardColor", "Box colour", c.cardColor, "color") + rng("overlay", "Background darkness %", c.overlay, 0, 90) +
+      '<div><label>Background photo</label><input type="file" accept="image/*" onchange="thLgFile(this,\'bg\')"> <button class="btn sm sec" type="button" onclick="__thLg.bg=\'\';thLgPrev()">Use default</button></div><div></div>' +
+      '</div><div class="lg-sec">Colours</div><div class="lg-g">' +
+      inp("accent", "Highlight colour", c.accent, "color") + '<div></div>' +
+      inp("b1", "Button colour 1", c.b1, "color") + inp("b2", "Button colour 2", c.b2, "color") +
+      '</div><div class="lg-sec">Footer</div><div class="lg-g">' +
+      chk("showClock", "Show date &amp; time", c.showClock) + chk("showSecure", "Show 'Secure offline login'", c.showSecure) +
+      inp("support", "Support line", c.support) + inp("copyright", "Copyright line", c.copyright) +
+      '</div><div class="row" style="margin-top:16px;gap:8px;display:flex">' +
+      '<button class="btn" type="button" onclick="thLgSave()">Save login design</button>' +
+      '<button class="btn sec" type="button" onclick="thLgReset()">Reset to default</button></div>' +
+      '</div><div><div class="lg-prev" id="lgPrev"></div><div style="font-size:11px;color:#64748b;margin-top:6px">Live preview — log out to see the real login page.</div></div></div>';
+  });
+
+  function readForm() {
+    var c = {}, g = function (id) { return document.getElementById("lg_" + id); };
+    ["title", "subtitle", "welcome", "badgeText", "titleColor", "g1", "g2", "userMode", "btnText", "position", "cardColor", "accent", "b1", "b2", "support", "copyright"]
+      .forEach(function (k) { if (g(k)) c[k] = g(k).value; });
+    ["width", "radius", "cardOpacity", "overlay"].forEach(function (k) { if (g(k)) c[k] = +g(k).value; });
+    ["rememberUser", "showHospital", "showClock", "showSecure"].forEach(function (k) { if (g(k)) c[k] = g(k).checked; });
+    c.logo = (window.__thLg || {}).logo || "";
+    c.bg = (window.__thLg || {}).bg || "";
+    return c;
+  }
+
+  window.thLgPrev = function () {
+    var box = document.getElementById("lgPrev");
+    if (!box) return;
+    var c = readForm();
+    box.style.backgroundImage = c.bg ? "url(" + c.bg + ")" : "";
+    box.style.alignItems = c.position === "left" ? "flex-start" : (c.position === "right" ? "flex-end" : "center");
+    box.style.boxShadow = "inset 0 0 0 2000px rgba(4,14,32," + (c.overlay / 100) + ")";
+    box.style.padding = "0 14px";
+    var users = c.userMode === "type"
+      ? '<span class="th-ico">' + I_USER + '<input disabled placeholder="Enter username"></span>'
+      : '<span class="th-ico">' + I_USER + '<select disabled><option>— Select user —</option></select></span>';
+    box.innerHTML = '<div class="th-login-card" id="lgCard">' +
+      '<div class="th-brand">' + brandHTML(c) + '</div>' +
+      (c.showHospital ? '<div class="th-hosp">' + esc((db.settings && (db.settings.hospitalName || db.settings.hospName || db.settings.name)) || "Your Hospital Name") + "</div>" : "") +
+      '<label>Username</label>' + users +
+      '<label>Password</label><span class="th-ico">' + I_LOCK + '<input disabled type="password" value="password"></span>' +
+      '<button class="th-btn" type="button">' + esc(c.btnText || "Login") + '</button>' +
+      '<div class="th-foot">' + footHTML(c) + '</div></div>';
+    var card = document.getElementById("lgCard");
+    vars(card, c);
+    var ck = card.querySelector(".th-clock");
+    if (ck) ck.textContent = new Date().toLocaleDateString("en-IN", { weekday: "short", day: "2-digit", month: "short", year: "numeric" }) + "  •  " + new Date().toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" });
+  };
+
+  window.thLgFile = function (input, key) {
+    var f = input.files && input.files[0];
+    if (!f) return;
+    if (f.size > 3 * 1024 * 1024) { toast("Image too big — please use a photo under 3 MB"); input.value = ""; return; }
+    var rd = new FileReader();
+    rd.onload = function () { window.__thLg = window.__thLg || {}; window.__thLg[key] = rd.result; window.thLgPrev(); };
+    rd.readAsDataURL(f);
+  };
+
+  window.thLgSave = function () {
+    db.settings = db.settings || {};
+    db.settings.thLogin = readForm();
+    db.settings.thLoginStamp = Date.now();
+    save();
+    try { audit("Login design changed", "Login page settings updated"); } catch (e) {}
+    toast("Login page design saved");
+  };
+
+  window.thLgReset = function () {
+    if (!confirm("Reset login page to default design?")) return;
+    db.settings = db.settings || {};
+    delete db.settings.thLogin;
+    db.settings.thLoginStamp = Date.now();
+    save();
+    toast("Login page reset to default");
+    try { go("loginDesign"); } catch (e) {}
+  };
+})();
+/*TH-SIGN:1e8e0abf4525166f76a5599086993ec4*/

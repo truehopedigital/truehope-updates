@@ -1,0 +1,590 @@
+/*TRUEHOPE-UPDATE {"id":"hospital-modules-pack","name":"Hospital Modules: MRD Checklist, HR, Store, Pharmacy, Pathology, Radiology","version":"1.5","date":"2026-11-19","description":"v1.5: fixes Patient Stickers printing the Store indent (module functions renamed so they never replace built-in ones). v1.4: urine/stool parameters use their own normal values (urine Albumin = Nil, stool Colour = Brown); correct male/female ranges on old tests and pending reports; consultant fills Referred by when an IPD patient is pre-selected. Includes: IPD bill finalise lock (Admin only after finalise); department logins (Pathology, Radiology, Pharmacy, Store, HR, MRD); MRD file checklist (filled + blank), HR (staff, attendance, salary, training, expiry alerts), Store, Pharmacy (purchase, sale, stock, expiry), Pathology and Radiology (orders, results, reports, registers)."} */
+
+/* ================= COMMON ================= */
+const MODCOLLS = ['mrdChk', 'hrStaff', 'hrAtt', 'hrTrain', 'stItems', 'stTxn', 'phPur', 'phSale', 'labTests', 'labOrders', 'radTests', 'radOrders'];
+try { MODCOLLS.forEach(k => { SYNC_COLLS[k] = 'id' }) } catch (e) { }
+const C = k => { if (!Array.isArray(db[k])) db[k] = []; return db[k] };
+const nid = p => (p || 'X') + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+const rs = n => '₹' + (Math.round((+n || 0) * 100) / 100).toLocaleString('en-IN');
+const num = v => +v || 0;
+const pnm = p => p ? esc(p.name) : '';
+const TH_TODAY = () => today();
+const ym = () => today().slice(0, 7);
+const optList = (arr, sel) => arr.map(o => `<option ${String(o) === String(sel ?? '') ? 'selected' : ''}>${esc(o)}</option>`).join('');
+const docOpts = sel => `<option value="">—</option><option ${sel === 'Self' ? 'selected' : ''}>Self</option>` + (db.doctors || []).map(d => `<option ${d.name === sel ? 'selected' : ''}>${esc(d.name)}</option>`).join('');
+function stamp() { const d = new Date(), z = n => String(n).padStart(2, '0'); return String(d.getFullYear()).slice(2) + z(d.getMonth() + 1) + z(d.getDate()) + '-' + z(d.getHours()) + z(d.getMinutes()) + z(d.getSeconds()) }
+function prt(title, body, landscape) {
+  $('#printArea').innerHTML = `${landscape ? '<style>@page{size:A4 landscape}</style>' : ''}<div class="pf">${printHead()}<h3 style="text-align:center;margin:4px 0 8px;text-decoration:underline">${title}</h3>${body}</div>`;
+  setTimeout(() => window.print(), 100);
+}
+function pStrip(p, a, extra) {
+  const r = (l, v) => `<td style="width:16%"><b>${l}</b></td><td>${v || ''}</td>`;
+  return `<table class="it"><tr>${r('Patient', pnm(p) || esc((extra || {}).name || ''))}${r('UHID', esc(p ? p.uhid : 'Walk-in'))}${r('Age / Sex', p ? esc(ageText(p) + ' / ' + (p.gender || '')) : '')}</tr>
+   <tr>${r('IPD No.', a ? esc(a.ipdNo) : '—')}${r('Ward / Bed', a ? esc((a.ward || '') + ' ' + (a.bed || '')) : '—')}${r('Date', esc((extra || {}).date || dmy(today())))}</tr>
+   ${extra && extra.doc ? `<tr>${r('Ref. Doctor', esc(extra.doc))}${r(extra.noL || 'Report No.', esc(extra.no || ''))}${r('Mobile', p ? esc(p.mobile || '') : '')}</tr>` : ''}</table>`;
+}
+/* patient picker: UHID or admitted IPD patient */
+function ppick(pre, uhid, admId) {
+  const adm = (db.admissions || []).filter(a => a.status === 'Admitted');
+  setTimeout(() => { thm_ppShow(pre); if (admId) thm_ppAdm(pre, 1) }, 0);
+  return `<div class="row"><div><label>UHID</label><input id="${pre}_u" value="${esc(uhid || '')}" placeholder="${esc(db.settings.prefix || '')}" onchange="thm_ppShow('${pre}',1)"></div>
+   <div style="flex:2"><label>or admitted (IPD) patient</label><select id="${pre}_a" onchange="thm_ppAdm('${pre}')"><option value="">—</option>${adm.map(a => `<option value="${a.id}" ${a.id === admId ? 'selected' : ''}>${esc(a.ipdNo)} • ${esc((getP(a.uhid) || {}).name || '')} • ${esc(a.bed || '')}</option>`).join('')}</select></div>
+   <div style="flex:2"><label>Patient</label><div id="${pre}_n" style="padding:8px 0;font-weight:600;color:var(--gd)">—</div></div></div>`;
+}
+window.thm_ppShow = function (pre, typed) { const u = ($('#' + pre + '_u') || {}).value; const el = $('#' + pre + '_n'); if (!el) return; if (typed && $('#' + pre + '_a')) $('#' + pre + '_a').value = '';
+  if (!u) { el.textContent = '—'; return } const p = getP(u.trim().toUpperCase()); el.innerHTML = p ? `${esc(p.name)} <span class="muted">(${esc(ageText(p))} / ${esc(p.gender || '')})</span>` : '<span style="color:#b42318">UHID not found</span>' };
+window.thm_ppAdm = function (pre, soft) { const a = getA(val(pre + '_a')); if (a) { $('#' + pre + '_u').value = a.uhid; thm_ppShow(pre); const d = $('#' + pre + '_doc'); if (d && a.doctor && !(soft && d.value)) { if (![...d.options].some(o => o.value === a.doctor)) d.add(new Option(a.doctor, a.doctor)); d.value = a.doctor } } };
+function ppGet(pre) { const u = (val(pre + '_u') || '').trim().toUpperCase(); const p = u ? getP(u) : null; const a = val(pre + '_a') ? getA(val(pre + '_a')) : null; return { p, a, u } }
+function ipdCharge(a, desc, qty, rate) { if (!a) return; a.charges = a.charges || []; a.charges.push({ date: today(), desc, qty, rate, amt: +(qty * rate).toFixed(2), by: cur.u }) }
+const MODE_OPTS = ['Cash', 'UPI / Card', 'Add to IPD bill', 'Free / Scheme'];
+TH.css(`.mtag{display:inline-block;padding:1px 8px;border-radius:10px;font-size:12px;font-weight:700}.mt-ok{background:#dcfae6;color:#067647}.mt-wa{background:#fef0c7;color:#b54708}.mt-ex{background:#fee4e2;color:#b42318}.mt-gr{background:#eef2f6;color:#475467}
+.attg td,.attg th{padding:2px!important;text-align:center;font-size:12px}.attg select{padding:2px;font-size:12px;width:44px}.flagH{color:#b42318;font-weight:700}.pf .mrdt td,.pf .mrdt th{padding:1px 4px!important;font-size:10px!important;line-height:1.15}.flagL{color:#1f5f99;font-weight:700}`);
+window.thm_mDel = function (coll, id, back) { if (!confirm('Delete this from the master list?')) return; db[coll] = C(coll).filter(x => x.id !== id); save(); go(back) };
+/* helpers for testing / other updates */
+window.THMOD = { C, mrdPct: r => mrdPct(r) };
+
+/* ================= MRD CHECKLIST ================= */
+const MRD_ITEMS = [
+ ['Admission record / face sheet complete', 'प्रवेश नोंद / फेस शीट पूर्ण'],
+ ['General consent for admission & treatment signed', 'प्रवेश व उपचार सामान्य संमतीपत्र'],
+ ['Patient name & UHID (2 identifiers) on every page', 'प्रत्येक पानावर नाव व UHID'],
+ ['Initial assessment by doctor within 24 hours', 'डॉक्टरांचे प्राथमिक मूल्यांकन (24 तासांत)'],
+ ['Initial nursing assessment', 'नर्सिंग प्राथमिक मूल्यांकन'],
+ ['Pain / fall / nutrition / pressure-sore risk assessment', 'वेदना / पडणे / पोषण / बेडसोअर मूल्यांकन'],
+ ['Plan of care documented', 'उपचार योजना नोंद'],
+ ['Daily doctor progress notes (dated, timed, signed)', 'दैनंदिन डॉक्टर नोंदी'],
+ ['Nursing notes & handover records', 'नर्सिंग नोंदी व हँडओव्हर'],
+ ['Vital signs / TPR chart', 'व्हायटल्स / TPR चार्ट'],
+ ['Drug chart / MAR with signatures', 'औषध चार्ट / MAR सह्यांसह'],
+ ['Intake-output / RBS / other charts (if applicable)', 'इनटेक-आउटपुट / RBS चार्ट'],
+ ['Lab & radiology reports filed', 'लॅब व रेडिओलॉजी रिपोर्ट्स'],
+ ['Cross-consultation / referral notes', 'इतर तज्ञ सल्ला नोंदी'],
+ ['Informed consent for procedure / surgery', 'शस्त्रक्रिया / प्रक्रिया संमती'],
+ ['Pre-anaesthesia check-up & anaesthesia consent', 'भूल पूर्व तपासणी व भूल संमती'],
+ ['OT notes / surgery & anaesthesia records', 'OT / शस्त्रक्रिया नोंदी'],
+ ['Blood transfusion consent & record', 'रक्त संक्रमण संमती व नोंद'],
+ ['High-risk consent (if applicable)', 'हाय-रिस्क संमती'],
+ ['MLC papers / police intimation (if MLC)', 'MLC कागदपत्रे'],
+ ['Discharge summary signed by consultant', 'डिस्चार्ज समरी (कन्सल्टंट सही)'],
+ ['Discharge advice / patient education given', 'डिस्चार्ज सूचना / रुग्ण शिक्षण'],
+ ['LAMA / DAMA form (if applicable)', 'LAMA / DAMA फॉर्म'],
+ ['Death summary & certificate (if death)', 'मृत्यू सारांश व प्रमाणपत्र'],
+ ['Final bill & receipts', 'अंतिम बिल व पावत्या'],
+ ['Insurance / MJPJAY / PMJAY documents (if applicable)', 'विमा / MJPJAY / PMJAY कागदपत्रे'],
+ ['All entries dated, timed, signed with name', 'सर्व नोंदी तारीख, वेळ, सही व नावासह'],
+ ['No blank pages, overwriting or unapproved abbreviations', 'रिकामी पाने / खाडाखोड नाही'],
+ ['File arranged in MRD order & pages numbered', 'फाइल क्रमाने लावलेली व पान क्रमांक']
+];
+TH.addMenu('mrd', 'MRD', '🗄️');
+TH.addMenuItem('mrd', 'mrdchk', 'MRD File Checklist');
+const mrdRec = id => C('mrdChk').find(x => x.id === id);
+function mrdPct(r) { if (!r) return null; const v = Object.values(r.items || {}); const app = v.filter(x => x.s && x.s !== 'NA'); if (!app.length) return null; return Math.round(app.filter(x => x.s === 'Yes').length / app.length * 100) }
+TH.page('mrdchk', () => {
+  const q = (ctx.q || '').toLowerCase(), f = ctx.f || 'Discharged';
+  const L = (db.admissions || []).filter(a => (f === 'All' || a.status === f) && (!q || (a.ipdNo + ' ' + ((getP(a.uhid) || {}).name || '') + ' ' + a.uhid).toLowerCase().includes(q))).slice().reverse().slice(0, 200);
+  return `<h2>🗄️ MRD File Checklist / MRD फाइल तपासणी यादी</h2>
+  <div class="card row"><div><label>Search IPD No. / name / UHID</label><input id="mcq" value="${esc(ctx.q || '')}" onkeydown="if(event.key==='Enter')go('mrdchk',{q:this.value,f:'${f}'})"></div>
+   <div style="max-width:200px"><label>Show</label><select onchange="go('mrdchk',{q:val('mcq'),f:this.value})">${optList(['Discharged', 'Admitted', 'All'], f)}</select></div>
+   <button class="btn sec" onclick="go('mrdchk',{q:val('mcq'),f:'${f}'})">Search</button><button class="btn" onclick="thm_mrdBlank()">🖨 Print BLANK checklist</button></div>
+  <div class="card"><table><tr><th>IPD No.</th><th>Patient</th><th>Admitted</th><th>Status</th><th>Checklist</th><th></th></tr>
+  ${L.map(a => { const r = mrdRec(a.id), pc = mrdPct(r); return `<tr><td>${esc(a.ipdNo)}</td><td>${pnm(getP(a.uhid))}<div class="muted">${esc(a.uhid)}</div></td><td>${dmy(a.admDate)}</td><td>${esc(a.status)}</td>
+   <td>${pc === null ? '<span class="mtag mt-gr">Not checked</span>' : `<span class="mtag ${pc === 100 ? 'mt-ok' : pc >= 80 ? 'mt-wa' : 'mt-ex'}">${pc}% complete</span>`}</td>
+   <td><button class="btn sm" onclick="go('mrdchkf',{id:'${a.id}'})">Open</button></td></tr>` }).join('') || '<tr><td colspan="6" class="muted">No files</td></tr>'}</table></div>`;
+});
+TH.page('mrdchkf', () => {
+  const a = getA(ctx.id); if (!a) return '<p>Admission not found.</p>'; const p = getP(a.uhid);
+  const r = mrdRec(a.id) || { items: { 0: { s: 'Yes' } } }; const pc = mrdPct(r);
+  return `<h2>🗄️ MRD Checklist — ${esc(a.ipdNo)}</h2><div class="card">${pStrip(p, a)}<p style="margin-bottom:0">Consultant: <b>${esc(a.doctor || '')}</b> • Admitted ${dmy(a.admDate)}${a.disDate ? ' • Discharged ' + dmy(a.disDate) : ''} • ${pc === null ? 'Not checked yet' : 'Completeness: <b>' + pc + '%</b>'}</p></div>
+  <div class="card"><table><tr><th style="width:40px">#</th><th>Item / बाब</th><th style="width:170px">Status</th><th>Remarks / deficiency</th></tr>
+  ${MRD_ITEMS.map((it, i) => { const x = (r.items || {})[i] || {}; return `<tr><td>${i + 1}</td><td>${esc(it[0])}<div class="muted">${esc(it[1])}</div></td>
+   <td><select id="mk_s${i}">${['', 'Yes', 'No', 'NA'].map(o => `<option value="${o}" ${o === (x.s || '') ? 'selected' : ''}>${o || '—'}</option>`).join('')}</select></td><td><input id="mk_r${i}" value="${esc(x.r || '')}"></td></tr>` }).join('')}</table>
+  <div class="row" style="margin-top:12px"><div><label>File received in MRD on</label><input id="mk_recv" type="date" value="${esc(r.recv || '')}"></div><div><label>Checked by</label><input id="mk_by" value="${esc(r.by || cur.name || cur.u)}"></div>
+   <div><label>Date checked</label><input id="mk_dt" type="date" value="${esc(r.date || today())}"></div><div><label>Deficiency informed to</label><input id="mk_inf" value="${esc(r.inf || '')}"></div></div>
+  <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap"><button class="btn sec" onclick="thm_mrdAllYes()">Mark all blank as Yes</button><button class="btn" onclick="thm_mrdSave('${a.id}')">💾 Save</button><button class="btn sec" onclick="thm_mrdSave('${a.id}',1)">💾 Save &amp; 🖨 Print</button><button class="btn sec" onclick="go('mrdchk')">Back</button></div></div>`;
+}, 'mrdchk');
+window.thm_mrdAllYes = () => MRD_ITEMS.forEach((_, i) => { const s = $('#mk_s' + i); if (s && !s.value) s.value = 'Yes' });
+window.thm_mrdSave = function (id, pr) {
+  const r = mrdRec(id) || (C('mrdChk').push({ id }), mrdRec(id)); r.items = {};
+  MRD_ITEMS.forEach((_, i) => { const s = val('mk_s' + i), rm = val('mk_r' + i); if (s || rm) r.items[i] = { s, r: rm } });
+  Object.assign(r, { recv: val('mk_recv'), by: val('mk_by'), date: val('mk_dt'), inf: val('mk_inf') });
+  audit('MRD checklist saved', getA(id).ipdNo + ' — ' + (mrdPct(r) ?? 0) + '%'); save(); toast('Saved'); if (pr) thm_mrdPrint(id); else go('mrdchkf', { id });
+};
+function mrdTable(r) {
+  return `<table class="it mrdt"><tr><th style="width:26px">#</th><th>Item / बाब</th><th style="width:30px">Yes</th><th style="width:30px">No</th><th style="width:30px">NA</th><th style="width:22%">Remarks</th></tr>
+  ${MRD_ITEMS.map((it, i) => { const x = r ? (r.items || {})[i] || {} : {}; const b = o => `<td style="text-align:center">${x.s === o ? '✔' : r ? '' : '☐'}</td>`;
+    return `<tr><td>${i + 1}</td><td>${esc(it[0])} <span style="color:#555">/ ${esc(it[1])}</span></td>${b('Yes')}${b('No')}${b('NA')}<td>${esc(x.r || '')}</td></tr>` }).join('')}</table>`;
+}
+function mrdFoot(r) { return `<table class="it" style="margin-top:8px"><tr><td><b>Received in MRD on:</b> ${r && r.recv ? dmy(r.recv) : ''}</td><td><b>Completeness:</b> ${r && mrdPct(r) !== null ? mrdPct(r) + '%' : '______ %'}</td><td><b>Deficiency informed to:</b> ${esc(r ? r.inf || '' : '')}</td></tr></table>
+  <div style="display:flex;justify-content:space-between;margin-top:26px;font-size:12px"><div>Checked by: <b>${esc(r ? r.by || '' : '')}</b> ${r ? '' : '______________'}<br>Date: ${r && r.date ? dmy(r.date) : '__________'}</div><div>MRD In-charge sign: ______________</div><div>Medical Superintendent: ______________</div></div>`}
+window.thm_mrdPrint = function (id) { const a = getA(id), r = mrdRec(id); prt('MRD FILE CHECKLIST', pStrip(getP(a.uhid), a) + `<p style="font-size:12px;margin:4px 0">Consultant: <b>${esc(a.doctor || '')}</b> &nbsp; Admission: ${dmy(a.admDate)} &nbsp; Discharge: ${a.disDate ? dmy(a.disDate) : '________'}</p>` + mrdTable(r) + mrdFoot(r)) };
+window.thm_mrdBlank = function () {
+  const line = l => `<td style="width:16%"><b>${l}</b></td><td>&nbsp;</td>`;
+  prt('MRD FILE CHECKLIST', `<table class="it"><tr>${line('Patient')}${line('UHID')}${line('Age / Sex')}</tr><tr>${line('IPD No.')}${line('Ward / Bed')}${line('Consultant')}</tr><tr>${line('Admission')}${line('Discharge')}${line('Diagnosis')}</tr></table>` + mrdTable(null) + mrdFoot(null));
+};
+
+/* ================= HR MODULE ================= */
+TH.addMenu('hr', 'HR MODULE', '👥');
+TH.addMenuItem('hr', 'hrstaff', 'Staff Master');
+TH.addMenuItem('hr', 'hratt', 'Monthly Attendance');
+TH.addMenuItem('hr', 'hrsal', 'Salary Sheet');
+TH.addMenuItem('hr', 'hrtrain', 'Training Register');
+TH.addMenuItem('hr', 'hralert', 'Expiry & Compliance Alerts');
+const HR_CAT = ['Doctor', 'Nurse', 'Technician', 'Pharmacist', 'Admin / Office', 'Housekeeping', 'Security', 'Other'];
+const HRF = [['code', 'Emp. code'], ['name', 'Full name *'], ['desig', 'Designation'], ['dept', 'Department'], ['cat', 'Category', HR_CAT], ['mobile', 'Mobile'], ['doj', 'Date of joining', 'date'], ['qual', 'Qualification'],
+ ['regNo', 'Council reg. no.'], ['regExp', 'Registration valid till', 'date'], ['blsExp', 'BLS / ACLS valid till', 'date'], ['hepB', 'Hepatitis B vaccination', ['', 'Complete (3 doses)', 'Partial', 'Not done']], ['lastHC', 'Last health check-up', 'date'],
+ ['salary', 'Monthly salary (₹)'], ['bank', 'Bank / UPI (for salary)'], ['status', 'Status', ['Active', 'Left']], ['dol', 'Date of leaving', 'date']];
+const staff = () => C('hrStaff').slice().sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+const active = () => staff().filter(s => s.status !== 'Left');
+TH.page('hrstaff', () => {
+  const e = ctx.id ? C('hrStaff').find(s => s.id === ctx.id) : ctx.add ? { status: 'Active', cat: 'Nurse' } : null; const q = (ctx.q || '').toLowerCase();
+  const L = staff().filter(s => !q || (s.name + ' ' + s.code + ' ' + s.desig + ' ' + s.dept).toLowerCase().includes(q));
+  return `<h2>👥 Staff Master / कर्मचारी यादी</h2>
+  ${e ? `<div class="card"><h3 style="margin-top:0">${e.id ? 'Edit staff' : 'Add staff'}</h3><div class="row">${HRF.map(([k, l, t]) => `<div style="min-width:190px"><label>${l}</label>${Array.isArray(t) ? `<select id="hs_${k}">${optList(t, e[k])}</select>` : `<input id="hs_${k}" type="${t === 'date' ? 'date' : 'text'}" value="${esc(e[k] || '')}">`}</div>`).join('')}</div>
+   <div style="margin-top:12px;display:flex;gap:8px"><button class="btn" onclick="thm_hrSave('${e.id || ''}')">💾 Save</button><button class="btn sec" onclick="go('hrstaff')">Cancel</button></div></div>` : ''}
+  <div class="card row"><div><label>Search</label><input id="hsq" value="${esc(ctx.q || '')}" onkeydown="if(event.key==='Enter')go('hrstaff',{q:this.value})"></div><button class="btn" onclick="go('hrstaff',{add:1})">+ Add staff</button><button class="btn sec" onclick="thm_hrPrintList()">🖨 Print staff list</button><button class="btn sec" onclick="thm_hrCSV()">Export Excel (CSV)</button></div>
+  <div class="card"><p class="muted" style="margin-top:0">Active: <b>${active().length}</b> • ${HR_CAT.map(c => c + ': ' + active().filter(s => s.cat === c).length).filter(x => !x.endsWith(': 0')).join(' • ')}</p>
+  <table><tr><th>Code</th><th>Name</th><th>Designation</th><th>Dept</th><th>Mobile</th><th>Joined</th><th>Status</th><th></th></tr>${L.map(s => `<tr><td>${esc(s.code)}</td><td><b>${esc(s.name)}</b><div class="muted">${esc(s.qual || '')}</div></td><td>${esc(s.desig)}</td><td>${esc(s.dept)}</td><td>${esc(s.mobile)}</td><td>${dmy(s.doj)}</td>
+   <td><span class="mtag ${s.status === 'Left' ? 'mt-gr' : 'mt-ok'}">${esc(s.status || 'Active')}</span></td><td><button class="btn sm" onclick="go('hrstaff',{id:'${s.id}'})">Edit</button></td></tr>`).join('') || '<tr><td colspan="8" class="muted">No staff added yet</td></tr>'}</table></div>`;
+});
+window.thm_hrSave = function (id) {
+  const s = id ? C('hrStaff').find(x => x.id === id) : { id: nid('S') }; HRF.forEach(([k]) => s[k] = val('hs_' + k).trim());
+  if (!s.name) { alert('Name is required'); return } if (!s.code) s.code = 'EMP' + String(C('hrStaff').length + (id ? 0 : 1)).padStart(3, '0');
+  if (!id) C('hrStaff').push(s); audit(id ? 'Staff edited' : 'Staff added', s.name); save(); toast('Saved'); go('hrstaff');
+};
+window.thm_hrPrintList = () => prt('STAFF LIST', `<table class="it"><tr><th>#</th><th>Code</th><th>Name</th><th>Designation</th><th>Dept</th><th>Qualification</th><th>Reg. No.</th><th>Mobile</th><th>DOJ</th></tr>${active().map((s, i) => `<tr><td>${i + 1}</td><td>${esc(s.code)}</td><td>${esc(s.name)}</td><td>${esc(s.desig)}</td><td>${esc(s.dept)}</td><td>${esc(s.qual)}</td><td>${esc(s.regNo)}</td><td>${esc(s.mobile)}</td><td>${dmy(s.doj)}</td></tr>`).join('')}</table><p style="font-size:12px">Total active staff: ${active().length}</p>`, 1);
+window.thm_hrCSV = function () { const H = HRF.map(f => f[1].replace(' *', '')); const rows = [H, ...staff().map(s => HRF.map(([k, , t]) => t === 'date' ? dmy(s[k]) : s[k] || ''))];
+  const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(['﻿' + rows.map(r => r.map(v => '"' + String(v ?? '').replace(/"/g, '""') + '"').join(',')).join('\n')], { type: 'text/csv' })); a.download = 'Staff_List_' + today() + '.csv'; a.click() };
+/* attendance */
+const ATT = ['', 'P', 'A', 'L', 'HD', 'H', 'WO'];
+const dim = m => new Date(+m.slice(0, 4), +m.slice(5, 7), 0).getDate();
+const attRec = (m, sid) => C('hrAtt').find(r => r.id === m + '|' + sid);
+TH.page('hratt', () => {
+  const m = ctx.m || ym(), n = dim(m), S = active();
+  return `<h2>📅 Monthly Attendance / हजेरी</h2><div class="card row"><div style="max-width:220px"><label>Month</label><input type="month" value="${m}" onchange="go('hratt',{m:this.value})"></div>
+   <button class="btn sec" onclick="thm_attFill('${m}','P')">Fill blanks as P (till today)</button><button class="btn" onclick="thm_attSave('${m}')">💾 Save</button><button class="btn sec" onclick="thm_attPrint('${m}')">🖨 Print</button></div>
+  <p class="muted">P = Present, A = Absent, L = Paid leave, HD = Half day, H = Holiday, WO = Weekly off</p>
+  <div class="card" style="overflow-x:auto"><table class="attg"><tr><th style="text-align:left">Staff</th>${Array.from({ length: n }, (_, i) => `<th>${i + 1}</th>`).join('')}<th>P</th></tr>
+  ${S.map(s => { const r = attRec(m, s.id) || { d: {} }; return `<tr><td style="text-align:left;white-space:nowrap">${esc(s.name)}</td>${Array.from({ length: n }, (_, i) => `<td><select id="at_${s.id}_${i + 1}">${ATT.map(o => `<option ${o === (r.d[i + 1] || '') ? 'selected' : ''}>${o}</option>`).join('')}</select></td>`).join('')}<td><b>${attCount(r).p}</b></td></tr>` }).join('') || `<tr><td colspan="${n + 2}" class="muted">Add staff in Staff Master first</td></tr>`}</table></div>`;
+});
+function attCount(r) { const v = Object.values((r && r.d) || {}); const c = o => v.filter(x => x === o).length; return { p: c('P'), a: c('A'), l: c('L'), hd: c('HD'), h: c('H'), wo: c('WO'), pay: c('P') + c('L') + c('H') + c('WO') + c('HD') / 2 } }
+window.thm_attFill = function (m, v) { const n = m === ym() ? +today().slice(8) : dim(m); active().forEach(s => { for (let i = 1; i <= n; i++) { const el = $(`#at_${s.id}_${i}`); if (el && !el.value) el.value = v } }) };
+window.thm_attSave = function (m) { const n = dim(m); active().forEach(s => { let r = attRec(m, s.id); if (!r) { r = { id: m + '|' + s.id, m, sid: s.id, d: {} }; C('hrAtt').push(r) } r.d = {}; for (let i = 1; i <= n; i++) { const v = val(`at_${s.id}_${i}`); if (v) r.d[i] = v } }); audit('Attendance saved', m); save(); toast('Attendance saved'); go('hratt', { m }) };
+window.thm_attPrint = function (m) { const n = dim(m); prt('ATTENDANCE REGISTER — ' + new Date(m + '-01').toLocaleString('en-IN', { month: 'long', year: 'numeric' }).toUpperCase(),
+  `<table class="it" style="font-size:9px"><tr><th>Name</th>${Array.from({ length: n }, (_, i) => `<th style="padding:1px">${i + 1}</th>`).join('')}<th>P</th><th>A</th><th>L</th><th>HD</th></tr>${active().map(s => { const r = attRec(m, s.id) || { d: {} }, c = attCount(r); return `<tr><td style="white-space:nowrap;font-size:10px">${esc(s.name)}</td>${Array.from({ length: n }, (_, i) => `<td style="padding:1px;text-align:center;font-size:9px">${r.d[i + 1] || ''}</td>`).join('')}<td>${c.p}</td><td>${c.a}</td><td>${c.l}</td><td>${c.hd}</td></tr>` }).join('')}</table>
+  <div style="display:flex;justify-content:space-between;margin-top:30px;font-size:12px"><div>Prepared by (HR): ______________</div><div>Verified by (Admin): ______________</div></div>`, 1) };
+/* salary */
+TH.page('hrsal', () => {
+  const m = ctx.m || ym(), n = dim(m);
+  const R = active().map(s => { const r = attRec(m, s.id) || { d: {} }, c = attCount(r), sal = num(s.salary), gross = Math.round(sal / n * c.pay), adv = num(r.adv), ded = num(r.ded), bon = num(r.bon); return { s, r, c, sal, gross, adv, ded, bon, net: gross + bon - adv - ded } });
+  return `<h2>💰 Salary Sheet / पगार पत्रक</h2><div class="card row"><div style="max-width:220px"><label>Month</label><input type="month" value="${m}" onchange="go('hrsal',{m:this.value})"></div><button class="btn" onclick="thm_salSave('${m}')">💾 Save advances / deductions</button><button class="btn sec" onclick="thm_salPrint('${m}')">🖨 Print salary sheet</button></div>
+  <p class="muted">Payable days = Present + Paid leave + Holidays + Weekly offs + ½ Half days (from Monthly Attendance). Salary = monthly salary ÷ ${n} × payable days.</p>
+  <div class="card" style="overflow-x:auto"><table><tr><th>Staff</th><th>Monthly</th><th>Payable days</th><th>Earned</th><th>Bonus / OT</th><th>Advance</th><th>Other deduction</th><th>Net pay</th></tr>
+  ${R.map(x => `<tr><td>${esc(x.s.name)}<div class="muted">${esc(x.s.desig || '')}</div></td><td>${rs(x.sal)}</td><td>${x.c.pay}</td><td>${rs(x.gross)}</td><td><input id="sb_${x.s.id}" value="${x.bon || ''}" style="width:90px"></td><td><input id="sa_${x.s.id}" value="${x.adv || ''}" style="width:90px"></td><td><input id="sd_${x.s.id}" value="${x.ded || ''}" style="width:90px"></td><td><b>${rs(x.net)}</b></td></tr>`).join('')}
+  <tr><td colspan="7" style="text-align:right"><b>Total net pay</b></td><td><b>${rs(R.reduce((a, x) => a + x.net, 0))}</b></td></tr></table></div>`;
+});
+window.thm_salSave = function (m) { active().forEach(s => { let r = attRec(m, s.id); if (!r) { r = { id: m + '|' + s.id, m, sid: s.id, d: {} }; C('hrAtt').push(r) } r.bon = num(val('sb_' + s.id)); r.adv = num(val('sa_' + s.id)); r.ded = num(val('sd_' + s.id)) }); save(); toast('Saved'); go('hrsal', { m }) };
+window.thm_salPrint = function (m) { const n = dim(m); let t = 0; prt('SALARY SHEET — ' + new Date(m + '-01').toLocaleString('en-IN', { month: 'long', year: 'numeric' }).toUpperCase(),
+  `<table class="it"><tr><th>#</th><th>Name</th><th>Designation</th><th>Monthly</th><th>Pay days</th><th>Earned</th><th>Bonus</th><th>Advance</th><th>Deduction</th><th>Net pay</th><th>Bank / UPI</th><th>Signature</th></tr>${active().map((s, i) => { const r = attRec(m, s.id) || { d: {} }, c = attCount(r), g = Math.round(num(s.salary) / n * c.pay), net = g + num(r.bon) - num(r.adv) - num(r.ded); t += net;
+   return `<tr><td>${i + 1}</td><td>${esc(s.name)}</td><td>${esc(s.desig)}</td><td>${rs(s.salary)}</td><td>${c.pay}</td><td>${rs(g)}</td><td>${rs(r.bon)}</td><td>${rs(r.adv)}</td><td>${rs(r.ded)}</td><td><b>${rs(net)}</b></td><td style="font-size:10px">${esc(s.bank || '')}</td><td style="width:70px"></td></tr>` }).join('')}<tr><td colspan="9" style="text-align:right"><b>TOTAL</b></td><td><b>${rs(t)}</b></td><td colspan="2"></td></tr></table>
+  <div style="display:flex;justify-content:space-between;margin-top:34px;font-size:12px"><div>Prepared by: ______________</div><div>Checked by (Accounts): ______________</div><div>Approved by (Director): ______________</div></div>`, 1) };
+/* training */
+TH.page('hrtrain', () => {
+  const e = ctx.id ? C('hrTrain').find(t => t.id === ctx.id) : ctx.add ? { date: today(), att: [] } : null; const T = C('hrTrain').slice().sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+  return `<h2>🎓 Training Register / प्रशिक्षण नोंदवही</h2>
+  ${e ? `<div class="card"><div class="row"><div><label>Date</label><input id="tr_date" type="date" value="${esc(e.date)}"></div><div style="flex:2"><label>Topic *</label><input id="tr_topic" list="trtopics" value="${esc(e.topic || '')}"><datalist id="trtopics">${['Fire safety & mock drill', 'Code Blue / BLS', 'Hand hygiene', 'Biomedical waste management', 'Patient rights & responsibilities', 'Infection control & PPE', 'Medication safety / high-alert drugs', 'Patient identification', 'Fall prevention', 'Needle-stick injury', 'Code Red / Code Pink', 'Documentation & MRD', 'Grievance handling', 'Quality indicators & incident reporting'].map(x => `<option>${x}</option>`).join('')}</datalist></div>
+   <div><label>Trainer</label><input id="tr_by" value="${esc(e.by || '')}"></div><div style="max-width:140px"><label>Duration (hrs)</label><input id="tr_hrs" value="${esc(e.hrs || '')}"></div></div>
+   <label style="margin-top:10px">Attendees</label><div style="display:flex;flex-wrap:wrap;gap:4px 18px;max-height:220px;overflow:auto;border:1px solid var(--bd,#ddd);padding:8px;border-radius:6px">${active().map(s => `<label style="font-weight:400;display:flex;gap:6px;align-items:center"><input type="checkbox" class="tr_at" value="${s.id}" style="width:auto" ${(e.att || []).includes(s.id) ? 'checked' : ''}> ${esc(s.name)}</label>`).join('') || '<span class="muted">Add staff first</span>'}</div>
+   <div style="margin-top:12px;display:flex;gap:8px"><button class="btn" onclick="thm_trSave('${e.id || ''}')">💾 Save</button><button class="btn sec" onclick="go('hrtrain')">Cancel</button></div></div>` : ''}
+  <div class="card row"><button class="btn" onclick="go('hrtrain',{add:1})">+ Add training</button><button class="btn sec" onclick="thm_trBlank()">🖨 Blank attendance sheet</button></div>
+  <div class="card"><table><tr><th>Date</th><th>Topic</th><th>Trainer</th><th>Hrs</th><th>Attendees</th><th></th></tr>${T.map(t => `<tr><td>${dmy(t.date)}</td><td><b>${esc(t.topic)}</b></td><td>${esc(t.by)}</td><td>${esc(t.hrs)}</td><td>${(t.att || []).length}</td><td style="white-space:nowrap"><button class="btn sm sec" onclick="go('hrtrain',{id:'${t.id}'})">Edit</button> <button class="btn sm" onclick="thm_trPrint('${t.id}')">🖨</button></td></tr>`).join('') || '<tr><td colspan="6" class="muted">No trainings yet</td></tr>'}</table></div>`;
+});
+window.thm_trSave = function (id) { const t = id ? C('hrTrain').find(x => x.id === id) : { id: nid('T') }; Object.assign(t, { date: val('tr_date'), topic: val('tr_topic').trim(), by: val('tr_by'), hrs: val('tr_hrs'), att: [...document.querySelectorAll('.tr_at:checked')].map(x => x.value) });
+  if (!t.topic) { alert('Topic is required'); return } if (!id) C('hrTrain').push(t); audit('Training saved', t.topic); save(); toast('Saved'); go('hrtrain') };
+function trSheet(t) { const A = t ? (t.att || []).map(id => C('hrStaff').find(s => s.id === id)).filter(Boolean) : [];
+  const rows = t ? A : Array.from({ length: 22 }); return `<table class="it" style="margin-bottom:8px"><tr><td><b>Topic:</b> ${t ? esc(t.topic) : ''}</td><td><b>Date:</b> ${t ? dmy(t.date) : ''}</td></tr><tr><td><b>Trainer:</b> ${t ? esc(t.by) : ''}</td><td><b>Duration:</b> ${t ? esc(t.hrs) + ' hrs' : ''}</td></tr></table>
+  <table class="it"><tr><th style="width:30px">#</th><th>Name</th><th>Designation</th><th>Department</th><th style="width:110px">Signature</th></tr>${rows.map((s, i) => `<tr style="height:26px"><td>${i + 1}</td><td>${s ? esc(s.name) : ''}</td><td>${s ? esc(s.desig) : ''}</td><td>${s ? esc(s.dept) : ''}</td><td></td></tr>`).join('')}</table>
+  <div style="display:flex;justify-content:space-between;margin-top:30px;font-size:12px"><div>Trainer sign: ______________</div><div>HR / Quality: ______________</div></div>` }
+window.thm_trPrint = id => prt('TRAINING ATTENDANCE SHEET', trSheet(C('hrTrain').find(t => t.id === id)));
+window.thm_trBlank = () => prt('TRAINING ATTENDANCE SHEET', trSheet(null));
+/* alerts */
+function expTag(d, warn) { if (!d) return '<span class="mtag mt-gr">Not entered</span>'; const left = Math.round((Date.parse(d) - Date.parse(today())) / 864e5); return left < 0 ? `<span class="mtag mt-ex">Expired ${dmy(d)}</span>` : left <= (warn || 60) ? `<span class="mtag mt-wa">${left} days (${dmy(d)})</span>` : `<span class="mtag mt-ok">${dmy(d)}</span>` }
+TH.page('hralert', () => {
+  const S = active(), hcDue = s => !s.lastHC || Date.parse(s.lastHC) < Date.parse(today()) - 365 * 864e5;
+  const bad = s => ['Doctor', 'Nurse', 'Pharmacist', 'Technician'].includes(s.cat) && (!s.regExp || s.regExp < today()) || (s.blsExp && s.blsExp < today()) || hcDue(s) || s.hepB !== 'Complete (3 doses)';
+  return `<h2>⚠ Expiry & Compliance Alerts (NABH HRM)</h2><div class="card"><p class="muted" style="margin-top:0">Registration, BLS/ACLS, yearly health check-up and Hepatitis B status for active staff. Fill these in Staff Master.</p>
+  <table><tr><th>Staff</th><th>Category</th><th>Registration</th><th>BLS / ACLS</th><th>Health check-up (yearly)</th><th>Hep B</th></tr>${S.slice().sort((a, b) => bad(b) - bad(a)).map(s => `<tr><td><b>${esc(s.name)}</b><div class="muted">${esc(s.desig || '')}</div></td><td>${esc(s.cat || '')}</td>
+   <td>${['Doctor', 'Nurse', 'Pharmacist', 'Technician'].includes(s.cat) ? expTag(s.regExp) : '<span class="muted">n/a</span>'}</td><td>${expTag(s.blsExp)}</td><td>${s.lastHC ? (hcDue(s) ? `<span class="mtag mt-ex">Due (last ${dmy(s.lastHC)})</span>` : `<span class="mtag mt-ok">${dmy(s.lastHC)}</span>`) : '<span class="mtag mt-ex">Not done</span>'}</td>
+   <td>${s.hepB === 'Complete (3 doses)' ? '<span class="mtag mt-ok">Complete</span>' : `<span class="mtag mt-wa">${esc(s.hepB || 'Not entered')}</span>`}</td></tr>`).join('') || '<tr><td colspan="6" class="muted">No staff</td></tr>'}</table></div>`;
+});
+
+/* ================= STORE MODULE ================= */
+TH.addMenu('store', 'STORE MODULE', '📦');
+TH.addMenuItem('store', 'stitems', 'Item Master');
+TH.addMenuItem('store', 'stin', 'Receive Stock (GRN)');
+TH.addMenuItem('store', 'stout', 'Issue to Department');
+TH.addMenuItem('store', 'ststock', 'Stock Report & Low Stock');
+TH.addMenuItem('store', 'stledger', 'Item Ledger / Register');
+const ST_CAT = ['Consumables', 'Surgical', 'Linen', 'Housekeeping', 'Stationery', 'Lab consumables', 'Equipment spares', 'Other'];
+const stItems = () => C('stItems').slice().sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+function stQty(id, upto) { return C('stTxn').filter(t => t.item === id && (!upto || t.date <= upto)).reduce((s, t) => s + (t.type === 'in' ? num(t.qty) : -num(t.qty)), 0) }
+function stRate(id) { const ins = C('stTxn').filter(t => t.item === id && t.type === 'in' && num(t.rate)); return ins.length ? num(ins[ins.length - 1].rate) : 0 }
+const itemOpts = sel => '<option value="">— select item —</option>' + stItems().map(i => `<option value="${i.id}" ${i.id === sel ? 'selected' : ''}>${esc(i.name)} (${esc(i.unit || '')}) — stock ${stQty(i.id)}</option>`).join('');
+TH.page('stitems', () => {
+  const e = ctx.id ? C('stItems').find(i => i.id === ctx.id) : null;
+  return `<h2>📦 Store Item Master</h2><div class="card"><h3 style="margin-top:0">${e ? 'Edit item' : 'Add item'}</h3><div class="row"><div style="flex:2"><label>Item name *</label><input id="si_name" value="${esc(e ? e.name : '')}"></div><div><label>Category</label><select id="si_cat">${optList(ST_CAT, e && e.cat)}</select></div>
+   <div><label>Unit</label><input id="si_unit" list="stunits" value="${esc(e ? e.unit : 'Nos')}"><datalist id="stunits">${['Nos', 'Box', 'Pkt', 'Roll', 'Bottle', 'Litre', 'Kg', 'Pair', 'Set', 'Ream'].map(x => `<option>${x}</option>`).join('')}</datalist></div><div><label>Minimum stock level</label><input id="si_min" value="${esc(e ? e.min : '')}"></div><div><label>Location / rack</label><input id="si_loc" value="${esc(e ? e.loc || '' : '')}"></div>
+   <button class="btn" onclick="thm_siSave('${e ? e.id : ''}')">💾 ${e ? 'Update' : 'Add'}</button>${e ? '<button class="btn sec" onclick="go(\'stitems\')">Cancel</button>' : ''}</div></div>
+  <div class="card"><table><tr><th>Item</th><th>Category</th><th>Unit</th><th>Min</th><th>Stock</th><th></th></tr>${stItems().map(i => { const q = stQty(i.id); return `<tr><td><b>${esc(i.name)}</b></td><td>${esc(i.cat)}</td><td>${esc(i.unit)}</td><td>${esc(i.min || '')}</td><td>${q <= num(i.min) ? `<span class="mtag mt-ex">${q}</span>` : q}</td><td><button class="btn sm sec" onclick="go('stitems',{id:'${i.id}'})">Edit</button></td></tr>` }).join('') || '<tr><td colspan="6" class="muted">No items yet</td></tr>'}</table></div>`;
+});
+window.thm_siSave = function (id) { const i = id ? C('stItems').find(x => x.id === id) : { id: nid('I') }; Object.assign(i, { name: val('si_name').trim(), cat: val('si_cat'), unit: val('si_unit'), min: val('si_min'), loc: val('si_loc') }); if (!i.name) { alert('Item name is required'); return }
+  if (!id && C('stItems').some(x => x.name.toLowerCase() === i.name.toLowerCase())) { alert('This item already exists'); return } if (!id) C('stItems').push(i); save(); toast('Saved'); go('stitems') };
+function stTxnTable(type) { const L = C('stTxn').filter(t => t.type === type).slice(-30).reverse(); const nm = id => (C('stItems').find(i => i.id === id) || {}).name || '?';
+  return `<table><tr><th>Date</th><th>Item</th><th>Qty</th>${type === 'in' ? '<th>Rate</th><th>Supplier</th><th>Invoice</th>' : '<th>Department</th><th>Issued to</th>'}<th>By</th>${isM() ? '<th></th>' : ''}</tr>${L.map(t => `<tr><td>${dmy(t.date)}</td><td>${esc(nm(t.item))}</td><td>${esc(t.qty)}</td>${type === 'in' ? `<td>${rs(t.rate)}</td><td>${esc(t.sup)}</td><td>${esc(t.inv)}</td>` : `<td>${esc(t.dept)}</td><td>${esc(t.to)}</td>`}<td>${esc(t.by)}</td>${isM() ? `<td><button class="btn sm sec" onclick="thm_stDel('${t.id}','${type === 'in' ? 'stin' : 'stout'}')">✕</button></td>` : ''}</tr>`).join('') || '<tr><td colspan="7" class="muted">No entries</td></tr>'}</table>` }
+window.thm_stDel = function (id, pg) { if (!confirm('Delete this entry? Stock will be recalculated.')) return; db.stTxn = C('stTxn').filter(t => t.id !== id); audit('Store entry deleted', id); save(); go(pg) };
+const deptList = () => [...new Set([...(db.departments || []).map(d => d.name || d), ...(db.wards || []).map(w => w.name), 'OT', 'ICU', 'Emergency', 'OPD', 'Laboratory', 'Radiology', 'Pharmacy', 'Housekeeping', 'Office'])];
+TH.page('stin', () => `<h2>📥 Receive Stock (GRN)</h2><div class="card"><div class="row"><div><label>Date</label><input id="sn_d" type="date" value="${today()}"></div><div style="flex:3"><label>Item *</label><select id="sn_i">${itemOpts()}</select></div><div><label>Qty *</label><input id="sn_q"></div><div><label>Rate (₹ per unit)</label><input id="sn_r"></div></div>
+  <div class="row" style="margin-top:8px"><div style="flex:2"><label>Supplier</label><input id="sn_s" value="${esc(ctx.sup || '')}"></div><div><label>Invoice / DC No.</label><input id="sn_v" value="${esc(ctx.inv || '')}"></div><button class="btn" onclick="thm_stAdd('in')">💾 Save &amp; next</button></div>
+  <p class="muted">Item not in list? Add it in Item Master first.</p></div><div class="card"><h3 style="margin-top:0">Recent receipts</h3>${stTxnTable('in')}</div>`);
+TH.page('stout', () => `<h2>📤 Issue to Department</h2><div class="card"><div class="row"><div><label>Date</label><input id="sn_d" type="date" value="${today()}"></div><div style="flex:3"><label>Item *</label><select id="sn_i">${itemOpts()}</select></div><div><label>Qty *</label><input id="sn_q"></div></div>
+  <div class="row" style="margin-top:8px"><div><label>Department / ward *</label><select id="sn_dep">${optList(['', ...deptList()], ctx.dept)}</select></div><div><label>Issued to (name)</label><input id="sn_to"></div><button class="btn" onclick="thm_stAdd('out')">💾 Issue</button></div></div>
+  <div class="card"><h3 style="margin-top:0">Recent issues</h3>${stTxnTable('out')}</div>`);
+window.thm_stAdd = function (type) {
+  const t = { id: nid('ST'), type, date: val('sn_d'), item: val('sn_i'), qty: num(val('sn_q')), by: cur.u };
+  if (!t.item || t.qty <= 0) { alert('Select item and enter quantity'); return }
+  if (type === 'in') Object.assign(t, { rate: num(val('sn_r')), sup: val('sn_s'), inv: val('sn_v') });
+  else { Object.assign(t, { dept: val('sn_dep'), to: val('sn_to') }); if (!t.dept) { alert('Select department'); return } const q = stQty(t.item); if (t.qty > q && !confirm(`Stock is only ${q}. Issue anyway?`)) return }
+  C('stTxn').push(t); save(); toast(type === 'in' ? 'Stock received' : 'Issued'); go(type === 'in' ? 'stin' : 'stout', type === 'in' ? { sup: t.sup, inv: t.inv } : { dept: t.dept });
+};
+TH.page('ststock', () => { const I = stItems(), low = I.filter(i => num(i.min) && stQty(i.id) <= num(i.min)); let tv = 0;
+  return `<h2>📊 Store Stock Report</h2><div class="card row"><button class="btn sec" onclick="thm_stPrint()">🖨 Print stock report</button><button class="btn sec" onclick="thm_stPrint(1)">🖨 Print low-stock / indent list</button></div>
+  ${low.length ? `<div class="card" style="border-color:#b42318"><b style="color:#b42318">⚠ ${low.length} item(s) at or below minimum level:</b> ${low.map(i => esc(i.name) + ' (' + stQty(i.id) + ')').join(', ')}</div>` : ''}
+  <div class="card"><table><tr><th>Item</th><th>Category</th><th>Unit</th><th>Received</th><th>Issued</th><th>In stock</th><th>Min</th><th>Value</th></tr>${I.map(i => { const T = C('stTxn').filter(t => t.item === i.id), inn = T.filter(t => t.type === 'in').reduce((s, t) => s + num(t.qty), 0), out = T.filter(t => t.type === 'out').reduce((s, t) => s + num(t.qty), 0), q = inn - out, v = q * stRate(i.id); tv += v;
+   return `<tr><td><b>${esc(i.name)}</b></td><td>${esc(i.cat)}</td><td>${esc(i.unit)}</td><td>${inn}</td><td>${out}</td><td>${num(i.min) && q <= num(i.min) ? `<span class="mtag mt-ex">${q}</span>` : `<b>${q}</b>`}</td><td>${esc(i.min || '')}</td><td>${rs(v)}</td></tr>` }).join('')}<tr><td colspan="7" style="text-align:right"><b>Total stock value</b></td><td><b>${rs(tv)}</b></td></tr></table></div>`; });
+window.thm_stPrint = function (lowOnly) { const I = stItems().filter(i => !lowOnly || (num(i.min) && stQty(i.id) <= num(i.min)));
+  prt(lowOnly ? 'STORE INDENT — LOW STOCK ITEMS' : 'STORE STOCK REPORT — ' + dmy(today()), `<table class="it"><tr><th>#</th><th>Item</th><th>Category</th><th>Unit</th><th>In stock</th><th>Min level</th>${lowOnly ? '<th>Qty required</th>' : '<th>Value</th>'}</tr>${I.map((i, n) => `<tr><td>${n + 1}</td><td>${esc(i.name)}</td><td>${esc(i.cat)}</td><td>${esc(i.unit)}</td><td>${stQty(i.id)}</td><td>${esc(i.min || '')}</td><td>${lowOnly ? '' : rs(stQty(i.id) * stRate(i.id))}</td></tr>`).join('')}</table>
+  <div style="display:flex;justify-content:space-between;margin-top:34px;font-size:12px"><div>Store in-charge: ______________</div><div>Approved by: ______________</div></div>`) };
+TH.page('stledger', () => { const f = ctx.f || ym() + '-01', t = ctx.t || today(), it = ctx.i || ''; const nm = id => (C('stItems').find(i => i.id === id) || {}).name || '?';
+  const L = C('stTxn').filter(x => x.date >= f && x.date <= t && (!it || x.item === it)).sort((a, b) => a.date.localeCompare(b.date));
+  return `<h2>📒 Item Ledger / Store Register</h2><div class="card row"><div><label>From</label><input id="sl_f" type="date" value="${f}"></div><div><label>To</label><input id="sl_t" type="date" value="${t}"></div><div style="flex:2"><label>Item (blank = all)</label><select id="sl_i">${itemOpts(it)}</select></div>
+   <button class="btn" onclick="go('stledger',{f:val('sl_f'),t:val('sl_t'),i:val('sl_i')})">Show</button><button class="btn sec" onclick="printReport()">🖨 Print</button></div>
+  <div class="card" id="rep"><h3 style="text-align:center">${esc(db.settings.hospital)} — Store Register ${dmy(f)} to ${dmy(t)}${it ? ' — ' + esc(nm(it)) : ''}</h3>${it ? `<p>Opening stock: <b>${stQty(it, (d => { d.setDate(d.getDate() - 1); return d.toISOString().slice(0, 10) })(new Date(f)))}</b> • Closing stock: <b>${stQty(it, t)}</b></p>` : ''}
+  <table><tr><th>Date</th><th>Item</th><th>Received</th><th>Issued</th><th>Supplier / Department</th><th>Invoice / Issued to</th><th>By</th></tr>${L.map(x => `<tr><td>${dmy(x.date)}</td><td>${esc(nm(x.item))}</td><td>${x.type === 'in' ? x.qty : ''}</td><td>${x.type === 'out' ? x.qty : ''}</td><td>${esc(x.type === 'in' ? x.sup : x.dept)}</td><td>${esc(x.type === 'in' ? x.inv : x.to)}</td><td>${esc(x.by)}</td></tr>`).join('') || '<tr><td colspan="7" class="muted">No entries</td></tr>'}</table></div>`; });
+
+/* ================= PHARMACY MODULE ================= */
+TH.addMenu('pharm', 'PHARMACY MODULE', '💊');
+TH.addMenuItem('pharm', 'phsale', 'Pharmacy Sale / Issue');
+TH.addMenuItem('pharm', 'phpur', 'Purchase Entry');
+TH.addMenuItem('pharm', 'phstock', 'Medicine Stock');
+TH.addMenuItem('pharm', 'phexp', 'Expiry Alerts (90 days)');
+TH.addMenuItem('pharm', 'phreg', 'Sales & Purchase Register');
+const medNames = () => [...new Set([...(db.meds || []).map(m => m.name || m), ...C('phPur').map(p => p.med)])].filter(Boolean).sort((a, b) => a.localeCompare(b));
+function phBatches(med) {
+  const B = {}; C('phPur').filter(p => p.med === med).forEach(p => { const k = p.batch + '|' + p.exp; B[k] = B[k] || { med, batch: p.batch, exp: p.exp, mrp: num(p.mrp), rate: num(p.rate), qty: 0 }; B[k].qty += num(p.qty) + num(p.free); B[k].mrp = num(p.mrp) || B[k].mrp });
+  C('phSale').forEach(s => (s.items || []).forEach(i => { if (i.med === med) { const k = i.batch + '|' + i.exp; if (B[k]) B[k].qty -= num(i.qty) } }));
+  return Object.values(B).sort((a, b) => (a.exp || '').localeCompare(b.exp || ''));
+}
+const phStock = med => phBatches(med).reduce((s, b) => s + b.qty, 0);
+const expd = e => e ? e + (e.length === 7 ? '-28' : '') : '';
+const expTxt = e => e ? (e.length === 7 ? e.slice(5) + '/' + e.slice(2, 4) : dmy(e)) : '';
+TH.page('phpur', () => `<h2>📥 Pharmacy Purchase Entry</h2><div class="card"><div class="row"><div><label>Date</label><input id="pp_d" type="date" value="${today()}"></div><div style="flex:2"><label>Supplier / distributor</label><input id="pp_s" value="${esc(ctx.sup || '')}"></div><div><label>Invoice No.</label><input id="pp_v" value="${esc(ctx.inv || '')}"></div></div>
+  <div class="row" style="margin-top:8px"><div style="flex:3"><label>Medicine *</label><input id="pp_m" list="phmeds" autocomplete="off"><datalist id="phmeds">${medNames().map(m => `<option>${esc(m)}</option>`).join('')}</datalist></div><div><label>Batch *</label><input id="pp_b"></div><div><label>Expiry *</label><input id="pp_e" type="month"></div></div>
+  <div class="row" style="margin-top:8px"><div><label>Qty (units/tabs) *</label><input id="pp_q"></div><div><label>Free qty</label><input id="pp_f"></div><div><label>Purchase rate / unit</label><input id="pp_r"></div><div><label>MRP / unit *</label><input id="pp_mrp"></div><button class="btn" onclick="thm_ppSave()">💾 Save &amp; next</button></div>
+  <p class="muted">Enter quantity in the unit you sell (tablets, vials, bottles). MRP is also per that unit.</p></div>
+  <div class="card"><h3 style="margin-top:0">Recent purchases</h3><table><tr><th>Date</th><th>Medicine</th><th>Batch</th><th>Exp</th><th>Qty+Free</th><th>Rate</th><th>MRP</th><th>Supplier / Inv</th>${isM() ? '<th></th>' : ''}</tr>${C('phPur').slice(-30).reverse().map(p => `<tr><td>${dmy(p.date)}</td><td>${esc(p.med)}</td><td>${esc(p.batch)}</td><td>${expTxt(p.exp)}</td><td>${num(p.qty)}${num(p.free) ? '+' + num(p.free) : ''}</td><td>${rs(p.rate)}</td><td>${rs(p.mrp)}</td><td>${esc(p.sup)} ${esc(p.inv)}</td>${isM() ? `<td><button class="btn sm sec" onclick="thm_ppDel('${p.id}')">✕</button></td>` : ''}</tr>`).join('') || '<tr><td colspan="9" class="muted">No purchases yet</td></tr>'}</table></div>`);
+window.thm_ppSave = function () { const p = { id: nid('PP'), date: val('pp_d'), sup: val('pp_s'), inv: val('pp_v'), med: val('pp_m').trim(), batch: val('pp_b').trim().toUpperCase(), exp: val('pp_e'), qty: num(val('pp_q')), free: num(val('pp_f')), rate: num(val('pp_r')), mrp: num(val('pp_mrp')), by: cur.u };
+  if (!p.med || !p.batch || !p.exp || p.qty <= 0 || p.mrp <= 0) { alert('Fill medicine, batch, expiry, quantity and MRP'); return }
+  if (p.exp < ym()) { if (!confirm('This batch is already expired. Save anyway?')) return }
+  C('phPur').push(p); audit('Pharmacy purchase', p.med + ' ' + p.batch + ' x' + p.qty); save(); toast('Saved'); go('phpur', { sup: p.sup, inv: p.inv }) };
+window.thm_ppDel = function (id) { if (!confirm('Delete this purchase entry?')) return; db.phPur = C('phPur').filter(p => p.id !== id); audit('Pharmacy purchase deleted', id); save(); go('phpur') };
+/* sale */
+window.thm_PHCART = window.thm_PHCART || [];
+TH.page('phsale', () => { const cart = thm_PHCART, sub = cart.reduce((s, i) => s + i.amt, 0);
+  return `<h2>💊 Pharmacy Sale / Issue</h2><div class="card">${ppick('ps', ctx.uhid, ctx.adm)}<div class="row" style="margin-top:8px"><div><label>Walk-in customer name (if no UHID)</label><input id="ps_w"></div><div><label>Prescribed by</label><select id="ps_doc">${docOpts()}</select></div></div></div>
+  <div class="card"><div class="row"><div style="flex:3"><label>Medicine</label><input id="ps_m" list="phmeds2" autocomplete="off" onchange="thm_phShowStock()"><datalist id="phmeds2">${medNames().filter(m => phStock(m) > 0).map(m => `<option>${esc(m)}</option>`).join('')}</datalist><div id="ps_st" class="muted"></div></div><div style="max-width:140px"><label>Qty</label><input id="ps_q" onkeydown="if(event.key==='Enter')thm_phAdd()"></div><button class="btn" onclick="thm_phAdd()">+ Add</button></div>
+   <table style="margin-top:10px"><tr><th>Medicine</th><th>Batch</th><th>Exp</th><th>Qty</th><th>MRP</th><th>Amount</th><th></th></tr>${cart.map((i, n) => `<tr><td>${esc(i.med)}</td><td>${esc(i.batch)}</td><td>${expTxt(i.exp)}</td><td>${i.qty}</td><td>${rs(i.mrp)}</td><td>${rs(i.amt)}</td><td><button class="btn sm sec" onclick="thm_PHCART.splice(${n},1);go('phsale')">✕</button></td></tr>`).join('') || '<tr><td colspan="7" class="muted">No medicines added</td></tr>'}
+   <tr><td colspan="5" style="text-align:right"><b>Sub-total</b></td><td><b>${rs(sub)}</b></td><td></td></tr></table>
+   <div class="row" style="margin-top:10px"><div style="max-width:140px"><label>Discount %</label><input id="ps_dc" value="0"></div><div><label>Payment</label><select id="ps_mode">${optList(MODE_OPTS)}</select></div><button class="btn" onclick="thm_phSaleSave()">💾 Save &amp; 🖨 Print bill</button><button class="btn sec" onclick="thm_PHCART.length=0;go('phsale')">Clear</button></div></div>
+  <div class="card"><h3 style="margin-top:0">Today's bills</h3><table><tr><th>Bill No.</th><th>Patient</th><th>Items</th><th>Total</th><th>Payment</th><th></th></tr>${C('phSale').filter(s => s.date === today()).reverse().map(s => `<tr><td>${esc(s.no)}</td><td>${esc(s.name)}</td><td>${(s.items || []).length}</td><td>${rs(s.total)}</td><td>${esc(s.mode)}</td><td style="white-space:nowrap"><button class="btn sm" onclick="thm_phPrint('${s.id}')">🖨</button>${isM() ? ` <button class="btn sm sec" onclick="thm_phCancel('${s.id}')">Cancel</button>` : ''}</td></tr>`).join('') || '<tr><td colspan="6" class="muted">No bills today</td></tr>'}</table></div>`; });
+window.thm_phShowStock = function () { const m = val('ps_m'); const B = phBatches(m).filter(b => b.qty > 0); $('#ps_st').innerHTML = B.length ? 'Stock: <b>' + phStock(m) + '</b> — ' + B.map(b => `${esc(b.batch)} exp ${expTxt(b.exp)} (${b.qty} @ ${rs(b.mrp)})`).join(', ') : '<span style="color:#b42318">No stock</span>' };
+window.thm_phAdd = function () { const m = val('ps_m').trim(); let q = num(val('ps_q')); if (!m || q <= 0) { alert('Select medicine and quantity'); return }
+  const used = {}; thm_PHCART.forEach(i => { const k = i.med + '|' + i.batch + '|' + i.exp; used[k] = (used[k] || 0) + i.qty });
+  const B = phBatches(m).map(b => ({ ...b, qty: b.qty - (used[m + '|' + b.batch + '|' + b.exp] || 0) })).filter(b => b.qty > 0 && expd(b.exp) >= today());
+  const have = B.reduce((s, b) => s + b.qty, 0); if (have < q) { alert(`Only ${have} in stock (non-expired).`); return }
+  for (const b of B) { if (q <= 0) break; const t = Math.min(q, b.qty); thm_PHCART.push({ med: m, batch: b.batch, exp: b.exp, qty: t, mrp: b.mrp, amt: +(t * b.mrp).toFixed(2) }); q -= t }
+  const pk = ppGet('ps'); go('phsale', { uhid: pk.u, adm: pk.a ? pk.a.id : '' }); setTimeout(() => $('#ps_m') && $('#ps_m').focus(), 50) };
+window.thm_phSaleSave = function () { if (!thm_PHCART.length) { alert('Add medicines first'); return } const { p, a } = ppGet('ps'), w = val('ps_w').trim(), mode = val('ps_mode');
+  if (!p && !w) { alert('Enter UHID or walk-in customer name'); return } if (mode === 'Add to IPD bill' && !a) { alert('Choose the admitted (IPD) patient to add to IPD bill'); return }
+  const sub = thm_PHCART.reduce((s, i) => s + i.amt, 0), dc = Math.min(100, Math.max(0, num(val('ps_dc')))), total = Math.round(sub * (1 - dc / 100));
+  const s = { id: nid('PS'), no: 'PH-' + stamp(), date: today(), time: new Date().toTimeString().slice(0, 5), uhid: p ? p.uhid : '', name: p ? p.name : w, admId: a ? a.id : '', doc: val('ps_doc'), items: thm_PHCART.slice(), sub, disc: dc, total, mode, by: cur.u };
+  C('phSale').push(s); if (mode === 'Add to IPD bill') ipdCharge(a, 'Pharmacy bill ' + s.no, 1, total);
+  audit('Pharmacy bill', s.no + ' ' + rs(total) + ' ' + mode); save(); thm_PHCART.length = 0; thm_phPrint(s.id); go('phsale') };
+window.thm_phCancel = function (id) { const s = C('phSale').find(x => x.id === id); if (!confirm('Cancel bill ' + s.no + '? Medicines go back to stock.' + (s.mode === 'Add to IPD bill' ? '\n(Remove the charge from the IPD bill by hand.)' : ''))) return; db.phSale = C('phSale').filter(x => x.id !== id); audit('Pharmacy bill cancelled', s.no); save(); go('phsale') };
+window.thm_phPrint = function (id) { const s = C('phSale').find(x => x.id === id); const p = s.uhid ? getP(s.uhid) : null, a = s.admId ? getA(s.admId) : null;
+  prt('PHARMACY BILL', pStrip(p, a, { name: s.name, date: dmy(s.date) + ' ' + (s.time || ''), doc: s.doc || ' ', no: s.no, noL: 'Bill No.' }) + `<table class="it" style="margin-top:6px"><tr><th>#</th><th>Medicine</th><th>Batch</th><th>Exp</th><th>Qty</th><th>MRP</th><th>Amount</th></tr>${s.items.map((i, n) => `<tr><td>${n + 1}</td><td>${esc(i.med)}</td><td>${esc(i.batch)}</td><td>${expTxt(i.exp)}</td><td>${i.qty}</td><td>${rs(i.mrp)}</td><td>${rs(i.amt)}</td></tr>`).join('')}
+  <tr><td colspan="6" style="text-align:right">Sub-total</td><td>${rs(s.sub)}</td></tr>${s.disc ? `<tr><td colspan="6" style="text-align:right">Discount ${s.disc}%</td><td>- ${rs(s.sub - s.total)}</td></tr>` : ''}<tr><td colspan="6" style="text-align:right"><b>NET AMOUNT</b></td><td><b>${rs(s.total)}</b></td></tr></table>
+  <p style="font-size:12px">Payment: <b>${esc(s.mode)}</b> &nbsp; Bill No.: ${esc(s.no)}</p><div style="display:flex;justify-content:space-between;margin-top:30px;font-size:12px"><div>Customer sign: ______________</div><div>Pharmacist: <b>${esc(cur.name || s.by)}</b></div></div>`) };
+TH.page('phstock', () => { const q = (ctx.q || '').toLowerCase(), low = num(db.settings.phLow || 10); const M = medNames().filter(m => !q || m.toLowerCase().includes(q)); let tv = 0;
+  return `<h2>📊 Medicine Stock</h2><div class="card row"><div><label>Search</label><input id="pq" value="${esc(ctx.q || '')}" onkeydown="if(event.key==='Enter')go('phstock',{q:this.value})"></div><div style="max-width:200px"><label>Low-stock alert below</label><input id="plow" value="${low}" onchange="db.settings.phLow=+this.value||0;save(true);go('phstock')"></div><button class="btn sec" onclick="printReport()">🖨 Print</button></div>
+  <div class="card" id="rep"><h3 style="text-align:center">${esc(db.settings.hospital)} — Pharmacy Stock ${dmy(today())}</h3><table><tr><th>Medicine</th><th>Batches (exp: qty)</th><th>Total stock</th><th>Value (purchase)</th></tr>${M.map(m => { const B = phBatches(m).filter(b => b.qty > 0), s = B.reduce((x, b) => x + b.qty, 0), v = B.reduce((x, b) => x + b.qty * (b.rate || 0), 0); tv += v;
+   return `<tr><td><b>${esc(m)}</b></td><td style="font-size:12px">${B.map(b => `${esc(b.batch)} <span class="${expd(b.exp) < today() ? 'flagH' : ''}">${expTxt(b.exp)}</span>: ${b.qty}`).join('<br>') || '—'}</td><td>${s <= low ? `<span class="mtag mt-ex">${s}</span>` : `<b>${s}</b>`}</td><td>${rs(v)}</td></tr>` }).join('') || '<tr><td colspan="4" class="muted">No medicines purchased yet</td></tr>'}<tr><td colspan="3" style="text-align:right"><b>Total stock value</b></td><td><b>${rs(tv)}</b></td></tr></table></div>`; });
+TH.page('phexp', () => { const lim = new Date(Date.now() + 90 * 864e5).toISOString().slice(0, 10); const R = []; medNames().forEach(m => phBatches(m).filter(b => b.qty > 0 && expd(b.exp) <= lim).forEach(b => R.push(b))); R.sort((a, b) => a.exp.localeCompare(b.exp));
+  return `<h2>⏳ Expiry Alerts — expired or expiring within 90 days</h2><div class="card row"><button class="btn sec" onclick="printReport()">🖨 Print</button></div><div class="card" id="rep"><h3 style="text-align:center">${esc(db.settings.hospital)} — Near-expiry / Expired Medicines (${dmy(today())})</h3>
+  <table><tr><th>Medicine</th><th>Batch</th><th>Expiry</th><th>Qty</th><th>Status</th></tr>${R.map(b => `<tr><td>${esc(b.med)}</td><td>${esc(b.batch)}</td><td>${expTxt(b.exp)}</td><td>${b.qty}</td><td>${expd(b.exp) < today() ? '<span class="mtag mt-ex">EXPIRED — remove from shelf</span>' : '<span class="mtag mt-wa">Expiring soon</span>'}</td></tr>`).join('') || '<tr><td colspan="5" class="muted">No near-expiry medicines 👍</td></tr>'}</table></div>`; });
+TH.page('phreg', () => { const f = ctx.f || today(), t = ctx.t || today(), S = C('phSale').filter(s => s.date >= f && s.date <= t), P = C('phPur').filter(p => p.date >= f && p.date <= t); const by = m => S.filter(s => s.mode === m).reduce((a, s) => a + s.total, 0);
+  return `<h2>📒 Pharmacy Register</h2><div class="card row"><div><label>From</label><input id="pr_f" type="date" value="${f}"></div><div><label>To</label><input id="pr_t" type="date" value="${t}"></div><button class="btn" onclick="go('phreg',{f:val('pr_f'),t:val('pr_t')})">Show</button><button class="btn sec" onclick="printReport()">🖨 Print</button></div>
+  <div class="card" id="rep"><h3 style="text-align:center">${esc(db.settings.hospital)} — Pharmacy Register ${dmy(f)} to ${dmy(t)}</h3><p>Sales: <b>${S.length}</b> bills • Total <b>${rs(S.reduce((a, s) => a + s.total, 0))}</b> (${MODE_OPTS.map(m => m + ': ' + rs(by(m))).join(' • ')}) • Purchases: <b>${rs(P.reduce((a, p) => a + num(p.qty) * num(p.rate), 0))}</b></p>
+  <h4>Sales</h4><table><tr><th>Date</th><th>Bill No.</th><th>Patient</th><th>Medicines</th><th>Amount</th><th>Payment</th></tr>${S.map(s => `<tr><td>${dmy(s.date)}</td><td>${esc(s.no)}</td><td>${esc(s.name)} <span class="muted">${esc(s.uhid)}</span></td><td style="font-size:12px">${s.items.map(i => esc(i.med) + ' x' + i.qty).join(', ')}</td><td>${rs(s.total)}</td><td>${esc(s.mode)}</td></tr>`).join('') || '<tr><td colspan="6" class="muted">No sales</td></tr>'}</table>
+  <h4>Purchases</h4><table><tr><th>Date</th><th>Supplier</th><th>Invoice</th><th>Medicine</th><th>Batch</th><th>Qty</th><th>Value</th></tr>${P.map(p => `<tr><td>${dmy(p.date)}</td><td>${esc(p.sup)}</td><td>${esc(p.inv)}</td><td>${esc(p.med)}</td><td>${esc(p.batch)}</td><td>${num(p.qty)}${num(p.free) ? '+' + num(p.free) : ''}</td><td>${rs(num(p.qty) * num(p.rate))}</td></tr>`).join('') || '<tr><td colspan="7" class="muted">No purchases</td></tr>'}</table></div>`; });
+
+/* ===== Standard lab parameter library (units & reference ranges, adult) ===== */
+/* name: [unit, low, high, refText, lowF, highF]  (lowF/highF = female range if different) */
+const PLIB = {
+ 'haemoglobin': ['g/dL', 13, 17, 'M 13–17; F 12–15', 12, 15], 'total wbc count': ['/cumm', 4000, 11000], 'neutrophils': ['%', 40, 75], 'lymphocytes': ['%', 20, 45], 'eosinophils': ['%', 1, 6], 'monocytes': ['%', 2, 10], 'basophils': ['%', 0, 1],
+ 'rbc count': ['million/cumm', 4.5, 5.5, 'M 4.5–5.5; F 3.8–4.8', 3.8, 4.8], 'pcv / haematocrit': ['%', 40, 50, 'M 40–50; F 36–46', 36, 46], 'mcv': ['fL', 83, 101], 'mch': ['pg', 27, 32], 'mchc': ['g/dL', 31.5, 34.5], 'rdw-cv': ['%', 11.6, 14], 'platelet count': ['lakh/cumm', 1.5, 4.5],
+ 'esr (westergren, 1 hr)': ['mm/hr', 0, 15, 'M 0–15; F 0–20', 0, 20], 'reticulocyte count': ['%', 0.5, 2.5], 'bleeding time': ['min', 1, 5], 'clotting time': ['min', 4, 10], 'prothrombin time': ['sec', 11, 13.5], 'control': ['sec', '', '', ''], 'inr': ['', 0.8, 1.2], 'aptt': ['sec', 25, 35],
+ 'peripheral smear': ['', '', '', 'Normocytic normochromic'], 'malaria parasite (smear)': ['', '', '', 'Not seen'],
+ 'random blood sugar': ['mg/dL', 70, 140], 'fasting blood sugar': ['mg/dL', 70, 100], 'post-prandial blood sugar': ['mg/dL', 70, 140], 'hba1c': ['%', 4, 5.6, 'Normal < 5.7; Pre-diabetes 5.7–6.4; Diabetes ≥ 6.5'], 'estimated average glucose': ['mg/dL', 68, 114],
+ 'blood urea': ['mg/dL', 15, 45], 'bun': ['mg/dL', 7, 20], 'serum creatinine': ['mg/dL', 0.7, 1.3, 'M 0.7–1.3; F 0.6–1.1', 0.6, 1.1], 'uric acid': ['mg/dL', 3.5, 7.2, 'M 3.5–7.2; F 2.6–6.0', 2.6, 6], 'sodium': ['mmol/L', 135, 145], 'potassium': ['mmol/L', 3.5, 5.1], 'chloride': ['mmol/L', 98, 107],
+ 'serum calcium': ['mg/dL', 8.5, 10.5], 'phosphorus': ['mg/dL', 2.5, 4.5], 'magnesium': ['mg/dL', 1.7, 2.4],
+ 'total bilirubin': ['mg/dL', 0.2, 1.2], 'direct bilirubin': ['mg/dL', 0, 0.3], 'indirect bilirubin': ['mg/dL', 0.2, 0.9], 'sgot (ast)': ['U/L', 0, 40], 'sgpt (alt)': ['U/L', 0, 41], 'alkaline phosphatase': ['U/L', 40, 130], 'ggt': ['U/L', 10, 71, 'M 10–71; F 6–42', 6, 42],
+ 'total protein': ['g/dL', 6, 8.3], 'albumin': ['g/dL', 3.5, 5.2], 'globulin': ['g/dL', 2, 3.5], 'a/g ratio': ['', 1, 2.1],
+ 'total cholesterol': ['mg/dL', 0, 200, '< 200'], 'triglycerides': ['mg/dL', 0, 150, '< 150'], 'hdl cholesterol': ['mg/dL', 40, 100, 'M > 40; F > 50', 50, 100], 'ldl cholesterol': ['mg/dL', 0, 100, '< 100'], 'vldl': ['mg/dL', 0, 30, '< 30'], 'tc/hdl ratio': ['', 0, 5, '< 5'],
+ 'serum amylase': ['U/L', 28, 100], 'serum lipase': ['U/L', 13, 60], 'cpk total': ['U/L', 39, 308], 'ck-mb': ['U/L', 0, 25], 'troponin i': ['', '', '', 'Negative'], 'ldh': ['U/L', 140, 280],
+ 't3': ['ng/mL', 0.8, 2], 't4': ['µg/dL', 5.1, 14.1], 'tsh': ['µIU/mL', 0.4, 4], 'free t3': ['pg/mL', 2, 4.4], 'free t4': ['ng/dL', 0.93, 1.7],
+ 'vitamin d (25-oh)': ['ng/mL', 30, 100, 'Deficient < 20; Insufficient 20–29; Sufficient 30–100'], 'vitamin b12': ['pg/mL', 211, 911], 'serum ferritin': ['ng/mL', 30, 400, 'M 30–400; F 13–150', 13, 150], 'serum iron': ['µg/dL', 60, 170], 'tibc': ['µg/dL', 250, 450],
+ 'c-reactive protein': ['mg/L', 0, 6, '< 6'], 'ra factor': ['IU/mL', 0, 20, '< 20'], 'aso titre': ['IU/mL', 0, 200, '< 200'], 'd-dimer': ['ng/mL FEU', 0, 500, '< 500'], 'procalcitonin': ['ng/mL', 0, 0.5, '< 0.5'], 'psa (total)': ['ng/mL', 0, 4, '< 4'],
+ 'colour': ['', '', '', 'Pale yellow'], 'appearance': ['', '', '', 'Clear'], 'ph': ['', 4.5, 8], 'specific gravity': ['', 1.005, 1.03], 'sugar': ['', '', '', 'Nil'], 'pus cells': ['/hpf', 0, 5], 'rbcs': ['/hpf', '', '', 'Nil'], 'epithelial cells': ['/hpf', '', '', 'Few'], 'casts': ['', '', '', 'Nil'], 'crystals': ['', '', '', 'Nil'], 'ketone bodies': ['', '', '', 'Negative'], 'bile salts': ['', '', '', 'Absent'], 'bile pigments': ['', '', '', 'Absent'],
+ 'consistency': ['', '', '', 'Formed'], 'mucus': ['', '', '', 'Absent'], 'occult blood': ['', '', '', 'Negative'], 'ova': ['', '', '', 'Not seen'], 'cysts': ['', '', '', 'Not seen'],
+ 's. typhi o': ['', '', '', '< 1:80'], 's. typhi h': ['', '', '', '< 1:160'], 's. paratyphi ah': ['', '', '', '< 1:160'], 's. paratyphi bh': ['', '', '', '< 1:160'],
+ 'dengue ns1 antigen': ['', '', '', 'Negative'], 'dengue igm antibody': ['', '', '', 'Negative'], 'dengue igg antibody': ['', '', '', 'Negative'], 'p. falciparum': ['', '', '', 'Negative'], 'p. vivax': ['', '', '', 'Negative'],
+ 'hiv i & ii': ['', '', '', 'Non-reactive'], 'hbsag': ['', '', '', 'Non-reactive'], 'anti-hcv': ['', '', '', 'Non-reactive'], 'vdrl': ['', '', '', 'Non-reactive'], 'typhidot igm': ['', '', '', 'Negative'], 'chikungunya igm': ['', '', '', 'Negative'], 'leptospira igm': ['', '', '', 'Negative'], 'scrub typhus igm': ['', '', '', 'Negative'],
+ 'urine pregnancy test': ['', '', '', 'Negative'], 'serum beta hcg': ['mIU/mL', '', '', 'Non-pregnant < 5'], 'abo group': ['', '', '', ''], 'rh (d) type': ['', '', '', ''], 'sputum afb (zn stain)': ['', '', '', 'AFB not seen']
+};
+/* sample-specific entries: urine / stool parameters that share a name with a blood parameter */
+PLIB['albumin (urine)'] = ['', '', '', 'Nil']; PLIB['protein (urine)'] = ['', '', '', 'Nil']; PLIB['colour (stool)'] = ['', '', '', 'Brown']; PLIB['appearance (stool)'] = ['', '', '', 'Formed'];
+const PALIAS = { 'hb': 'haemoglobin', 'hemoglobin': 'haemoglobin', 'tlc': 'total wbc count', 'wbc': 'total wbc count', 'total leucocyte count': 'total wbc count', 'platelets': 'platelet count', 'rbc': 'rbc count', 'pcv': 'pcv / haematocrit', 'hct': 'pcv / haematocrit', 'esr': 'esr (westergren, 1 hr)', 'rbs': 'random blood sugar', 'fbs': 'fasting blood sugar', 'ppbs': 'post-prandial blood sugar', 'urea': 'blood urea', 'creatinine': 'serum creatinine', 'sgot': 'sgot (ast)', 'ast': 'sgot (ast)', 'sgpt': 'sgpt (alt)', 'alt': 'sgpt (alt)', 'alp': 'alkaline phosphatase', 'crp': 'c-reactive protein', 'pt': 'prothrombin time', 'calcium': 'serum calcium', 'hdl': 'hdl cholesterol', 'ldl': 'ldl cholesterol', 'cholesterol': 'total cholesterol', 'tg': 'triglycerides', 'ferritin': 'serum ferritin', 'iron': 'serum iron', 'amylase': 'serum amylase', 'lipase': 'serum lipase', 'b12': 'vitamin b12', 'vit d': 'vitamin d (25-oh)', 'vitamin d': 'vitamin d (25-oh)', 'psa': 'psa (total)', 'upt': 'urine pregnancy test', 'urine albumin': 'albumin (urine)', 'urine protein': 'protein (urine)', 'urine sugar': 'sugar', 'stool colour': 'colour (stool)' };
+function plib(n) { const k = String(n || '').toLowerCase().trim(); return PLIB[k] || PLIB[PALIAS[k]] || null }
+const fmt = x => x === '' || x == null ? '' : String(x);
+const skey = s => /urine/i.test(s || '') ? ' (urine)' : /stool/i.test(s || '') ? ' (stool)' : '';
+function plibS(n, sample) { const k = skey(sample); return (k && plib(String(n || '').toLowerCase().trim() + k)) || plib(n) }
+/* repair: a urine/stool parameter that got the blood value (e.g. urine Albumin in g/dL 3.5–5.2, stool Colour "Pale yellow") */
+function pmSampleFix(pm, sample) { const k = skey(sample); if (!k) return false; const S = plib(String(pm.n || '').toLowerCase().trim() + k), G = plib(pm.n); if (!S || !G || S === G) return false;
+  const gRef = G[3] || (G[1] !== '' && G[1] != null ? G[1] + ' – ' + G[2] : '');
+  if (!((G[0] && pm.u === G[0]) || (gRef && pm.ref === gRef))) return false;
+  pm.u = S[0]; pm.lo = fmt(S[1]); pm.hi = fmt(S[2]); pm.ref = S[3] || (S[1] !== '' ? S[1] + ' – ' + S[2] : ''); delete pm.lof; delete pm.hif; return true }
+function pmFill(pm, force, sample) { pmSampleFix(pm, sample); const L = plibS(pm.n, sample); if (!L) return pm; if (!force && pm.ref && (pm.lo === '' || pm.lo == null) && (L[1] !== '' && L[1] != null)) return pm; const [u, lo, hi, ref, lof, hif] = L;
+  if (force || !pm.u) pm.u = u; if (force || pm.lo === '' || pm.lo == null) { pm.lo = fmt(lo); pm.hi = fmt(hi) } if (lof !== undefined && (force || pm.lof == null || pm.lof === '')) { pm.lof = fmt(lof); pm.hif = fmt(hif) }
+  if (force || !pm.ref) pm.ref = ref || (lo !== '' && lo != null ? lo + ' – ' + hi : ''); return pm }
+const MORE_TESTS = [
+ ['Peripheral Smear', 'EDTA blood', 200, ['Peripheral smear']], ['Malaria Parasite (smear)', 'EDTA blood', 150, ['Malaria parasite (smear)']], ['Bleeding Time & Clotting Time', 'Capillary blood', 100, ['Bleeding time', 'Clotting time']],
+ ['APTT', 'Citrate', 500, ['APTT']], ['Reticulocyte Count', 'EDTA blood', 200, ['Reticulocyte count']], ['Serum Calcium', 'Serum', 250, ['Serum calcium']], ['Serum Uric Acid', 'Serum', 200, ['Uric acid']], ['Serum Creatinine', 'Serum', 150, ['Serum creatinine']], ['Blood Urea', 'Serum', 150, ['Blood urea']],
+ ['Serum Amylase & Lipase', 'Serum', 800, ['Serum amylase', 'Serum lipase']], ['Cardiac Enzymes (CPK, CK-MB)', 'Serum', 900, ['CPK total', 'CK-MB']], ['Troponin I (rapid)', 'Serum', 800, ['Troponin I']],
+ ['Free Thyroid Profile (FT3, FT4, TSH)', 'Serum', 800, ['Free T3', 'Free T4', 'TSH']], ['TSH', 'Serum', 300, ['TSH']], ['Vitamin D (25-OH)', 'Serum', 1200, ['Vitamin D (25-OH)']], ['Vitamin B12', 'Serum', 900, ['Vitamin B12']],
+ ['Iron Studies', 'Serum', 900, ['Serum iron', 'TIBC', 'Serum ferritin']], ['RA Factor', 'Serum', 350, ['RA factor']], ['ASO Titre', 'Serum', 400, ['ASO titre']], ['D-Dimer', 'Citrate', 1200, ['D-dimer']], ['PSA (Total)', 'Serum', 800, ['PSA (total)']],
+ ['VDRL', 'Serum', 150, ['VDRL']], ['Typhidot IgM', 'Serum', 400, ['Typhidot IgM']], ['Chikungunya IgM', 'Serum', 700, ['Chikungunya IgM']], ['Leptospira IgM', 'Serum', 800, ['Leptospira IgM']], ['Scrub Typhus IgM', 'Serum', 900, ['Scrub typhus IgM']],
+ ['Urine Pregnancy Test (UPT)', 'Urine', 100, ['Urine pregnancy test']], ['Serum Beta hCG', 'Serum', 700, ['Serum beta hCG']], ['Stool Routine', 'Stool', 150, ['Colour', 'Consistency', 'Mucus', 'Occult blood', 'Pus cells', 'RBCs', 'Ova', 'Cysts']],
+ ['Sputum for AFB', 'Sputum', 200, ['Sputum AFB (ZN stain)']], ['Glycated Hb with eAG', 'EDTA blood', 500, ['HbA1c', 'Estimated average glucose']]
+];
+
+/* ================= PATHOLOGY MODULE ================= */
+TH.addMenu('lab', 'PATHOLOGY MODULE', '🧪');
+TH.addMenuItem('lab', 'laborder', 'New Lab Request');
+TH.addMenuItem('lab', 'labwork', 'Worklist / Enter Results');
+TH.addMenuItem('lab', 'labreg', 'Lab Register');
+TH.addMenuItem('lab', 'labmaster', 'Test Master (rates & ranges)');
+const P_ = (n, u, lo, hi, ref) => ({ n, u: u || '', lo: lo ?? '', hi: hi ?? '', ref: ref || (lo !== undefined && lo !== '' ? lo + ' – ' + hi : '') });
+const LAB_SEED = [
+ ['Complete Blood Count (CBC)', 'EDTA blood', 300, [P_('Haemoglobin', 'g/dL', 13, 17, 'M 13–17; F 12–15'), P_('Total WBC count', '/cumm', 4000, 11000), P_('Neutrophils', '%', 40, 75), P_('Lymphocytes', '%', 20, 45), P_('Eosinophils', '%', 1, 6), P_('Monocytes', '%', 2, 10), P_('Basophils', '%', 0, 1), P_('RBC count', 'million/cumm', 4.5, 5.5, 'M 4.5–5.5; F 3.8–4.8'), P_('PCV / Haematocrit', '%', 40, 50, 'M 40–50; F 36–46'), P_('MCV', 'fL', 80, 100), P_('MCH', 'pg', 27, 32), P_('MCHC', 'g/dL', 32, 36), P_('Platelet count', 'lakh/cumm', 1.5, 4.5)]],
+ ['Blood Sugar Random (RBS)', 'Fluoride', 60, [P_('Random blood sugar', 'mg/dL', 70, 140)]],
+ ['Blood Sugar Fasting & PP', 'Fluoride', 100, [P_('Fasting blood sugar', 'mg/dL', 70, 110), P_('Post-prandial blood sugar', 'mg/dL', 70, 140)]],
+ ['HbA1c', 'EDTA blood', 450, [P_('HbA1c', '%', 4, 5.6, 'Normal < 5.7; Pre-diabetes 5.7–6.4; Diabetes ≥ 6.5')]],
+ ['Liver Function Test (LFT)', 'Serum', 600, [P_('Total bilirubin', 'mg/dL', 0.2, 1.2), P_('Direct bilirubin', 'mg/dL', 0, 0.3), P_('Indirect bilirubin', 'mg/dL', 0.2, 0.9), P_('SGOT (AST)', 'U/L', 0, 40), P_('SGPT (ALT)', 'U/L', 0, 41), P_('Alkaline phosphatase', 'U/L', 40, 130), P_('Total protein', 'g/dL', 6, 8.3), P_('Albumin', 'g/dL', 3.5, 5.2), P_('Globulin', 'g/dL', 2, 3.5)]],
+ ['Kidney Function Test (KFT / RFT)', 'Serum', 600, [P_('Blood urea', 'mg/dL', 15, 45), P_('Serum creatinine', 'mg/dL', 0.7, 1.3, 'M 0.7–1.3; F 0.6–1.1'), P_('Uric acid', 'mg/dL', 3.5, 7.2, 'M 3.5–7.2; F 2.6–6.0'), P_('Sodium', 'mmol/L', 135, 145), P_('Potassium', 'mmol/L', 3.5, 5.1), P_('Chloride', 'mmol/L', 98, 107)]],
+ ['Lipid Profile', 'Serum (fasting)', 600, [P_('Total cholesterol', 'mg/dL', 0, 200, '< 200'), P_('Triglycerides', 'mg/dL', 0, 150, '< 150'), P_('HDL cholesterol', 'mg/dL', 40, 100, 'M > 40; F > 50'), P_('LDL cholesterol', 'mg/dL', 0, 100, '< 100'), P_('VLDL', 'mg/dL', 0, 30, '< 30')]],
+ ['Urine Routine & Microscopy', 'Urine', 150, [P_('Colour', '', '', '', 'Pale yellow'), P_('Appearance', '', '', '', 'Clear'), P_('pH', '', 4.5, 8), P_('Specific gravity', '', 1.005, 1.03), P_('Albumin', '', '', '', 'Nil'), P_('Sugar', '', '', '', 'Nil'), P_('Pus cells', '/hpf', 0, 5), P_('RBCs', '/hpf', '', '', 'Nil'), P_('Epithelial cells', '/hpf', '', '', 'Few'), P_('Casts', '', '', '', 'Nil'), P_('Crystals', '', '', '', 'Nil')]],
+ ['ESR', 'EDTA blood', 100, [P_('ESR (Westergren, 1 hr)', 'mm/hr', 0, 15, 'M 0–15; F 0–20')]],
+ ['CRP (quantitative)', 'Serum', 450, [P_('C-reactive protein', 'mg/L', 0, 6)]],
+ ['Widal Test', 'Serum', 200, [P_('S. Typhi O', '', '', '', '< 1:80'), P_('S. Typhi H', '', '', '', '< 1:160'), P_('S. Paratyphi AH', '', '', '', '< 1:160'), P_('S. Paratyphi BH', '', '', '', '< 1:160')]],
+ ['Dengue Profile (NS1, IgM, IgG)', 'Serum', 900, [P_('Dengue NS1 antigen', '', '', '', 'Negative'), P_('Dengue IgM antibody', '', '', '', 'Negative'), P_('Dengue IgG antibody', '', '', '', 'Negative')]],
+ ['Malaria Antigen (rapid)', 'EDTA blood', 250, [P_('P. falciparum', '', '', '', 'Negative'), P_('P. vivax', '', '', '', 'Negative')]],
+ ['Blood Group & Rh', 'EDTA blood', 100, [P_('ABO group', '', '', '', ''), P_('Rh (D) type', '', '', '', '')]],
+ ['Viral Markers (HIV, HBsAg, HCV)', 'Serum', 700, [P_('HIV I & II', '', '', '', 'Non-reactive'), P_('HBsAg', '', '', '', 'Non-reactive'), P_('Anti-HCV', '', '', '', 'Non-reactive')]],
+ ['Thyroid Profile (T3, T4, TSH)', 'Serum', 600, [P_('T3', 'ng/mL', 0.8, 2), P_('T4', 'µg/dL', 5.1, 14.1), P_('TSH', 'µIU/mL', 0.4, 4)]],
+ ['Serum Electrolytes', 'Serum', 400, [P_('Sodium', 'mmol/L', 135, 145), P_('Potassium', 'mmol/L', 3.5, 5.1), P_('Chloride', 'mmol/L', 98, 107)]],
+ ['PT / INR', 'Citrate', 400, [P_('Prothrombin time', 'sec', 11, 13.5), P_('Control', 'sec'), P_('INR', '', 0.8, 1.2)]]
+];
+function labSeed() { let ch = false;
+  if (!C('labTests').length && !db.settings.labSeeded) { LAB_SEED.forEach(([name, sample, rate, params]) => C('labTests').push({ id: nid('LT'), name, sample, rate, params })); db.settings.labSeeded = true; ch = true }
+  if ((db.settings.labLibV || 0) < 2) { const have = new Set(C('labTests').map(t => t.name.toLowerCase())); MORE_TESTS.forEach(([name, sample, rate, ps]) => { if (!have.has(name.toLowerCase())) C('labTests').push({ id: nid('LT'), name, sample, rate, params: ps.map(n => pmFill({ n, u: '', lo: '', hi: '', ref: '' }, 0, sample)) }) });
+    C('labTests').forEach(t => (t.params || []).forEach(pm => pmFill(pm, 0, t.sample))); db.settings.labLibV = 2; ch = true }
+  if ((db.settings.labLibV || 0) < 3) { /* v1.4 one-time repair of saved tests and reports (results are never changed) */
+    C('labTests').forEach(t => (t.params || []).forEach(pm => { pmGenderFix(pm); pmFill(pm, 0, t.sample) }));
+    C('labOrders').forEach(o => (o.tests || []).forEach(t => (t.params || []).forEach(pm => { const fixed = pmSampleFix(pm, t.sample); pmGenderFix(pm); pmFill(pm, 0, t.sample);
+      if (o.status !== 'Completed' && fixed && !pm.v) pm.v = pmDef(pm) })));
+    db.settings.labLibV = 3; ch = true }
+  if (ch) save(true) }
+/* old CBC/KFT/lipid seeds stored one combined range (e.g. Hb 12–17) — put the male range in lo/hi and the female range in lof/hif */
+const OLD_COMBINED = { 'haemoglobin': [12, 17], 'rbc count': [4, 5.5], 'pcv / haematocrit': [36, 50], 'serum creatinine': [0.6, 1.3], 'esr (westergren, 1 hr)': [0, 20], 'hdl cholesterol': [40, 60] };
+function pmGenderFix(pm) { const n = String(pm.n || '').toLowerCase().trim(), k = PLIB[n] ? n : PALIAS[n], L = k && PLIB[k]; if (!L || L[4] === undefined) return;
+  const o = OLD_COMBINED[k]; if (o && +pm.lo === o[0] && +pm.hi === o[1] && pm.lo !== '') { pm.lo = fmt(L[1]); pm.hi = fmt(L[2]) }
+  if (+pm.lo === +L[1] && +pm.hi === +L[2] && pm.lo !== '') { pm.ref = L[3]; pm.lof = fmt(L[4]); pm.hif = fmt(L[5]) } }
+const labTests = () => { labSeed(); return C('labTests').slice().sort((a, b) => a.name.localeCompare(b.name)) };
+const pmDef = pm => (pm.lo === '' || pm.lo == null) && pm.ref && !/[0-9<>;]/.test(pm.ref) ? pm.ref : '';
+const isF = g => /^f/i.test(String(g || ''));
+const flag = (pm, v, g) => { const x = parseFloat(v); let lo = pm.lo, hi = pm.hi; if (isF(g) && pm.lof !== undefined && pm.lof !== '') { lo = pm.lof; hi = pm.hif } if (v === '' || v == null || isNaN(x) || lo === '' || hi === '' || lo == null || hi == null) return ''; return x < +lo ? 'L' : x > +hi ? 'H' : '' };
+const RES_WORDS = ['Negative', 'Positive', 'Reactive', 'Non-reactive', 'Nil', 'Trace', 'Present', 'Absent', 'Pale yellow', 'Clear', 'Turbid', 'Few', 'A', 'B', 'AB', 'O', 'Positive (+ve)', 'Negative (-ve)'];
+function orderPage(kind) { const T = kind === 'lab' ? labTests() : radTests(), pre = kind === 'lab' ? 'lo' : 'ro';
+  return `<h2>${kind === 'lab' ? '🧪 New Lab Request' : '🩻 New Radiology Request'}</h2><div class="card">${ppick(pre, ctx.uhid, ctx.adm)}<div class="row" style="margin-top:8px"><div><label>Referred by</label><select id="${pre}_doc">${docOpts()}</select></div><div><label>Payment</label><select id="${pre}_mode">${optList(MODE_OPTS)}</select></div><div><label>Clinical notes / provisional diagnosis</label><input id="${pre}_cl"></div></div></div>
+  <div class="card"><h3 style="margin-top:0">Select ${kind === 'lab' ? 'tests' : 'studies'}</h3><input placeholder="Type to filter…" oninput="document.querySelectorAll('.tsel').forEach(l=>l.style.display=l.textContent.toLowerCase().includes(this.value.toLowerCase())?'':'none')" style="max-width:320px;margin-bottom:8px">
+   <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:4px 16px">${T.map(t => `<label class="tsel" style="font-weight:400;display:flex;gap:8px;align-items:center"><input type="checkbox" class="${pre}_t" value="${t.id}" style="width:auto" onchange="thm_ordTot('${pre}','${kind}')"> ${esc(t.name)} <span class="muted">${rs(t.rate)}</span></label>`).join('')}</div>
+   <p>Total: <b id="${pre}_tot">₹0</b></p><button class="btn" onclick="thm_ordSave('${kind}')">💾 Save request</button></div>`; }
+window.thm_ordTot = function (pre, kind) { const T = kind === 'lab' ? C('labTests') : C('radTests'); $('#' + pre + '_tot').textContent = rs([...document.querySelectorAll('.' + pre + '_t:checked')].reduce((s, c) => s + num((T.find(t => t.id === c.value) || {}).rate), 0)) };
+window.thm_ordSave = function (kind) { const pre = kind === 'lab' ? 'lo' : 'ro', T = kind === 'lab' ? C('labTests') : C('radTests'); const { p, a } = ppGet(pre); if (!p) { alert('Enter a valid UHID or choose an admitted patient'); return }
+  const sel = [...document.querySelectorAll('.' + pre + '_t:checked')].map(c => T.find(t => t.id === c.value)).filter(Boolean); if (!sel.length) { alert('Select at least one'); return }
+  const mode = val(pre + '_mode'); if (mode === 'Add to IPD bill' && !a) { alert('Choose the admitted (IPD) patient to add to IPD bill'); return }
+  const o = { id: nid(kind === 'lab' ? 'LO' : 'RO'), no: (kind === 'lab' ? 'LAB-' : 'RAD-') + stamp(), date: today(), time: new Date().toTimeString().slice(0, 5), uhid: p.uhid, name: p.name, sex: p.gender || '', admId: a ? a.id : '', doc: val(pre + '_doc'), clin: val(pre + '_cl'), mode, status: 'Pending', by: cur.u,
+    tests: sel.map(t => kind === 'lab' ? { tid: t.id, name: t.name, rate: num(t.rate), sample: t.sample, params: (t.params || []).map(x => { const q = pmFill({ ...x }, 0, t.sample); return { ...q, v: pmDef(q) } }) } : { tid: t.id, name: t.name, rate: num(t.rate), mod: t.mod, find: t.tpl || '', imp: t.imp || '' }) };
+  o.total = o.tests.reduce((s, t) => s + t.rate, 0); C(kind === 'lab' ? 'labOrders' : 'radOrders').push(o);
+  if (mode === 'Add to IPD bill') o.tests.forEach(t => ipdCharge(a, (kind === 'lab' ? 'Lab: ' : 'Radiology: ') + t.name, 1, t.rate));
+  audit(kind === 'lab' ? 'Lab request' : 'Radiology request', o.no + ' ' + p.uhid + ' ' + rs(o.total)); save(); toast('Request saved: ' + o.no); go(kind === 'lab' ? 'labres' : 'radres', { id: o.id }) };
+function workPage(kind) { if (kind === 'lab') labSeed(); const coll = kind === 'lab' ? 'labOrders' : 'radOrders', st = ctx.s || 'Pending', q = (ctx.q || '').toLowerCase(), pg = kind === 'lab' ? 'labwork' : 'radwork';
+  const L = C(coll).filter(o => (st === 'All' || o.status === st) && (!q || (o.no + ' ' + o.name + ' ' + o.uhid).toLowerCase().includes(q))).slice().reverse().slice(0, 150);
+  return `<h2>${kind === 'lab' ? '🧪 Lab Worklist' : '🩻 Radiology Worklist'}</h2><div class="card row"><div><label>Search</label><input id="wq" value="${esc(ctx.q || '')}" onkeydown="if(event.key==='Enter')go('${pg}',{q:this.value,s:'${st}'})"></div><div style="max-width:200px"><label>Status</label><select onchange="go('${pg}',{q:val('wq'),s:this.value})">${optList(['Pending', 'Completed', 'All'], st)}</select></div><button class="btn" onclick="go('${kind === 'lab' ? 'laborder' : 'radorder'}')">+ New request</button></div>
+  <div class="card"><table><tr><th>No.</th><th>Date</th><th>Patient</th><th>${kind === 'lab' ? 'Tests' : 'Studies'}</th><th>Ref. by</th><th>Status</th><th></th></tr>${L.map(o => `<tr><td>${esc(o.no)}</td><td>${dmy(o.date)} ${esc(o.time || '')}</td><td><b>${esc(o.name)}</b><div class="muted">${esc(o.uhid)}${o.admId && getA(o.admId) ? ' • ' + esc(getA(o.admId).ipdNo) : ''}</div></td><td style="font-size:13px">${o.tests.map(t => esc(t.name)).join(', ')}</td><td>${esc(o.doc)}</td>
+   <td><span class="mtag ${o.status === 'Completed' ? 'mt-ok' : 'mt-wa'}">${esc(o.status)}</span></td><td style="white-space:nowrap"><button class="btn sm" onclick="go('${kind === 'lab' ? 'labres' : 'radres'}',{id:'${o.id}'})">${o.status === 'Completed' ? 'Open' : 'Enter report'}</button>${o.status === 'Completed' ? ` <button class="btn sm sec" onclick="${kind === 'lab' ? 'thm_labPrint' : 'thm_radPrint'}('${o.id}')">🖨</button>` : ''}</td></tr>`).join('') || '<tr><td colspan="7" class="muted">Nothing here</td></tr>'}</table></div>`; }
+function regPage(kind) { const coll = kind === 'lab' ? 'labOrders' : 'radOrders', f = ctx.f || today(), t = ctx.t || today(), pg = kind === 'lab' ? 'labreg' : 'radreg'; const L = C(coll).filter(o => o.date >= f && o.date <= t);
+  return `<h2>📒 ${kind === 'lab' ? 'Laboratory' : 'Radiology'} Register</h2><div class="card row"><div><label>From</label><input id="rg_f2" type="date" value="${f}"></div><div><label>To</label><input id="rg_t2" type="date" value="${t}"></div><button class="btn" onclick="go('${pg}',{f:val('rg_f2'),t:val('rg_t2')})">Show</button><button class="btn sec" onclick="printReport()">🖨 Print</button></div>
+  <div class="card" id="rep"><h3 style="text-align:center">${esc(db.settings.hospital)} — ${kind === 'lab' ? 'Laboratory' : 'Radiology'} Register ${dmy(f)} to ${dmy(t)}</h3><p>Requests: <b>${L.length}</b> • ${kind === 'lab' ? 'Tests' : 'Studies'}: <b>${L.reduce((s, o) => s + o.tests.length, 0)}</b> • Pending: <b>${L.filter(o => o.status !== 'Completed').length}</b> • Amount: <b>${rs(L.reduce((s, o) => s + num(o.total), 0))}</b></p>
+  <table><tr><th>Sr</th><th>Date</th><th>No.</th><th>Patient / UHID</th><th>Age/Sex</th><th>${kind === 'lab' ? 'Tests' : 'Studies'}</th><th>Ref. by</th><th>Amount</th><th>Payment</th><th>Status</th></tr>${L.map((o, i) => { const p = getP(o.uhid); return `<tr><td>${i + 1}</td><td>${dmy(o.date)}</td><td>${esc(o.no)}</td><td>${esc(o.name)}<div class="muted">${esc(o.uhid)}</div></td><td>${p ? esc(ageText(p) + '/' + (p.gender || '')) : ''}</td><td style="font-size:12px">${o.tests.map(t => esc(t.name)).join(', ')}</td><td>${esc(o.doc)}</td><td>${rs(o.total)}</td><td>${esc(o.mode)}</td><td>${esc(o.status)}</td></tr>` }).join('') || '<tr><td colspan="10" class="muted">No entries</td></tr>'}</table></div>`; }
+TH.page('laborder', () => orderPage('lab'));
+TH.page('labwork', () => workPage('lab'));
+TH.page('labreg', () => regPage('lab'));
+TH.page('labres', () => { labSeed(); const o = C('labOrders').find(x => x.id === ctx.id); if (!o) return '<p>Request not found.</p>'; const p = getP(o.uhid), a = o.admId ? getA(o.admId) : null, sx = o.sex || (p && p.gender) || '';
+  return `<h2>🧪 Lab Report — ${esc(o.no)}</h2><div class="card">${pStrip(p, a, { name: o.name, date: dmy(o.date), doc: o.doc || ' ', no: o.no })}${o.clin ? `<p class="muted" style="margin-bottom:0">Clinical notes: ${esc(o.clin)}</p>` : ''}</div>
+  <p class="muted" style="margin:0 0 10px">✅ Normal word results (Nil, Negative, Non-reactive…) are already filled — change only if abnormal. ✍ Number results must be typed by the technician.</p><datalist id="reswords">${RES_WORDS.map(w => `<option>${w}</option>`).join('')}</datalist>
+  ${o.tests.map((t, ti) => `<div class="card"><h3 style="margin-top:0">${esc(t.name)} <span class="muted" style="font-weight:400">${esc(t.sample || '')}</span></h3><table><tr><th>Parameter</th><th style="width:180px">Result</th><th>Unit</th><th>Reference range</th><th></th></tr>
+   ${t.params.map((pm, pi) => `<tr><td>${esc(pm.n)}</td><td><input id="lr_${ti}_${pi}" value="${esc(pm.v || '')}" list="reswords" oninput="const f=thm_labFlag(${ti},${pi},this.value);this.nextElementSibling&&0;document.getElementById('lf_${ti}_${pi}').textContent=f;document.getElementById('lf_${ti}_${pi}').className=f?'flag'+f:''"></td><td>${esc(pm.u)}</td><td>${esc(refFor(pm, sx))}</td><td id="lf_${ti}_${pi}" class="${flag(pm, pm.v, sx) ? 'flag' + flag(pm, pm.v, sx) : ''}">${flag(pm, pm.v, sx)}</td></tr>`).join('')}</table>
+   <label style="margin-top:8px">Remarks</label><input id="lrm_${ti}" value="${esc(t.rem || '')}"></div>`).join('')}
+  <div class="card"><div class="row"><div><label>Sample collected at</label><input id="lr_col" value="${esc(o.col || (dmy(o.date) + ' ' + (o.time || '')))}"></div><div><label>Lab technician</label><input id="lr_tech" value="${esc(o.tech || cur.name || cur.u)}"></div><div><label>Pathologist</label><input id="lr_path" value="${esc(o.path || db.settings.labPath || '')}"></div></div>
+   <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap"><button class="btn" onclick="thm_labSave('${o.id}')">💾 Save</button><button class="btn" onclick="thm_labSave('${o.id}',1)">💾 Save &amp; 🖨 Print report</button><button class="btn sec" onclick="go('labwork')">Back</button>${isM() ? `<button class="btn sec" style="margin-left:auto" onclick="thm_ordDel('labOrders','${o.id}','labwork')">Delete request</button>` : ''}</div></div>`; }, 'labwork');
+window.thm_labFlag = (ti, pi, v) => { const o = C('labOrders').find(x => x.id === ctx.id); if (!o) return ''; const p = getP(o.uhid); return flag(o.tests[ti].params[pi], v, o.sex || (p && p.gender)) };
+function refFor(pm, g) { const r = pm.ref || ''; if (!/(^|[;,]\s*)M\s/.test(r) || !/[;,]\s*F\s/.test(r)) return r; const sx = String(g || '').trim(); if (!sx) return r;
+  const want = isF(sx) ? 'F' : /^m/i.test(sx) ? 'M' : ''; if (!want) return r; const hit = r.split(/[;,]/).map(s => s.trim()).find(s => s.startsWith(want + ' ')); return hit || r }
+window.thm_labSave = function (id, pr) { const o = C('labOrders').find(x => x.id === id); let any = false, all = true;
+  o.tests.forEach((t, ti) => { t.params.forEach((pm, pi) => { pm.v = val(`lr_${ti}_${pi}`).trim(); if (pm.v) any = true; else all = false }); t.rem = val('lrm_' + ti) });
+  Object.assign(o, { col: val('lr_col'), tech: val('lr_tech'), path: val('lr_path') }); db.settings.labPath = o.path;
+  o.status = any ? 'Completed' : 'Pending'; if (any && !o.rDate) o.rDate = today() + ' ' + new Date().toTimeString().slice(0, 5);
+  if (any && !all && pr && !confirm('Some results are empty. Print anyway?')) { save(); return }
+  audit('Lab report saved', o.no); save(); toast('Saved'); if (pr) thm_labPrint(id); else go('labres', { id }) };
+window.thm_ordDel = function (coll, id, back) { const o = C(coll).find(x => x.id === id); if (!confirm('Delete request ' + o.no + '?' + (o.mode === 'Add to IPD bill' ? '\n(Remove its charges from the IPD bill by hand.)' : ''))) return; db[coll] = C(coll).filter(x => x.id !== id); audit('Request deleted', o.no); save(); go(back) };
+window.thm_labPrint = function (id) { const o = C('labOrders').find(x => x.id === id), p = getP(o.uhid), a = o.admId ? getA(o.admId) : null, sx = o.sex || (p && p.gender) || '';
+  prt('LABORATORY REPORT', pStrip(p, a, { name: o.name, date: 'Collected ' + esc(o.col || dmy(o.date)) + ' • Reported ' + (o.rDate ? dmy(o.rDate.slice(0, 10)) + o.rDate.slice(10) : ''), doc: o.doc || ' ', no: o.no }) +
+   o.tests.map(t => `<div style="margin-top:10px;font-weight:700;font-size:13px;border-bottom:1px solid #000">${esc(t.name)}${t.sample ? ` <span style="font-weight:400;font-size:11px">(Sample: ${esc(t.sample)})</span>` : ''}</div>
+   <table style="width:100%;border-collapse:collapse;font-size:12px"><tr><th style="text-align:left;padding:3px">Parameter</th><th style="text-align:left">Result</th><th style="text-align:left">Unit</th><th style="text-align:left">Reference range</th></tr>${t.params.map(pm => { const f = flag(pm, pm.v, sx); return `<tr><td style="padding:3px">${esc(pm.n)}</td><td style="${f ? 'font-weight:700' : ''}">${esc(pm.v || '')} ${f ? (f === 'H' ? '↑ H' : '↓ L') : ''}</td><td>${esc(pm.u)}</td><td>${esc(refFor(pm, sx))}</td></tr>` }).join('')}</table>${t.rem ? `<p style="font-size:12px;margin:4px 0">Remarks: ${esc(t.rem)}</p>` : ''}`).join('') +
+   `<p style="text-align:center;font-size:11px;margin-top:14px">— End of report —</p><div style="display:flex;justify-content:space-between;margin-top:30px;font-size:12px"><div>Lab Technician<br><b>${esc(o.tech || '')}</b></div><div style="text-align:right">Pathologist<br><b>${esc(o.path || '')}</b></div></div>
+   <p style="font-size:10px;color:#555;margin-top:10px">Results relate only to the sample tested. Please correlate clinically.</p>`) };
+TH.page('labmaster', () => { const e = ctx.id ? C('labTests').find(t => t.id === ctx.id) : ctx.add ? { params: [] } : null;
+  return `<h2>⚙ Lab Test Master</h2>${e ? `<div class="card"><div class="row"><div style="flex:2"><label>Test name *</label><input id="lm_n" value="${esc(e.name || '')}"></div><div><label>Sample</label><input id="lm_s" value="${esc(e.sample || '')}"></div><div><label>Rate (₹)</label><input id="lm_r" value="${esc(e.rate ?? '')}"></div></div>
+   <label style="margin-top:10px">Parameters — one per line: <code>Name | Unit | Low | High | Reference text</code> (Low/High for auto H/L flag). Leave Unit/Low/High empty for common tests — they fill automatically.</label><textarea id="lm_p" rows="10" style="font-family:Consolas,monospace">${esc((e.params || []).map(p => [p.n, p.u, p.lo, p.hi, p.ref].join(' | ')).join('\n'))}</textarea>
+   <div style="margin-top:10px;display:flex;gap:8px"><button class="btn" onclick="thm_lmSave('${e.id || ''}')">💾 Save</button><button class="btn sec" onclick="go('labmaster')">Cancel</button>${e.id ? `<button class="btn sec" style="margin-left:auto" onclick="thm_mDel('labTests','${e.id}','labmaster')">Delete</button>` : ''}</div></div>` : ''}
+  <div class="card row"><button class="btn" onclick="go('labmaster',{add:1})">+ Add test</button><button class="btn sec" onclick="thm_labLibFill()">Fill missing units &amp; normal ranges</button><span class="muted">Units and normal ranges fill by themselves for ${Object.keys(PLIB).length} common parameters — just type the parameter name (e.g. Haemoglobin, SGPT, TSH).</span></div><div class="card"><table><tr><th>Test</th><th>Sample</th><th>Parameters</th><th>Rate</th><th></th></tr>${labTests().map(t => `<tr><td><b>${esc(t.name)}</b></td><td>${esc(t.sample)}</td><td>${(t.params || []).length}</td><td>${rs(t.rate)}</td><td><button class="btn sm sec" onclick="go('labmaster',{id:'${t.id}'})">Edit</button></td></tr>`).join('')}</table></div>`; });
+window.thm_lmSave = function (id) { const t = id ? C('labTests').find(x => x.id === id) : { id: nid('LT') }; t.name = val('lm_n').trim(); t.sample = val('lm_s'); t.rate = num(val('lm_r')); if (!t.name) { alert('Test name required'); return }
+  t.params = val('lm_p').split('\n').map(l => l.split('|').map(x => x.trim())).filter(x => x[0]).map(([n, u, lo, hi, ref]) => ({ n, u: u || '', lo: lo || '', hi: hi || '', ref: ref || (lo && hi ? lo + ' – ' + hi : '') })); if (!t.params.length) t.params = [{ n: t.name, u: '', lo: '', hi: '', ref: '' }]; t.params.forEach(pm => pmFill(pm, 0, t.sample));
+  if (!id) C('labTests').push(t); save(); toast('Saved'); go('labmaster') };
+
+window.thm_labLibFill = function () { let n = 0; C('labTests').forEach(t => (t.params || []).forEach(pm => { const b = JSON.stringify(pm); pmFill(pm, 0, t.sample); if (JSON.stringify(pm) !== b) n++ })); save(); alert(n + ' parameters filled with units / normal ranges.'); go('labmaster') };
+
+/* ================= RADIOLOGY MODULE ================= */
+TH.addMenu('rad', 'RADIOLOGY MODULE', '🩻');
+TH.addMenuItem('rad', 'radorder', 'New Radiology Request');
+TH.addMenuItem('rad', 'radwork', 'Worklist / Write Reports');
+TH.addMenuItem('rad', 'radreg', 'Radiology Register');
+TH.addMenuItem('rad', 'radmaster', 'Study Master & Report Templates');
+const RAD_SEED = [
+ ['X-Ray Chest PA view', 'X-Ray', 400, 'Both lung fields are clear.\nBoth costophrenic angles are clear.\nBoth hila are normal.\nCardiac size and shape are within normal limits.\nTrachea is central.\nDomes of diaphragm are normal.\nBony thorax and soft tissues appear normal.', 'No significant abnormality detected.'],
+ ['X-Ray Knee AP & Lateral', 'X-Ray', 500, 'Bones forming the knee joint show normal density and alignment.\nJoint space is maintained.\nNo fracture or dislocation seen.\nNo osteophytes seen.\nSoft tissues appear normal.', 'Normal study of the knee joint.'],
+ ['X-Ray LS Spine AP & Lateral', 'X-Ray', 600, 'Lumbar lordosis is maintained.\nVertebral bodies show normal height, alignment and density.\nIntervertebral disc spaces are maintained.\nPedicles and posterior elements appear normal.\nNo fracture or listhesis seen.', 'Normal study of the lumbosacral spine.'],
+ ['X-Ray Abdomen (erect)', 'X-Ray', 450, 'No free gas under the domes of diaphragm.\nNo abnormal air-fluid levels seen.\nBowel gas pattern is normal.\nNo radio-opaque calculus seen.\nPsoas shadows are normal.', 'No significant abnormality detected.'],
+ ['USG Abdomen & Pelvis', 'USG', 1000, 'LIVER: Normal in size and echotexture. No focal lesion. Intrahepatic biliary radicles not dilated. Portal vein normal.\nGALL BLADDER: Well distended. Wall thickness normal. No calculus.\nCBD: Normal in calibre.\nPANCREAS: Normal in size and echotexture.\nSPLEEN: Normal in size and echotexture.\nRIGHT KIDNEY: Normal in size and echotexture. Corticomedullary differentiation maintained. No calculus / hydronephrosis.\nLEFT KIDNEY: Normal in size and echotexture. Corticomedullary differentiation maintained. No calculus / hydronephrosis.\nURINARY BLADDER: Well distended. Wall normal. No calculus.\nPROSTATE / UTERUS & OVARIES: Normal in size and echotexture.\nNo free fluid in abdomen. No significant lymphadenopathy.', 'No significant abnormality detected on ultrasound.'],
+ ['USG Obstetric (single fetus)', 'USG', 1000, 'Single live intrauterine fetus.\nPresentation: ____\nCardiac activity: Present, FHR ____ bpm\nFetal movements: Present\nBPD ____ mm, HC ____ mm, AC ____ mm, FL ____ mm\nGestational age by USG: ____ weeks ____ days\nEstimated fetal weight: ____ g\nPlacenta: ____ , Grade ____ , not low lying\nLiquor: Adequate, AFI ____ cm\nCervical length: ____ cm, internal os closed', 'Single live intrauterine pregnancy of ____ weeks ____ days. EDD by USG: ____.\n(PC-PNDT: Sex of the fetus has not been determined or disclosed.)'],
+ ['USG KUB', 'USG', 800, 'RIGHT KIDNEY: Normal size and echotexture. No calculus / hydronephrosis.\nLEFT KIDNEY: Normal size and echotexture. No calculus / hydronephrosis.\nURETERS: Not dilated.\nURINARY BLADDER: Well distended, wall normal, no calculus.\nPost-void residual: Insignificant.', 'Normal ultrasound of KUB region.'],
+ ['CT Brain (plain)', 'CT', 2500, 'Brain parenchyma shows normal grey-white matter differentiation.\nNo intra- or extra-axial haemorrhage.\nNo focal lesion or mass effect.\nVentricles and sulci are normal for age.\nMidline structures are central.\nPosterior fossa structures are normal.\nCalvarium is intact.', 'No significant intracranial abnormality detected.'],
+ ['ECG (12 lead)', 'ECG', 200, 'Rhythm: Sinus rhythm\nHeart rate: ____ /min\nAxis: Normal\nPR interval: ____ ms\nQRS duration: ____ ms\nQTc: ____ ms\nST-T changes: None', 'Normal ECG.'],
+ ['2D Echo', 'Echo', 1500, 'All cardiac chambers are normal in size.\nNo regional wall motion abnormality.\nLVEF: ____ %\nAll valves are normal in structure and function.\nNo pericardial effusion.\nNo clot or vegetation.\nIAS and IVS intact.', 'Normal 2D echocardiography study. LVEF ____ %.']
+];
+function radSeed() { if (C('radTests').length || db.settings.radSeeded) return; RAD_SEED.forEach(([name, mod, rate, tpl, imp]) => C('radTests').push({ id: nid('RT'), name, mod, rate, tpl, imp })); db.settings.radSeeded = true; save(true) }
+const radTests = () => { radSeed(); return C('radTests').slice().sort((a, b) => (a.mod + a.name).localeCompare(b.mod + b.name)) };
+TH.page('radorder', () => orderPage('rad'));
+TH.page('radwork', () => workPage('rad'));
+TH.page('radreg', () => regPage('rad'));
+TH.page('radres', () => { const o = C('radOrders').find(x => x.id === ctx.id); if (!o) return '<p>Request not found.</p>'; const p = getP(o.uhid), a = o.admId ? getA(o.admId) : null;
+  return `<h2>🩻 Radiology Report — ${esc(o.no)}</h2><div class="card">${pStrip(p, a, { name: o.name, date: dmy(o.date), doc: o.doc || ' ', no: o.no })}${o.clin ? `<p class="muted" style="margin-bottom:0">Clinical notes: ${esc(o.clin)}</p>` : ''}</div>
+  ${o.tests.map((t, ti) => `<div class="card"><h3 style="margin-top:0">${esc(t.name)} <span class="muted" style="font-weight:400">${esc(t.mod || '')}</span></h3><label>Findings</label><textarea id="rf_${ti}" rows="9">${esc(t.find || '')}</textarea><label style="margin-top:8px">Impression</label><textarea id="ri_${ti}" rows="2">${esc(t.imp || '')}</textarea></div>`).join('')}
+  <div class="card"><div class="row"><div><label>Reported by (Radiologist / Doctor)</label><input id="rr_by" value="${esc(o.rad || db.settings.radDoc || '')}"></div><div><label>Qualification / Reg. No.</label><input id="rr_q" value="${esc(o.radQ || db.settings.radQ || '')}"></div></div>
+   <label style="margin-top:8px;display:flex;gap:8px;align-items:center;font-weight:400"><input id="rr_done" type="checkbox" style="width:auto" ${o.status === 'Completed' || o.status === 'Pending' ? 'checked' : ''}> Report is final (mark Completed)</label>
+   <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap"><button class="btn" onclick="thm_radSave('${o.id}')">💾 Save</button><button class="btn" onclick="thm_radSave('${o.id}',1)">💾 Save &amp; 🖨 Print report</button><button class="btn sec" onclick="go('radwork')">Back</button>${isM() ? `<button class="btn sec" style="margin-left:auto" onclick="thm_ordDel('radOrders','${o.id}','radwork')">Delete request</button>` : ''}</div></div>`; }, 'radwork');
+window.thm_radSave = function (id, pr) { const o = C('radOrders').find(x => x.id === id); o.tests.forEach((t, ti) => { t.find = val('rf_' + ti); t.imp = val('ri_' + ti) });
+  Object.assign(o, { rad: val('rr_by'), radQ: val('rr_q') }); db.settings.radDoc = o.rad; db.settings.radQ = o.radQ; o.status = $('#rr_done').checked ? 'Completed' : 'Pending'; if (o.status === 'Completed' && !o.rDate) o.rDate = today();
+  audit('Radiology report saved', o.no); save(); toast('Saved'); if (pr) thm_radPrint(id); else go('radres', { id }) };
+window.thm_radPrint = function (id) { const o = C('radOrders').find(x => x.id === id), p = getP(o.uhid), a = o.admId ? getA(o.admId) : null;
+  prt(o.tests.length === 1 ? esc(o.tests[0].name).toUpperCase() + ' — REPORT' : 'RADIOLOGY REPORT', pStrip(p, a, { name: o.name, date: dmy(o.rDate || o.date), doc: o.doc || ' ', no: o.no }) +
+   o.tests.map(t => `${o.tests.length > 1 ? `<div style="margin-top:12px;font-weight:700;border-bottom:1px solid #000">${esc(t.name)}</div>` : ''}<p style="font-weight:700;margin:12px 0 4px">FINDINGS:</p><div style="white-space:pre-wrap;font-size:13px;line-height:1.55">${esc(t.find || '')}</div><p style="font-weight:700;margin:12px 0 4px">IMPRESSION:</p><div style="white-space:pre-wrap;font-size:13px;font-weight:700">${esc(t.imp || '')}</div>`).join('') +
+   `<div style="margin-top:46px;text-align:right;font-size:12px">${esc(o.rad || '')}<br>${esc(o.radQ || '')}<br><b>Radiologist / Reporting doctor</b></div><p style="font-size:10px;color:#555;margin-top:14px">This report is a professional opinion based on imaging findings; please correlate clinically.</p>`) };
+TH.page('radmaster', () => { const e = ctx.id ? C('radTests').find(t => t.id === ctx.id) : ctx.add ? { mod: 'X-Ray' } : null;
+  return `<h2>⚙ Radiology Study Master & Templates</h2>${e ? `<div class="card"><div class="row"><div style="flex:2"><label>Study name *</label><input id="rm_n" value="${esc(e.name || '')}"></div><div><label>Modality</label><select id="rm_m">${optList(['X-Ray', 'USG', 'CT', 'MRI', 'ECG', 'Echo', 'Doppler', 'Other'], e.mod)}</select></div><div><label>Rate (₹)</label><input id="rm_r" value="${esc(e.rate ?? '')}"></div></div>
+   <label style="margin-top:8px">Normal findings template</label><textarea id="rm_t" rows="8">${esc(e.tpl || '')}</textarea><label style="margin-top:8px">Normal impression</label><textarea id="rm_i" rows="2">${esc(e.imp || '')}</textarea>
+   <div style="margin-top:10px;display:flex;gap:8px"><button class="btn" onclick="thm_rmSave('${e.id || ''}')">💾 Save</button><button class="btn sec" onclick="go('radmaster')">Cancel</button>${e.id ? `<button class="btn sec" style="margin-left:auto" onclick="thm_mDel('radTests','${e.id}','radmaster')">Delete</button>` : ''}</div></div>` : ''}
+  <div class="card row"><button class="btn" onclick="go('radmaster',{add:1})">+ Add study</button></div><div class="card"><table><tr><th>Study</th><th>Modality</th><th>Rate</th><th></th></tr>${radTests().map(t => `<tr><td><b>${esc(t.name)}</b></td><td>${esc(t.mod)}</td><td>${rs(t.rate)}</td><td><button class="btn sm sec" onclick="go('radmaster',{id:'${t.id}'})">Edit</button></td></tr>`).join('')}</table></div>`; });
+window.thm_rmSave = function (id) { const t = id ? C('radTests').find(x => x.id === id) : { id: nid('RT') }; Object.assign(t, { name: val('rm_n').trim(), mod: val('rm_m'), rate: num(val('rm_r')), tpl: val('rm_t'), imp: val('rm_i') }); if (!t.name) { alert('Study name required'); return } if (!id) C('radTests').push(t); save(); toast('Saved'); go('radmaster') };
+
+/* ================= DEPARTMENT LOGINS (roles) & PATIENT REPORTS ================= */
+try {
+  const NEWR = {
+    'Pathology': () => ['laborder', 'labwork', 'labreg', 'labmaster', 'search', 'history', 'reg'],
+    'Radiology': () => ['radorder', 'radwork', 'radreg', 'radmaster', 'search', 'history', 'reg'],
+    'Pharmacy': () => ['phsale', 'phpur', 'phstock', 'phexp', 'phreg', 'search', 'history'],
+    'Store': () => ['stitems', 'stin', 'stout', 'ststock', 'stledger'],
+    'HR': () => ['hrstaff', 'hratt', 'hrsal', 'hrtrain', 'hralert'],
+    'MRD': () => ['mrdchk', 'search', 'history', 'ipdlist', 'dislist']
+  };
+  Object.keys(NEWR).forEach(r => { ROLE_TPL[r] = NEWR[r]; if (!ROLES.includes(r)) ROLES.splice(ROLES.indexOf('Master'), 0, r) });
+  const add = (r, ks) => { const o = ROLE_TPL[r]; if (o && !o.__mod) { ROLE_TPL[r] = () => [...new Set([...o(), ...ks])]; ROLE_TPL[r].__mod = 1 } };
+  add('Doctor', ['laborder', 'labwork', 'radorder', 'radwork', 'mrdchk']);
+  add('Nurse', ['laborder', 'labwork', 'radorder', 'radwork', 'phsale']);
+} catch (e) { console.error('roles', e) }
+/* patient history: lab & radiology reports */
+const _hist = P.history;
+if (typeof _hist === 'function') P.history = function () {
+  const h = _hist.apply(this, arguments), u = ctx.uhid; if (!u) return h;
+  const L = C('labOrders').filter(o => o.uhid === u).map(o => ({ o, k: 'lab' })), R = C('radOrders').filter(o => o.uhid === u).map(o => ({ o, k: 'rad' }));
+  const A = [...L, ...R].sort((a, b) => (b.o.date + b.o.time).localeCompare(a.o.date + a.o.time)); if (!A.length) return h;
+  return h + `<div class="card"><h3 style="margin-top:0">🧪🩻 Lab &amp; Radiology Reports</h3><table><tr><th>Date</th><th>No.</th><th>Tests / studies</th><th>Status</th><th></th></tr>${A.map(({ o, k }) => `<tr><td>${dmy(o.date)}</td><td>${esc(o.no)}</td><td>${o.tests.map(t => esc(t.name)).join(', ')}</td><td><span class="mtag ${o.status === 'Completed' ? 'mt-ok' : 'mt-wa'}">${esc(o.status)}</span></td>
+   <td style="white-space:nowrap">${o.status === 'Completed' ? `<button class="btn sm" onclick="${k === 'lab' ? 'thm_labPrint' : 'thm_radPrint'}('${o.id}')">🖨 Print report</button>` : ''}${can(k === 'lab' ? 'labwork' : 'radwork') ? ` <button class="btn sm sec" onclick="go('${k === 'lab' ? 'labres' : 'radres'}',{id:'${o.id}'})">Open</button>` : ''}</td></tr>`).join('')}</table></div>`;
+};
+
+/* ================= IPD BILL FINALISE LOCK ================= */
+const bLocked = a => !!(a && a.billFinal && !isAdm());
+function bMsg(a) { alert('🔒 The bill of ' + a.ipdNo + ' is FINALISED (' + dmy(String(a.billFinal.on).slice(0, 10)) + ' by ' + a.billFinal.by + ').\n\nOnly Admin / Master can change it. Ask Admin to reopen the bill.\n\nबिल फायनल झाले आहे — बदल फक्त Admin करू शकतो.') }
+const bAfterFinal = (a, what) => { if (a && a.billFinal) audit('Changed after bill finalised', a.ipdNo + ' — ' + what) };
+TH.wrap('addCharge', o => function (id) { const a = getA(id); if (bLocked(a)) { bMsg(a); return } bAfterFinal(a, 'charge added'); return o.apply(this, arguments) });
+TH.wrap('setDisc', o => function (id) { const a = getA(id); if (bLocked(a)) { bMsg(a); return } bAfterFinal(a, 'discount changed'); return o.apply(this, arguments) });
+TH.wrap('delCharge', o => function (id) { const a = getA(id); if (bLocked(a)) { bMsg(a); return } bAfterFinal(a, 'charge deleted'); return o.apply(this, arguments) });
+TH.wrap('delPay', o => function (id) { const a = getA(id); if (bLocked(a)) { bMsg(a); return } bAfterFinal(a, 'payment deleted'); return o.apply(this, arguments) });
+TH.wrap('saveDischarge', o => function (id) { const a = getA(id); if (a && a.billFinal && (val('d_d') !== a.dDate || val('d_t') !== a.dTime)) { if (bLocked(a)) { alert('🔒 Bill is finalised — the discharge date / time cannot be changed (it changes bed charges). Ask Admin to reopen the bill.'); return } bAfterFinal(a, 'discharge date/time changed') } return o.apply(this, arguments) });
+window.thm_billFinalise = function (id) { const a = getA(id); if (a.status !== 'Discharged') { alert('Discharge the patient first. Bed charges keep adding while the patient is admitted.'); return }
+  const T = ipdTotals(a); if (!confirm(`Finalise the bill of ${a.ipdNo}?\n\nNet bill: ₹${Math.round(T.net ?? T.total ?? 0)}  •  Balance: ₹${Math.round(T.bal || 0)}\n\nAfter this only Admin / Master can change charges, discount or discharge date. Payments can still be received.`)) return;
+  a.billFinal = { by: cur.u, on: new Date().toISOString() }; (a.billLog = a.billLog || []).push({ act: 'Finalised', by: cur.u, on: a.billFinal.on }); audit('IPD bill finalised', a.ipdNo); save(); toast('Bill finalised'); go('adm', { id }) };
+window.thm_billReopen = function (id) { const a = getA(id); if (!isAdm()) { alert('Only Admin / Master can reopen a finalised bill.'); return } const r = prompt('Reason for reopening the bill of ' + a.ipdNo + ':'); if (!r) return;
+  (a.billLog = a.billLog || []).push({ act: 'Reopened', by: cur.u, on: new Date().toISOString(), why: r }); a.billFinal = null; audit('IPD bill reopened', a.ipdNo + ' — ' + r); save(); toast('Bill reopened'); go('adm', { id }) };
+const _admP = P.adm;
+if (typeof _admP === 'function') P.adm = function () {
+  const h = _admP.apply(this, arguments), a = getA(ctx.id); if (!a || a.status !== 'Discharged') return h;
+  const f = a.billFinal, log = (a.billLog || []).slice(-3).map(l => `${esc(l.act)} ${dmy(l.on.slice(0, 10))} by ${esc(l.by)}${l.why ? ' — ' + esc(l.why) : ''}`).join(' • ');
+  const bar = f ? `<div class="card" style="border-color:#067647;background:#ecfdf3"><b style="color:#067647">🔒 Bill FINALISED</b> on ${dmy(f.on.slice(0, 10))} by <b>${esc(f.by)}</b>. Only Admin / Master can change charges, discount or discharge date. Payments can still be received. ${isAdm() ? `<button class="btn sm sec" style="margin-left:8px" onclick="thm_billReopen('${a.id}')">Reopen bill (Admin)</button>` : ''}${log ? `<div class="muted" style="font-size:12px;margin-top:4px">${log}</div>` : ''}</div>`
+    : `<div class="card" style="border-color:#b54708;background:#fffaeb"><b style="color:#b54708">⚠ Bill not finalised</b> — check all charges, then finalise. After finalising only Admin can change it. <button class="btn sm" style="margin-left:8px" onclick="thm_billFinalise('${a.id}')">✅ Finalise bill</button>${log ? `<div class="muted" style="font-size:12px;margin-top:4px">${log}</div>` : ''}</div>`;
+  if (f && !isAdm()) setTimeout(() => { ['ch_n', 'ch_q', 'ch_r', 'ch_d', 'py_disc'].forEach(k => { const e = document.getElementById(k); if (e) e.disabled = true }); document.querySelectorAll('#main button').forEach(b => { if (/addCharge|setDisc|delCharge|delPay/.test(b.getAttribute('onclick') || '')) { b.disabled = true; b.style.opacity = .45; b.title = 'Bill finalised — Admin only' } }) }, 0);
+  const i = h.indexOf('</h2>'); return i > 0 ? h.slice(0, i + 5) + bar + h.slice(i + 5) : bar + h;
+};
+TH.after('printBill', (r, id) => { try { const a = getA(id); if (a && !a.billFinal) { const pf = document.querySelector('#printArea .pf'); if (pf) pf.insertAdjacentHTML('afterbegin', '<div style="text-align:right;font-size:11px;font-weight:700;border:1px solid #000;display:inline-block;float:right;padding:2px 6px">PROVISIONAL — bill not finalised</div>') } } catch (e) { } });
+window.THMOD = { C, mrdPct, stQty, phStock, ym };
+/*TH-SIGN:6af9e06b796b7f83d5a904c261463921*/

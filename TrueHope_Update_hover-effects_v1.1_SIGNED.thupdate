@@ -1,0 +1,51 @@
+/*TRUEHOPE-UPDATE {"id":"hover-effects","name":"Hover Effects (icons & menu)","version":"1.1","date":"2026-11-19","description":"Choose what happens when the mouse touches a home icon or menu item: lift, grow, glow, colour fill, icon bounce or none — with speed, colour, and your own sidebar hover background & text colours. SETTING MENU → Hover Effects."} */
+TH.setting('hvTile', 'lift'); TH.setting('hvMenu', 'light'); TH.setting('hvSpeed', 'normal'); TH.setting('hvColor', ''); TH.setting('hvMOn', false); TH.setting('hvMBg', '#11795a'); TH.setting('hvMTx', '#ffffff');
+const HV_TILE = { none: 'No effect', lift: 'Lift up (default)', grow: 'Grow bigger', glow: 'Coloured glow', fill: 'Colour fill', bounce: 'Icon bounce', spin: 'Icon turn' };
+const HV_MENU = { none: 'No effect', light: 'Light colour (default)', dark: 'Dark colour, white text', slide: 'Slide right + colour bar' };
+const HV_SPEED = { fast: ['Fast', .1], normal: ['Normal', .2], slow: ['Slow', .35] };
+let hvStyle = null;
+function hvCSS(t, m, sp, col, mc) {
+  const c = col || 'var(--g)', s = (HV_SPEED[sp] || HV_SPEED.normal)[1] + 's';
+  const T = {
+    none: `.tile:hover{transform:none!important;box-shadow:0 1px 3px rgba(0,0,0,.05)!important;border-color:var(--bd)!important}`,
+    lift: `.tile:hover{border-color:${c}!important;box-shadow:0 6px 16px rgba(0,0,0,.12)!important;transform:translateY(-4px)!important}`,
+    grow: `.tile:hover{border-color:${c}!important;box-shadow:0 8px 22px rgba(0,0,0,.14)!important;transform:scale(1.06)!important}`,
+    glow: `.tile:hover{border-color:${c}!important;box-shadow:0 0 0 3px ${c},0 8px 24px rgba(0,0,0,.18)!important;transform:none!important}`,
+    fill: `.tile:hover{background:${c}!important;border-color:${c}!important;transform:translateY(-2px)!important}.tile:hover .tl,.tile:hover .ts{color:#fff!important}`,
+    bounce: `.tile:hover{border-color:${c}!important;box-shadow:0 4px 14px rgba(0,0,0,.1)!important;transform:none!important}.tile:hover .ic{animation:hvB .6s ease}@keyframes hvB{0%,100%{transform:translateY(0)}30%{transform:translateY(-10px)}60%{transform:translateY(-4px)}}`,
+    spin: `.tile:hover{border-color:${c}!important;box-shadow:0 4px 14px rgba(0,0,0,.1)!important;transform:none!important}.tile .ic{transition:transform ${s}}.tile:hover .ic{transform:rotate(-12deg) scale(1.15)}`
+  };
+  const M = {
+    none: `nav button:hover{background:transparent!important}`,
+    light: `nav button:hover{background:var(--gl)!important}`,
+    dark: `nav button:hover{background:${c}!important;color:#fff!important}`,
+    slide: `nav button{transition:padding ${s},background ${s}}nav button:hover{background:var(--gl)!important;padding-left:24px!important;box-shadow:inset 4px 0 0 ${c}}`
+  };
+  const MC = mc && mc.on ? `nav button:hover,nav .sub button:hover{background:${mc.bg}!important}nav button:hover,nav button:hover *{color:${mc.tx}!important}` : '';
+  return `.tile{transition:all ${s}!important}nav button{transition:background ${s},color ${s},padding ${s}}${T[t] || T.lift}${M[m] || M.light}${MC}`;
+}
+function hvApply(t, m, sp, col, mc) { const s = db.settings; mc = mc || { on: s.hvMOn, bg: s.hvMBg, tx: s.hvMTx }; if (!hvStyle) { hvStyle = document.createElement('style'); hvStyle.id = 'hvStyle'; document.head.appendChild(hvStyle) } hvStyle.textContent = hvCSS(t ?? s.hvTile, m ?? s.hvMenu, sp ?? s.hvSpeed, col ?? s.hvColor, mc) }
+hvApply();
+TH.after('hdr', () => { try { if (!document.getElementById('hvStyle')) { hvStyle = null; hvApply() } } catch (e) { } });
+TH.addMenuItem('set', 'hoverfx', 'Hover Effects (icons & menu)');
+TH.page('hoverfx', () => { const s = db.settings;
+  return `<h2>✨ Hover Effects / माऊस नेल्यावर इफेक्ट</h2>
+  <div class="card"><p style="margin-top:0">Choose what happens when the mouse touches a home icon or a menu item. Move your mouse over the preview icons below — changes show immediately.<br><span class="muted">आयकॉनवर माऊस नेल्यावर काय दिसावे ते निवडा. खालील नमुन्यावर माऊस नेऊन पाहा.</span></p>
+  <div class="row"><div><label>Home icons</label><select id="hv_t" onchange="hvPrev()">${Object.entries(HV_TILE).map(([k, l]) => `<option value="${k}" ${k === s.hvTile ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
+   <div><label>Left menu items</label><select id="hv_m" onchange="hvPrev()">${Object.entries(HV_MENU).map(([k, l]) => `<option value="${k}" ${k === s.hvMenu ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
+   <div><label>Speed</label><select id="hv_s" onchange="hvPrev()">${Object.entries(HV_SPEED).map(([k, l]) => `<option value="${k}" ${k === s.hvSpeed ? 'selected' : ''}>${l[0]}</option>`).join('')}</select></div>
+   <div><label>Effect colour</label><div style="display:flex;gap:6px;align-items:center"><input id="hv_c" type="color" value="${esc(s.hvColor || '#11795a')}" style="width:60px;padding:2px;height:38px" oninput="hvPrev()"><label style="font-weight:400;display:flex;gap:4px;align-items:center;margin:0"><input id="hv_th" type="checkbox" style="width:auto" ${!s.hvColor ? 'checked' : ''} onchange="hvPrev()"> Use theme colour</label></div></div></div>
+  <div class="card" style="margin:14px 0 0;background:var(--gl)"><h3 style="margin-top:0">Sidebar (left menu) colours when mouse touches / साइडबार हॉवर रंग</h3>
+   <label style="font-weight:400;display:flex;gap:8px;align-items:center"><input id="hv_mon" type="checkbox" style="width:auto" ${s.hvMOn ? 'checked' : ''} onchange="hvPrev()"> Use my own colours / माझे रंग वापरा</label>
+   <div class="row" style="margin-top:8px"><div style="max-width:220px"><label>Background colour / मागील रंग</label><input id="hv_mbg" type="color" value="${esc(s.hvMBg || '#11795a')}" style="width:100%;height:40px;padding:2px" oninput="$('#hv_mon').checked=true;hvPrev()"></div>
+   <div style="max-width:220px"><label>Text colour / अक्षरांचा रंग</label><input id="hv_mtx" type="color" value="${esc(s.hvMTx || '#ffffff')}" style="width:100%;height:40px;padding:2px" oninput="$('#hv_mon').checked=true;hvPrev()"></div>
+   <div><label>Quick choices</label><div style="display:flex;gap:6px;flex-wrap:wrap">${[['#11795a', '#ffffff'], ['#1f5f99', '#ffffff'], ['#b42318', '#ffffff'], ['#7a2e9e', '#ffffff'], ['#fef0c7', '#7a4a00'], ['#e0f2fe', '#0b4a6f'], ['#1d2939', '#fde68a']].map(([bg, tx]) => `<button class="btn sm" style="background:${bg};color:${tx};border:1px solid #ccc" onclick="$('#hv_mbg').value='${bg}';$('#hv_mtx').value='${tx}';$('#hv_mon').checked=true;hvPrev()">Aa</button>`).join('')}</div></div></div>
+   <p class="muted" style="margin:6px 0 0">Move your mouse over the LEFT MENU now to see it. / आता डावीकडच्या मेनूवर माऊस नेऊन पाहा.</p></div>
+  <h3>Preview</h3><div class="tiles" style="grid-template-columns:repeat(auto-fill,minmax(180px,1fr))">${[['🩺', 'OPD MASTER'], ['🛏️', 'IPD MASTER'], ['🧾', 'BILLING MASTER']].map(([i, l]) => `<div class="tile"><div class="ic">${i}</div><div class="tl">${l}</div><div class="ts">preview</div></div>`).join('')}</div>
+  <div style="margin-top:14px;display:flex;gap:8px;flex-wrap:wrap"><button class="btn" onclick="hvSave()">💾 Save</button><button class="btn sec" onclick="hvReset()">Reset to default</button></div></div>`; });
+const hvCol = () => $('#hv_th').checked ? '' : val('hv_c');
+const hvMC = () => ({ on: $('#hv_mon').checked, bg: val('hv_mbg'), tx: val('hv_mtx') });
+window.hvPrev = () => hvApply(val('hv_t'), val('hv_m'), val('hv_s'), hvCol(), hvMC());
+window.hvSave = function () { const mc = hvMC(); Object.assign(db.settings, { hvTile: val('hv_t'), hvMenu: val('hv_m'), hvSpeed: val('hv_s'), hvColor: hvCol(), hvMOn: mc.on, hvMBg: mc.bg, hvMTx: mc.tx }); save(true); hvApply(); audit('Hover effects changed', db.settings.hvTile + ' / ' + db.settings.hvMenu); toast('Saved'); };
+window.hvReset = function () { Object.assign(db.settings, { hvTile: 'lift', hvMenu: 'light', hvSpeed: 'normal', hvColor: '', hvMOn: false, hvMBg: '#11795a', hvMTx: '#ffffff' }); save(true); hvApply(); go('hoverfx') };
+/*TH-SIGN:91baa339c63e0339373554391eabde35*/

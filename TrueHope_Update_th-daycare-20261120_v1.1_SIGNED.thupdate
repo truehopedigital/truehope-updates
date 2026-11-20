@@ -1,0 +1,596 @@
+/*TRUEHOPE-UPDATE {"id":"th-daycare-20261120","name":"Day Care Module","version":"1.1","date":"2026-11-20","description":"v1.1: neat hospital header on prints, Plain paper / Letterhead option. Separate Day Care module: admission with UHID + Day Care No. (DC/YYYY/NNNN), bed/chair board, vitals, nursing notes, medication, procedure note, own bill + receipts, discharge summary, register and procedure-wise report."} */
+(function () {
+  if (window.__thDC) return;
+  window.__thDC = true;
+
+  /* ================= helpers ================= */
+  function E(s) { try { return esc(String(s == null ? "" : s)); } catch (e) { return String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;"); } }
+  function V(v) { return v == null ? "" : String(v); }
+  function iso(d) { d = d || new Date(); return d.getFullYear() + "-" + ("0" + (d.getMonth() + 1)).slice(-2) + "-" + ("0" + d.getDate()).slice(-2); }
+  function show(s) { if (!s) return ""; var p = String(s).split("-"); return p.length === 3 ? p[2] + "-" + p[1] + "-" + p[0] : s; }
+  function nowTime() { var d = new Date(); return ("0" + d.getHours()).slice(-2) + ":" + ("0" + d.getMinutes()).slice(-2); }
+  function money(n) { n = Math.round((+n || 0) * 100) / 100; return "₹ " + n.toLocaleString("en-IN", { minimumFractionDigits: n % 1 ? 2 : 0, maximumFractionDigits: 2 }); }
+  function monthStart() { var d = new Date(); return iso(new Date(d.getFullYear(), d.getMonth(), 1)); }
+  function uid() { return "dc" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
+  function who() { try { if (window.curUser && (curUser.name || curUser.u)) return curUser.name || curUser.u; var h = document.querySelector("header"); var m = h && h.innerText.match(/([\w.]+)\s*•\s*\w+/); return m ? m[1] : ""; } catch (e) { return ""; } }
+  function g(id) { var el = document.getElementById(id); return el ? String(el.value).trim() : ""; }
+  function opts(list, sel, blank) { return (blank != null ? '<option value="">' + E(blank) + "</option>" : "") + list.map(function (c) { return "<option" + (String(c) === String(sel) ? " selected" : "") + ">" + E(c) + "</option>"; }).join(""); }
+  function words(n) {
+    n = Math.floor(+n || 0); if (!n) return "Zero";
+    var a = ["", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten", "Eleven", "Twelve", "Thirteen", "Fourteen", "Fifteen", "Sixteen", "Seventeen", "Eighteen", "Nineteen"];
+    var b = ["", "", "Twenty", "Thirty", "Forty", "Fifty", "Sixty", "Seventy", "Eighty", "Ninety"];
+    function two(x) { return x < 20 ? a[x] : b[Math.floor(x / 10)] + (x % 10 ? " " + a[x % 10] : ""); }
+    function three(x) { return (x >= 100 ? a[Math.floor(x / 100)] + " Hundred" + (x % 100 ? " " : "") : "") + (x % 100 ? two(x % 100) : ""); }
+    var out = [], cr = Math.floor(n / 1e7); n %= 1e7; var lk = Math.floor(n / 1e5); n %= 1e5; var th = Math.floor(n / 1000); n %= 1000;
+    if (cr) out.push(two(cr) + " Crore"); if (lk) out.push(two(lk) + " Lakh"); if (th) out.push(two(th) + " Thousand"); if (n) out.push(three(n));
+    return out.join(" ");
+  }
+  function printHTML(body) {
+    var pa = document.getElementById("printArea");
+    if (!pa) { pa = document.createElement("div"); pa.id = "printArea"; document.body.appendChild(pa); }
+    pa.innerHTML = '<div class="thdc-pr">' + hdrHTML() + body + ftrHTML() + "</div>";
+    window.print();
+  }
+  /* ---------- print header: plain paper (hospital header) or pre-printed letterhead ---------- */
+  function paper() {
+    db.settings = db.settings || {};
+    var p = db.settings.thPaper;
+    if (!p || typeof p !== "object") p = db.settings.thPaper = { mode: "plain", top: 40, bottom: 25 };
+    return p;
+  }
+  function hdrHTML() {
+    var p = paper();
+    if (p.mode === "letterhead") return '<div style="height:' + (+p.top || 0) + 'mm"></div>';
+    var raw = ""; try { raw = printHead() || ""; } catch (e) {}
+    var t = document.createElement("div"); t.innerHTML = raw;
+    var img = t.querySelector("img");
+    Array.prototype.slice.call(t.querySelectorAll("img,style,script")).forEach(function (n) { if (n !== img) n.remove(); });
+    if (img) img.remove();
+    var txt = t.innerHTML.replace(/<br\s*\/?>/gi, "\n").replace(/<\/(div|p|h\d|tr|li|table)>/gi, "\n").replace(/<[^>]+>/g, "");
+    var ta = document.createElement("textarea"); ta.innerHTML = txt; txt = ta.value;
+    var lines = txt.split(/\n/).map(function (s) { return s.replace(/\s+/g, " ").trim(); }).filter(Boolean);
+    if (!img && !lines.length) return raw;                       // software's own letterhead spacer — keep it
+    return '<div class="thph"><div class="thph-s">' + (img ? '<img src="' + E(img.getAttribute("src")) + '">' : "") + '</div><div class="thph-c">' +
+      (lines.length ? '<div class="thph-n">' + E(lines[0]) + "</div>" + lines.slice(1).map(function (l) { return "<div>" + E(l) + "</div>"; }).join("") : "") +
+      '</div><div class="thph-s"></div></div>';
+  }
+  function ftrHTML() { var p = paper(); return p.mode === "letterhead" ? '<div style="height:' + (+p.bottom || 0) + 'mm"></div>' : ""; }
+  function paperSel() {
+    var p = paper();
+    return '<select title="Print on" onchange="window.__thPaperSet(this.value)" style="width:auto;border-radius:8px;padding:6px 8px;font-weight:700;color:#0b2545">' +
+      '<option value="plain"' + (p.mode !== "letterhead" ? " selected" : "") + '>🖨 Plain paper (with header)</option><option value="letterhead"' + (p.mode === "letterhead" ? " selected" : "") + ">🖨 Letterhead (blank top)</option></select>";
+  }
+  function paperSettings() {
+    var p = paper();
+    return '<div class="card"><h3 style="margin-top:0">Print paper (Day Care &amp; TPA prints)</h3><div style="display:flex;gap:14px;flex-wrap:wrap;align-items:end">' +
+      '<div><label style="font-size:12px">Print on</label><br>' + paperSel() + "</div>" +
+      '<div><label style="font-size:12px">Letterhead top space (mm)</label><br><input type="number" id="thpp_top" value="' + E(p.top) + '" style="width:120px"></div>' +
+      '<div><label style="font-size:12px">Letterhead bottom space (mm)</label><br><input type="number" id="thpp_bot" value="' + E(p.bottom) + '" style="width:120px"></div>' +
+      '<button class="btn sec" type="button" onclick="window.__thPaperSave()">Save paper settings</button></div>' +
+      '<p style="font-size:12px;color:#64748b;margin-bottom:0">Plain paper prints the hospital name, address and logo at the top. Letterhead leaves the top and bottom blank for your printed letterhead.</p></div>';
+  }
+  if (!window.__thPaperSet) {
+    window.__thPaperSet = function (v) { paper().mode = v === "letterhead" ? "letterhead" : "plain"; save(); try { toast("Print on: " + (v === "letterhead" ? "Letterhead" : "Plain paper")); } catch (e) {} };
+    window.__thPaperSave = function () {
+      var p = paper(), t = document.getElementById("thpp_top"), b = document.getElementById("thpp_bot");
+      if (t) p.top = Math.max(0, Math.min(120, +t.value || 0)); if (b) p.bottom = Math.max(0, Math.min(80, +b.value || 0));
+      save(); try { toast("Paper settings saved"); } catch (e) {}
+    };
+  }
+  function csv(name, rows) {
+    var t = rows.map(function (r) { return r.map(function (c) { c = V(c); return /[",\n]/.test(c) ? '"' + c.replace(/"/g, '""') + '"' : c; }).join(","); }).join("\r\n");
+    var a = document.createElement("a"); a.href = URL.createObjectURL(new Blob(["﻿" + t], { type: "text/csv" })); a.download = name; document.body.appendChild(a); a.click(); setTimeout(function () { a.remove(); }, 500);
+  }
+  function refresh(p) { try { go(p || "thDCCase"); } catch (e) {} }
+  function audit2(a, b) { try { audit(a, b); } catch (e) {} }
+
+  /* ================= data (new keys only) ================= */
+  var DEF_PROCS = [
+    ["Haemodialysis", "Dialysis", 1500], ["Chemotherapy infusion", "Oncology", 3000], ["Blood transfusion", "Transfusion", 1500],
+    ["IV infusion / iron infusion", "Infusion", 1000], ["Minor surgery (local anaesthesia)", "Surgery", 3000], ["Cataract surgery", "Ophthalmology", 8000],
+    ["Upper GI endoscopy", "Endoscopy", 2500], ["Colonoscopy", "Endoscopy", 4000], ["Lithotripsy (ESWL)", "Urology", 12000],
+    ["D & C", "Gynaecology", 4000], ["Dressing / suturing", "Surgery", 500], ["Biopsy", "Surgery", 2500],
+    ["Joint aspiration / injection", "Orthopaedics", 1500], ["Observation / nebulisation", "Medicine", 500], ["Physiotherapy session", "Physiotherapy", 400], ["Other", "Other", 0]
+  ];
+  var DEF_ITEMS = [["Day Care bed charges", 500], ["Doctor consultation", 300], ["Nursing charges", 300], ["Procedure room / OT charges", 1000], ["Medicines & consumables", 0], ["Investigations", 0]];
+  var PAYERS = ["Cash / Self", "MJPJAY", "AB-PMJAY", "Insurance (TPA)", "CGHS", "ECHS", "ESIC", "Corporate", "Free / Charity"];
+  var STATUS = ["Admitted", "Discharged", "LAMA", "Referred", "Cancelled"];
+  var MODES = ["Cash", "UPI", "Card", "Bank transfer", "Cheque"];
+  function DC() { if (!Array.isArray(db.thDayCare)) db.thDayCare = []; return db.thDayCare; }
+  function live() { return DC().filter(function (x) { return !x.deleted; }); }
+  function CFG() {
+    db.settings = db.settings || {};
+    var c = db.settings.thDC;
+    if (!c || typeof c !== "object") c = db.settings.thDC = {};
+    if (!Array.isArray(c.beds) || !c.beds.length) c.beds = ["DC-1", "DC-2", "DC-3", "DC-4", "DC-5", "DC-6"];
+    if (!Array.isArray(c.procs) || !c.procs.length) c.procs = DEF_PROCS.map(function (p) { return { name: p[0], cat: p[1], rate: p[2] }; });
+    if (!Array.isArray(c.items) || !c.items.length) c.items = DEF_ITEMS.map(function (p) { return { name: p[0], rate: p[1] }; });
+    return c;
+  }
+  function byId(id) { return DC().filter(function (x) { return String(x.id) === String(id); })[0] || null; }
+  function nextNo() {
+    var y = new Date().getFullYear(), max = 0, re = new RegExp("^DC/" + y + "/(\\d+)$");
+    DC().forEach(function (x) { var m = re.exec(x.no || ""); if (m) max = Math.max(max, +m[1]); });
+    return "DC/" + y + "/" + ("000" + (max + 1)).slice(-4);
+  }
+  function receiptNo() {
+    var y = new Date().getFullYear(), max = 0, re = new RegExp("^DCR/" + y + "/(\\d+)$");
+    DC().forEach(function (x) { (x.payments || []).forEach(function (p) { var m = re.exec(p.rno || ""); if (m) max = Math.max(max, +m[1]); }); });
+    return "DCR/" + y + "/" + ("000" + (max + 1)).slice(-4);
+  }
+  function patients() { var p = db.patients; if (Array.isArray(p)) return p; if (p && typeof p === "object") return Object.keys(p).map(function (k) { return p[k]; }); return []; }
+  function patBy(uhid) { var p = null; try { p = getP(uhid); } catch (e) {} if (!p) p = patients().filter(function (x) { return String(x.uhid || x.id) === String(uhid); })[0]; return p || null; }
+  function pinfo(p) {
+    p = p || {}; var age = "";
+    try { age = ageText(p); } catch (e) {}
+    if (!age) age = V(p.age || p.ageText);
+    return { uhid: V(p.uhid || p.id), name: V(p.name || p.pname || p.fullName || p.patientName), age: age, sex: V(p.sex || p.gender),
+      mobile: V(p.mobile || p.phone || p.mob || p.contact), address: V(p.address || p.addr || p.city) };
+  }
+  function doctors() { return (Array.isArray(db.doctors) ? db.doctors : []).map(function (d) { return d && (d.name || d.dname) || ""; }).filter(Boolean); }
+  function totals(x) {
+    var gross = (x.charges || []).reduce(function (t, c) { return t + (+c.qty || 0) * (+c.rate || 0); }, 0);
+    var disc = +x.discount || 0, net = Math.max(0, gross - disc);
+    var paid = (x.payments || []).filter(function (p) { return !p.refund; }).reduce(function (t, p) { return t + (+p.amount || 0); }, 0);
+    var ref = (x.payments || []).filter(function (p) { return p.refund; }).reduce(function (t, p) { return t + (+p.amount || 0); }, 0);
+    // scheme / insurer share: amount entered, else full bill for cashless government schemes & free cases
+    var cover = !x.payer || /cash|self/i.test(x.payer) ? 0 : (+x.schemeAmount > 0 ? Math.min(net, +x.schemeAmount) : /MJPJAY|PMJAY|CGHS|ECHS|ESIC|Free/i.test(x.payer) ? net : 0);
+    return { gross: gross, disc: disc, net: net, paid: paid - ref, cover: cover, due: Math.round((net - cover - (paid - ref)) * 100) / 100 };
+  }
+  function bedBusy(bed, exceptId) { return live().some(function (x) { return x.status === "Admitted" && x.bed === bed && String(x.id) !== String(exceptId || ""); }); }
+
+  var ST = window.__thDCS = window.__thDCS || { q: "", pick: null, id: null, tab: "details", from: monthStart(), to: iso(), st: "", payer: "" };
+
+  /* ================= style ================= */
+  TH.css([
+    ".thph{display:flex;align-items:center;gap:12px;border-bottom:2px solid #0b2545;padding-bottom:6px;margin-bottom:10px}",
+    ".thph-s{width:95px;flex:none}.thph-s img{max-width:95px;max-height:80px;display:block}",
+    ".thph-c{flex:1;text-align:center;font-size:11.5px;line-height:1.35;color:#111}.thph-n{font-size:20px;font-weight:800;color:#0b2545;letter-spacing:.3px;text-transform:uppercase}",
+    ".thdc input[type=checkbox]{width:auto !important;height:auto !important;margin:0 !important;accent-color:#0e7490}",
+    ".thdc-hero{background:linear-gradient(135deg,#0e7490,#0891b2 55%,#22d3ee);color:#fff;border-radius:16px;padding:16px 20px;margin-bottom:12px;display:flex;align-items:center;gap:14px;flex-wrap:wrap;box-shadow:0 6px 18px rgba(8,145,178,.25)}",
+    ".thdc-hero h2{margin:0;color:#fff;font-size:22px;flex:1}.thdc-hero small{display:block;opacity:.9;font-size:12.5px;font-weight:400}",
+    ".thdc-hero .btn{background:#fff !important;color:#0e7490 !important;border-color:#fff !important;font-weight:700}",
+    ".thdc-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin-bottom:12px}",
+    ".thdc-kpi{background:#fff;border:1px solid #dbe3ee;border-radius:12px;padding:10px 14px;border-left:5px solid #0891b2}",
+    ".thdc-kpi small{display:block;color:#64748b;font-size:12px}.thdc-kpi b{font-size:22px;color:#0b2545}",
+    ".thdc-kpi.o{border-left-color:#f59e0b}.thdc-kpi.g{border-left-color:#16a34a}.thdc-kpi.r{border-left-color:#dc2626}",
+    ".thdc-beds{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}",
+    ".thdc-bed{border-radius:12px;padding:10px 12px;border:2px solid #bbf7d0;background:#f0fdf4;cursor:pointer;min-height:70px}",
+    ".thdc-bed b{display:block;font-size:15px;color:#14532d}.thdc-bed span{font-size:12px;color:#166534}",
+    ".thdc-bed.busy{border-color:#fecaca;background:#fef2f2}.thdc-bed.busy b{color:#991b1b}.thdc-bed.busy span{color:#7f1d1d}",
+    ".thdc-form{display:grid;grid-template-columns:repeat(4,1fr);gap:8px 12px}",
+    ".thdc-form label{display:block;font-size:12px;color:#475569;margin-bottom:2px}.thdc-form .w2{grid-column:span 2}.thdc-form .w4{grid-column:1/-1}",
+    ".thdc-form input,.thdc-form select,.thdc-form textarea{width:100%;box-sizing:border-box}",
+    ".thdc-form textarea{min-height:58px}",
+    ".thdc-pt{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 10px}.thdc-chip{background:#f1f5f9;border:1px solid #e2e8f0;border-radius:10px;padding:5px 10px;font-size:12.5px}.thdc-chip small{display:block;color:#64748b;font-size:10.5px}",
+    ".thdc-tabs{display:flex;gap:6px;flex-wrap:wrap;margin:6px 0 10px}.thdc-tabs button{border:1px solid #cbd5e1;background:#fff;border-radius:20px;padding:6px 14px;cursor:pointer;font-size:13px;color:#0b2545}",
+    ".thdc-tabs button.on{background:#0e7490;border-color:#0e7490;color:#fff;font-weight:700}",
+    ".thdc-badge{display:inline-block;font-size:11px;font-weight:700;border-radius:20px;padding:2px 9px;background:#e0f2fe;color:#075985}",
+    ".thdc-badge.g{background:#dcfce7;color:#166534}.thdc-badge.r{background:#fee2e2;color:#991b1b}.thdc-badge.a{background:#fef3c7;color:#92400e}",
+    ".thdc-t td,.thdc-t th{font-size:13px}.thdc-t .r{text-align:right}",
+    ".thdc-res{max-height:260px;overflow:auto;border:1px solid #e2e8f0;border-radius:10px;margin-top:8px}",
+    ".thdc-res div{padding:8px 12px;border-bottom:1px solid #f1f5f9;cursor:pointer;font-size:13px}.thdc-res div:hover{background:#ecfeff}",
+    ".thdc-pr table{width:100%;border-collapse:collapse;margin:6px 0}.thdc-pr td,.thdc-pr th{border:1px solid #333;padding:4px 6px;font-size:12px;vertical-align:top;text-align:left}",
+    ".thdc-pr th{background:#f1f5f9}.thdc-pr h3{text-align:center;margin:6px 0;font-size:16px;letter-spacing:.5px}.thdc-pr .r{text-align:right}",
+    ".thdc-pr .sec{font-weight:700;margin:10px 0 3px;border-bottom:1px solid #999}.thdc-pr .sig{display:flex;justify-content:space-between;margin-top:40px;font-size:12px}",
+    "@media(max-width:900px){.thdc-form{grid-template-columns:1fr 1fr}}"
+  ].join(""));
+
+  /* ================= menu ================= */
+  try { TH.addMenu("dc", "DAY CARE", "🩺"); } catch (e) {}
+  try {
+    TH.addMenuItem("dc", "thDCHome", "Day Care Dashboard");
+    TH.addMenuItem("dc", "thDCNew", "New Day Care Admission");
+    TH.addMenuItem("dc", "thDCReg", "Day Care Register & Report");
+    TH.addMenuItem("dc", "thDCSet", "Day Care Settings (beds, tariff)");
+    TH.addMenuItem("ipd", "thDCHome", "Day Care");
+    TH.addMenuItem("rep", "thDCReg", "Day Care Register");
+  } catch (e) {}
+
+  /* ================= 1. dashboard + bed board ================= */
+  TH.page("thDCHome", function () {
+    var c = CFG(), t = iso(), L = live();
+    var adm = L.filter(function (x) { return x.status === "Admitted"; });
+    var todays = L.filter(function (x) { return x.date === t && x.status !== "Cancelled"; });
+    var disToday = L.filter(function (x) { return x.disDate === t && x.status !== "Admitted" && x.status !== "Cancelled"; });
+    var month = L.filter(function (x) { return x.date >= monthStart() && x.date <= t && x.status !== "Cancelled"; });
+    var dueAll = adm.reduce(function (s, x) { return s + Math.max(0, totals(x).due); }, 0);
+    var h = '<div class="thdc">' +
+      '<div class="thdc-hero"><h2>🩺 Day Care<small>Same-day admission → procedure → discharge · UHID + Day Care No.</small></h2>' +
+      '<button class="btn" type="button" onclick="go(\'thDCNew\')">+ New Day Care admission</button>' +
+      '<button class="btn" type="button" onclick="go(\'thDCReg\')">Register & report</button></div>' +
+      '<div class="thdc-kpis"><div class="thdc-kpi"><small>Admitted now</small><b>' + adm.length + "</b></div>" +
+      '<div class="thdc-kpi g"><small>Today\'s admissions</small><b>' + todays.length + "</b></div>" +
+      '<div class="thdc-kpi o"><small>Discharged today</small><b>' + disToday.length + "</b></div>" +
+      '<div class="thdc-kpi"><small>This month</small><b>' + month.length + "</b></div>" +
+      '<div class="thdc-kpi r"><small>Balance due (admitted)</small><b>' + money(dueAll) + "</b></div></div>";
+    h += '<div class="card"><h3 style="margin-top:0">Bed / chair board <small style="font-weight:400;color:#64748b">— click a busy bed to open the case, a free bed to admit</small></h3><div class="thdc-beds">' +
+      c.beds.map(function (b) {
+        var x = adm.filter(function (a) { return a.bed === b; })[0];
+        return x ? '<div class="thdc-bed busy" onclick="thDC.open(\'' + x.id + '\')"><b>' + E(b) + "</b><span>" + E(x.ptName) + "<br>" + E(x.no) + " · " + E(x.procedure || "") + "<br>In " + E(x.inTime || "") + "</span></div>"
+          : '<div class="thdc-bed" onclick="thDC.newOnBed(\'' + E(b).replace(/'/g, "\\'") + '\')"><b>' + E(b) + "</b><span>Free</span></div>";
+      }).join("") + "</div></div>";
+    var list = adm.concat(todays.filter(function (x) { return x.status !== "Admitted"; }));
+    h += '<div class="card"><h3 style="margin-top:0">Admitted now & today</h3>' + (list.length ? table(list) : '<p style="color:#64748b">No Day Care patient right now.</p>') + "</div></div>";
+    return h;
+  });
+  function stBadge(s) { return '<span class="thdc-badge ' + (s === "Admitted" ? "a" : s === "Discharged" ? "g" : "r") + '">' + E(s) + "</span>"; }
+  function table(list) {
+    return '<table class="table thdc-t"><tr><th>DC No.</th><th>Date</th><th>UHID</th><th>Patient</th><th>Bed</th><th>Procedure</th><th>Doctor</th><th>Payer</th><th>Status</th><th class="r">Net</th><th class="r">Due</th><th></th></tr>' +
+      list.map(function (x) {
+        var T = totals(x);
+        return "<tr><td><b>" + E(x.no) + "</b></td><td>" + show(x.date) + " " + E(x.inTime || "") + "</td><td>" + E(x.uhid) + "</td><td>" + E(x.ptName) + "<br><small>" + E([x.age, x.sex].filter(Boolean).join(" / ")) + "</small></td><td>" + E(x.bed) +
+          "</td><td>" + E(x.procedure) + "</td><td>" + E(x.doctor) + "</td><td>" + E(x.payer) + "</td><td>" + stBadge(x.status) + '</td><td class="r">' + money(T.net) + '</td><td class="r">' + (T.due > 0 ? "<b style='color:#b91c1c'>" + money(T.due) + "</b>" : "—") +
+          '</td><td><button class="btn sm" type="button" onclick="thDC.open(\'' + x.id + "')\">Open</button></td></tr>";
+      }).join("") + "</table>";
+  }
+
+  /* ================= 2. new admission ================= */
+  TH.page("thDCNew", function () {
+    var c = CFG(), q = (ST.q || "").toLowerCase(), res = [];
+    if (q.length >= 2) res = patients().filter(function (p) { var i = pinfo(p); return (i.uhid + " " + i.name + " " + i.mobile).toLowerCase().indexOf(q) >= 0; }).slice(-40).reverse();
+    var P = ST.pick ? patBy(ST.pick) : null, pi = P ? pinfo(P) : null;
+    var h = '<div class="thdc"><div class="thdc-hero"><h2>🩺 New Day Care Admission<small>Next Day Care No.: <b>' + nextNo() + "</b></small></h2>" +
+      '<button class="btn" type="button" onclick="go(\'thDCHome\')">◀ Day Care dashboard</button></div>' +
+      '<div class="card"><h3 style="margin-top:0">1. Select registered patient (UHID)</h3>' +
+      '<input id="thdc_q" placeholder="Type UHID, name or mobile (min 2 letters)…" value="' + E(ST.q) + '" oninput="thDC.search(this.value)" style="max-width:520px">' +
+      '<div style="font-size:12px;color:#64748b;margin-top:4px">New patient? Register in OPD first so that the UHID is created, then come back here.</div>' +
+      (res.length ? '<div class="thdc-res">' + res.map(function (p) { var i = pinfo(p); return '<div onclick="thDC.pick(\'' + E(i.uhid).replace(/'/g, "\\'") + '\')"><b>' + E(i.uhid) + "</b> — " + E(i.name) + " · " + E([i.age, i.sex].filter(Boolean).join(" / ")) + " · " + E(i.mobile) + "</div>"; }).join("") + "</div>"
+        : q.length >= 2 ? '<p style="color:#b91c1c">No patient found.</p>' : "") + "</div>";
+    if (pi) {
+      var busyBeds = c.beds.filter(function (b) { return bedBusy(b); });
+      var free = c.beds.filter(function (b) { return busyBeds.indexOf(b) < 0; });
+      h += '<div class="card"><h3 style="margin-top:0">2. Day Care details</h3>' +
+        '<div class="thdc-pt">' + chip("UHID", pi.uhid) + chip("Patient", pi.name) + chip("Age / Sex", [pi.age, pi.sex].filter(Boolean).join(" / ")) + chip("Mobile", pi.mobile) + chip("Address", pi.address) + "</div>" +
+        '<div class="thdc-form">' +
+        '<div><label>Date</label><input type="date" id="thdc_date" value="' + iso() + '"></div>' +
+        '<div><label>Time in</label><input type="time" id="thdc_in" value="' + nowTime() + '"></div>' +
+        '<div><label>Bed / chair</label><select id="thdc_bed">' + opts(free, ST.bed && free.indexOf(ST.bed) >= 0 ? ST.bed : free[0], free.length ? null : "No free bed") + "</select></div>" +
+        '<div><label>Consultant / doctor</label><input id="thdc_doc" list="thdc_docs" placeholder="Doctor name"></div>' +
+        '<div class="w2"><label>Procedure / treatment</label><select id="thdc_proc">' + opts(c.procs.map(function (p) { return p.name; }), "", "— select —") + "</select></div>" +
+        '<div class="w2"><label>Provisional diagnosis</label><input id="thdc_diag"></div>' +
+        '<div><label>Payer</label><select id="thdc_payer">' + opts(PAYERS, "Cash / Self") + "</select></div>" +
+        '<div><label>Referred by</label><input id="thdc_ref"></div>' +
+        '<div><label>Attendant name</label><input id="thdc_att"></div>' +
+        '<div><label>Attendant mobile</label><input id="thdc_attm"></div>' +
+        '<div class="w2"><label>Allergies</label><input id="thdc_all" placeholder="NKDA / name the allergy"></div>' +
+        '<div class="w2"><label>Remarks</label><input id="thdc_rem"></div>' +
+        '<div class="w4"><label style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="thdc_cons" checked> General consent signed &nbsp; <input type="checkbox" id="thdc_proccons"> Procedure consent signed &nbsp; <input type="checkbox" id="thdc_bill" checked> Add default charges (bed, doctor, nursing, procedure)</label></div>' +
+        "</div>" + '<datalist id="thdc_docs">' + doctors().map(function (d) { return '<option value="' + E(d) + '">'; }).join("") + "</datalist>" +
+        '<div style="display:flex;gap:8px;margin-top:12px"><button class="btn" type="button" onclick="thDC.admit(false)">Admit</button><button class="btn sec" type="button" onclick="thDC.admit(true)">Admit &amp; print admission sheet</button></div></div>';
+    }
+    return h + "</div>";
+  });
+  function chip(k, v) { return '<div class="thdc-chip"><small>' + E(k) + "</small><b>" + E(v || "—") + "</b></div>"; }
+
+  /* ================= 3. case file ================= */
+  var TABS = [["details", "Details"], ["nursing", "Vitals & nursing"], ["meds", "Medication"], ["proc", "Procedure note"], ["bill", "Bill & payments"], ["dis", "Discharge"]];
+  TH.page("thDCCase", function () {
+    var x = byId(ST.id);
+    if (!x) return '<div class="card">Day Care case not found. <button class="btn sm" onclick="go(\'thDCHome\')">Day Care dashboard</button></div>';
+    var T = totals(x), c = CFG();
+    var h = '<div class="thdc"><div class="thdc-hero"><h2>' + E(x.no) + " — " + E(x.ptName) + "<small>UHID " + E(x.uhid) + " · " + E([x.age, x.sex].filter(Boolean).join(" / ")) + " · Bed " + E(x.bed || "—") + " · " + show(x.date) + " " + E(x.inTime || "") + "</small></h2>" +
+      stBadge(x.status) + paperSel() +
+      '<button class="btn" type="button" onclick="thDC.pAdm()">🖨 Admission sheet</button><button class="btn" type="button" onclick="thDC.pBill()">🖨 Bill</button><button class="btn" type="button" onclick="thDC.pDis()">🖨 Discharge summary</button>' +
+      (x.payer && !/cash|self|free/i.test(x.payer) ? '<button class="btn" type="button" onclick="thDC.tpa()">🛡 TPA / Scheme</button>' : "") +
+      '<button class="btn" type="button" onclick="go(\'thDCHome\')">◀ Back</button></div>' +
+      '<div class="thdc-pt">' + chip("Procedure", x.procedure) + chip("Doctor", x.doctor) + chip("Payer", x.payer) + chip("Diagnosis", x.diagnosis) + chip("Allergies", x.allergy) + chip("Net bill", money(T.net)) + chip("Paid", money(T.paid)) + chip("Due", money(T.due)) + "</div>" +
+      '<div class="thdc-tabs">' + TABS.map(function (t) { return '<button type="button" class="' + (ST.tab === t[0] ? "on" : "") + '" onclick="thDC.tab(\'' + t[0] + "')\">" + t[1] + "</button>"; }).join("") + "</div>";
+    var lock = x.status !== "Admitted";
+    if (ST.tab === "details") {
+      var beds = c.beds.filter(function (b) { return b === x.bed || !bedBusy(b, x.id); });
+      h += '<div class="card"><div class="thdc-form">' +
+        '<div><label>Date</label><input type="date" id="thdc_date" value="' + E(x.date) + '"></div>' +
+        '<div><label>Time in</label><input type="time" id="thdc_in" value="' + E(x.inTime) + '"></div>' +
+        '<div><label>Bed / chair</label><select id="thdc_bed">' + opts(beds, x.bed, "—") + "</select></div>" +
+        '<div><label>Consultant / doctor</label><input id="thdc_doc" list="thdc_docs" value="' + E(x.doctor) + '"></div>' +
+        '<div class="w2"><label>Procedure / treatment</label><select id="thdc_proc">' + opts(c.procs.map(function (p) { return p.name; }).concat(c.procs.some(function (p) { return p.name === x.procedure; }) || !x.procedure ? [] : [x.procedure]), x.procedure, "— select —") + "</select></div>" +
+        '<div class="w2"><label>Provisional diagnosis</label><input id="thdc_diag" value="' + E(x.diagnosis) + '"></div>' +
+        '<div><label>Payer</label><select id="thdc_payer">' + opts(PAYERS, x.payer) + "</select></div>" +
+        '<div><label>Scheme / insurance amount (₹)</label><input type="number" id="thdc_samt" value="' + E(x.schemeAmount || "") + '" placeholder="approved amount"></div>' +
+        '<div><label>Referred by</label><input id="thdc_ref" value="' + E(x.refBy) + '"></div>' +
+        '<div><label>Allergies</label><input id="thdc_all" value="' + E(x.allergy) + '"></div>' +
+        '<div><label>Attendant name</label><input id="thdc_att" value="' + E(x.attendant) + '"></div>' +
+        '<div><label>Attendant mobile</label><input id="thdc_attm" value="' + E(x.attMobile) + '"></div>' +
+        '<div class="w2"><label>Remarks</label><input id="thdc_rem" value="' + E(x.remarks) + '"></div>' +
+        '<div class="w4"><label style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="thdc_cons"' + (x.consent ? " checked" : "") + '> General consent signed &nbsp; <input type="checkbox" id="thdc_proccons"' + (x.procConsent ? " checked" : "") + "> Procedure consent signed</label></div></div>" +
+        '<datalist id="thdc_docs">' + doctors().map(function (d) { return '<option value="' + E(d) + '">'; }).join("") + "</datalist>" +
+        '<div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap"><button class="btn" type="button" onclick="thDC.saveDetails()">Save details</button>' +
+        (x.status === "Cancelled" ? "" : '<button class="btn sec" type="button" onclick="thDC.cancelCase()">Cancel this admission</button>') + "</div></div>";
+    } else if (ST.tab === "nursing") {
+      h += '<div class="card"><h3 style="margin-top:0">Vitals & nursing notes</h3><div class="thdc-form">' +
+        '<div><label>Time</label><input type="time" id="thv_t" value="' + nowTime() + '"></div><div><label>BP</label><input id="thv_bp" placeholder="120/80"></div>' +
+        '<div><label>Pulse</label><input id="thv_p"></div><div><label>Temp (°F)</label><input id="thv_tp"></div><div><label>SpO₂ %</label><input id="thv_s"></div><div><label>RR</label><input id="thv_rr"></div>' +
+        '<div><label>Pain (0-10)</label><input id="thv_pain"></div><div><label>RBS / other</label><input id="thv_o"></div>' +
+        '<div class="w4"><label>Nursing note</label><textarea id="thv_n" placeholder="Condition, care given, IV line, intake/output, instructions followed…"></textarea></div></div>' +
+        '<button class="btn" type="button" style="margin-top:8px" onclick="thDC.addVital()">+ Add entry</button>' +
+        ((x.vitals || []).length ? '<table class="table thdc-t" style="margin-top:10px"><tr><th>Time</th><th>BP</th><th>Pulse</th><th>Temp</th><th>SpO₂</th><th>RR</th><th>Pain</th><th>Other</th><th>Note</th><th>By</th><th></th></tr>' +
+          x.vitals.map(function (v, i) { return "<tr><td>" + E(v.time) + "</td><td>" + E(v.bp) + "</td><td>" + E(v.pulse) + "</td><td>" + E(v.temp) + "</td><td>" + E(v.spo2) + "</td><td>" + E(v.rr) + "</td><td>" + E(v.pain) + "</td><td>" + E(v.other) + "</td><td>" + E(v.note) + "</td><td>" + E(v.by) + '</td><td><button class="btn sm sec" type="button" onclick="thDC.delRow(\'vitals\',' + i + ')">✕</button></td></tr>'; }).join("") + "</table>" : '<p style="color:#64748b">No entry yet.</p>') + "</div>";
+    } else if (ST.tab === "meds") {
+      h += '<div class="card"><h3 style="margin-top:0">Medication given</h3><div class="thdc-form">' +
+        '<div><label>Time</label><input type="time" id="thm_t" value="' + nowTime() + '"></div><div class="w2"><label>Drug</label><input id="thm_d" placeholder="Inj. Ondansetron"></div>' +
+        '<div><label>Dose</label><input id="thm_ds" placeholder="4 mg"></div><div><label>Route</label><select id="thm_r">' + opts(["IV", "IM", "SC", "Oral", "IV infusion", "Nebulisation", "Topical", "Other"], "IV") + "</select></div>" +
+        '<div><label>Ordered by</label><input id="thm_o" list="thdc_docs" value="' + E(x.doctor) + '"></div><div class="w2"><label>Remark</label><input id="thm_rm"></div></div>' +
+        '<datalist id="thdc_docs">' + doctors().map(function (d) { return '<option value="' + E(d) + '">'; }).join("") + "</datalist>" +
+        '<button class="btn" type="button" style="margin-top:8px" onclick="thDC.addMed()">+ Add</button>' +
+        ((x.meds || []).length ? '<table class="table thdc-t" style="margin-top:10px"><tr><th>Time</th><th>Drug</th><th>Dose</th><th>Route</th><th>Ordered by</th><th>Given by</th><th>Remark</th><th></th></tr>' +
+          x.meds.map(function (m, i) { return "<tr><td>" + E(m.time) + "</td><td>" + E(m.drug) + "</td><td>" + E(m.dose) + "</td><td>" + E(m.route) + "</td><td>" + E(m.orderBy) + "</td><td>" + E(m.by) + "</td><td>" + E(m.remark) + '</td><td><button class="btn sm sec" type="button" onclick="thDC.delRow(\'meds\',' + i + ')">✕</button></td></tr>'; }).join("") + "</table>" : '<p style="color:#64748b">No medicine entered.</p>') + "</div>";
+    } else if (ST.tab === "proc") {
+      var pn = x.procNote || {};
+      h += '<div class="card"><h3 style="margin-top:0">Procedure note</h3><div class="thdc-form">' +
+        '<div class="w2"><label>Procedure done</label><input id="thp_name" value="' + E(pn.name || x.procedure) + '"></div>' +
+        '<div><label>Start time</label><input type="time" id="thp_s" value="' + E(pn.start) + '"></div><div><label>End time</label><input type="time" id="thp_e" value="' + E(pn.end) + '"></div>' +
+        '<div><label>Performed by</label><input id="thp_by" list="thdc_docs" value="' + E(pn.by || x.doctor) + '"></div><div><label>Assisted by</label><input id="thp_as" value="' + E(pn.asst) + '"></div>' +
+        '<div><label>Anaesthesia</label><select id="thp_an">' + opts(["None", "Local", "Topical", "Sedation", "Regional block", "General"], pn.anaes || "None") + "</select></div>" +
+        '<div><label>Pre-procedure checklist done</label><select id="thp_ck">' + opts(["Yes", "No", "NA"], pn.check || "Yes") + "</select></div>" +
+        '<div class="w4"><label>Findings / details of procedure</label><textarea id="thp_f">' + E(pn.findings) + "</textarea></div>" +
+        '<div class="w2"><label>Specimen sent</label><input id="thp_sp" value="' + E(pn.specimen) + '" placeholder="None / HPE / culture"></div>' +
+        '<div class="w2"><label>Complications</label><input id="thp_c" value="' + E(pn.comp) + '" placeholder="None"></div>' +
+        '<div class="w4"><label>Post-procedure orders</label><textarea id="thp_o">' + E(pn.orders) + "</textarea></div></div>" +
+        '<datalist id="thdc_docs">' + doctors().map(function (d) { return '<option value="' + E(d) + '">'; }).join("") + "</datalist>" +
+        '<button class="btn" type="button" style="margin-top:8px" onclick="thDC.saveProc()">Save procedure note</button></div>';
+    } else if (ST.tab === "bill") {
+      h += '<div class="card"><h3 style="margin-top:0">Charges</h3>' +
+        '<table class="table thdc-t"><tr><th>#</th><th>Item</th><th class="r">Qty</th><th class="r">Rate</th><th class="r">Amount</th><th></th></tr>' +
+        (x.charges || []).map(function (ch, i) { return "<tr><td>" + (i + 1) + "</td><td>" + E(ch.item) + '</td><td class="r">' + E(ch.qty) + '</td><td class="r">' + money(ch.rate) + '</td><td class="r">' + money(ch.qty * ch.rate) + '</td><td><button class="btn sm sec" type="button" onclick="thDC.delRow(\'charges\',' + i + ')">✕</button></td></tr>'; }).join("") +
+        '<tr><td colspan="4" class="r">Gross</td><td class="r"><b>' + money(T.gross) + '</b></td><td></td></tr><tr><td colspan="4" class="r">Discount</td><td class="r">' + money(T.disc) + "</td><td></td></tr>" +
+        '<tr><td colspan="4" class="r"><b>Net bill</b></td><td class="r"><b>' + money(T.net) + "</b></td><td></td></tr>" +
+        (T.cover ? '<tr><td colspan="4" class="r">Covered by ' + E(x.payer) + '</td><td class="r">' + money(T.cover) + "</td><td></td></tr>" : "") +
+        '<tr><td colspan="4" class="r">Paid by patient</td><td class="r">' + money(T.paid) + '</td><td></td></tr><tr><td colspan="4" class="r"><b>Balance due</b></td><td class="r"><b style="color:' + (T.due > 0 ? "#b91c1c" : "#15803d") + '">' + money(T.due) + "</b></td><td></td></tr></table>" +
+        '<div class="thdc-form" style="margin-top:8px"><div class="w2"><label>Item</label><input id="thb_i" list="thdc_items" placeholder="Choose or type"></div><div><label>Qty</label><input type="number" id="thb_q" value="1" min="1"></div><div><label>Rate (₹)</label><input type="number" id="thb_r" placeholder="0"></div></div>' +
+        '<datalist id="thdc_items">' + c.items.concat(c.procs).map(function (it) { return '<option value="' + E(it.name) + '">' + money(it.rate) + "</option>"; }).join("") + "</datalist>" +
+        '<div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap"><button class="btn" type="button" onclick="thDC.addCharge()">+ Add charge</button>' +
+        '<span style="flex:1"></span><label style="font-size:12px">Discount ₹ <input type="number" id="thb_d" value="' + E(x.discount || "") + '" style="width:110px;display:inline-block"></label><button class="btn sec" type="button" onclick="thDC.saveDisc()">Apply discount</button></div></div>' +
+        '<div class="card"><h3 style="margin-top:0">Payments / receipts</h3><div class="thdc-form">' +
+        '<div><label>Amount (₹)</label><input type="number" id="thr_a" value="' + (T.due > 0 ? T.due : "") + '"></div><div><label>Mode</label><select id="thr_m">' + opts(MODES, "Cash") + "</select></div>" +
+        '<div><label>Reference (UPI / cheque)</label><input id="thr_ref"></div><div><label>Type</label><select id="thr_t">' + opts(["Advance / payment", "Refund"], "Advance / payment") + "</select></div></div>" +
+        '<button class="btn" type="button" style="margin-top:8px" onclick="thDC.pay()">Save &amp; print receipt</button>' +
+        ((x.payments || []).length ? '<table class="table thdc-t" style="margin-top:10px"><tr><th>Receipt</th><th>Date</th><th>Type</th><th>Mode</th><th>Ref</th><th class="r">Amount</th><th>By</th><th></th></tr>' +
+          x.payments.map(function (p, i) { return "<tr><td>" + E(p.rno) + "</td><td>" + show(p.date) + " " + E(p.time || "") + "</td><td>" + (p.refund ? "Refund" : "Payment") + "</td><td>" + E(p.mode) + "</td><td>" + E(p.ref) + '</td><td class="r">' + money(p.amount) + "</td><td>" + E(p.by) + '</td><td><button class="btn sm sec" type="button" onclick="thDC.pRcpt(' + i + ')">🖨</button></td></tr>'; }).join("") + "</table>" : "") + "</div>";
+    } else if (ST.tab === "dis") {
+      var d = x.dis || {};
+      h += '<div class="card"><h3 style="margin-top:0">Discharge</h3><div class="thdc-form">' +
+        '<div><label>Discharge date</label><input type="date" id="thd_d" value="' + E(x.disDate || x.date) + '"></div><div><label>Time out</label><input type="time" id="thd_t" value="' + E(x.outTime || nowTime()) + '"></div>' +
+        '<div><label>Discharge type</label><select id="thd_ty">' + opts(["Discharged", "LAMA", "Referred"], x.status !== "Admitted" && x.status !== "Cancelled" ? x.status : "Discharged") + "</select></div>" +
+        '<div><label>Condition at discharge</label><select id="thd_c">' + opts(["Stable", "Improved", "Same", "Referred to higher centre", "Against advice"], d.cond || "Stable") + "</select></div>" +
+        '<div class="w4"><label>Final diagnosis</label><input id="thd_fd" value="' + E(d.diag || x.diagnosis) + '"></div>' +
+        '<div class="w4"><label>Treatment / procedure summary</label><textarea id="thd_sum">' + E(d.summary || autoSummary(x)) + "</textarea></div>" +
+        '<div class="w4"><label>Medicines advised (one per line)</label><textarea id="thd_rx">' + E(d.rx) + "</textarea></div>" +
+        '<div class="w2"><label>Advice / precautions</label><textarea id="thd_adv">' + E(d.advice || "Take rest. Return immediately if bleeding, fever, severe pain, breathlessness or giddiness.") + "</textarea></div>" +
+        '<div class="w2"><label>Follow-up</label><textarea id="thd_fu">' + E(d.follow) + "</textarea></div>" +
+        '<div class="w2"><label>Referred to (if referred)</label><input id="thd_rt" value="' + E(d.refTo) + '"></div><div class="w2"><label>Discharged by (doctor)</label><input id="thd_by" list="thdc_docs" value="' + E(d.by || x.doctor) + '"></div></div>' +
+        '<datalist id="thdc_docs">' + doctors().map(function (q) { return '<option value="' + E(q) + '">'; }).join("") + "</datalist>" +
+        (T.due > 0 ? '<p style="color:#b91c1c;font-weight:700">Balance due ' + money(T.due) + " — collect in Bill & payments before discharge.</p>" : "") +
+        '<div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap"><button class="btn" type="button" onclick="thDC.discharge(true)">' + (lock ? "Update" : "Discharge") + " &amp; print summary</button>" +
+        '<button class="btn sec" type="button" onclick="thDC.discharge(false)">' + (lock ? "Update" : "Discharge") + " only</button>" +
+        (lock && x.status !== "Cancelled" ? '<button class="btn sec" type="button" onclick="thDC.readmit()">Undo discharge</button>' : "") + "</div></div>";
+    }
+    return h + "</div>";
+  });
+  function autoSummary(x) {
+    var s = [];
+    if (x.procNote && x.procNote.name) s.push(x.procNote.name + " done" + (x.procNote.anaes && x.procNote.anaes !== "None" ? " under " + x.procNote.anaes.toLowerCase() + " anaesthesia" : "") + (x.procNote.comp ? ". Complications: " + x.procNote.comp : ". No complications") + ".");
+    else if (x.procedure) s.push(x.procedure + " given.");
+    if ((x.meds || []).length) s.push("Medicines given: " + x.meds.map(function (m) { return m.drug + (m.dose ? " " + m.dose : ""); }).join(", ") + ".");
+    var v = (x.vitals || [])[(x.vitals || []).length - 1];
+    if (v) s.push("Vitals at discharge: BP " + (v.bp || "-") + ", Pulse " + (v.pulse || "-") + ", SpO₂ " + (v.spo2 || "-") + "%.");
+    return s.join(" ");
+  }
+
+  /* ================= 4. register & report ================= */
+  TH.page("thDCReg", function () {
+    var list = live().filter(function (x) { return x.date >= ST.from && x.date <= ST.to && (!ST.st || x.status === ST.st) && (!ST.payer || x.payer === ST.payer); })
+      .sort(function (a, b) { return (a.date + a.inTime) < (b.date + b.inTime) ? 1 : -1; });
+    var ok = list.filter(function (x) { return x.status !== "Cancelled"; });
+    var byProc = {}, byPayer = {}, net = 0, paid = 0, due = 0;
+    ok.forEach(function (x) { var T = totals(x); byProc[x.procedure || "—"] = (byProc[x.procedure || "—"] || 0) + 1; byPayer[x.payer || "—"] = (byPayer[x.payer || "—"] || 0) + 1; net += T.net; paid += T.paid; due += Math.max(0, T.due); });
+    var h = '<div class="thdc"><div class="thdc-hero"><h2>📋 Day Care Register & Report<small>' + show(ST.from) + " to " + show(ST.to) + "</small></h2>" +
+      paperSel() + '<button class="btn" type="button" onclick="thDC.pReg()">🖨 Print register</button><button class="btn" type="button" onclick="thDC.csv()">⬇ Excel (CSV)</button></div>' +
+      '<div class="card" style="display:flex;gap:10px;flex-wrap:wrap;align-items:end"><div><label style="font-size:12px">From</label><input type="date" id="thr_f" value="' + ST.from + '"></div><div><label style="font-size:12px">To</label><input type="date" id="thr_to" value="' + ST.to + '"></div>' +
+      '<div><label style="font-size:12px">Status</label><select id="thr_s">' + opts(STATUS, ST.st, "All") + '</select></div><div><label style="font-size:12px">Payer</label><select id="thr_p">' + opts(PAYERS, ST.payer, "All") + "</select></div>" +
+      '<button class="btn" type="button" onclick="thDC.filter()">Show</button></div>' +
+      '<div class="thdc-kpis"><div class="thdc-kpi"><small>Day Care cases</small><b>' + ok.length + '</b></div><div class="thdc-kpi g"><small>Total billed (net)</small><b>' + money(net) + '</b></div><div class="thdc-kpi o"><small>Collected from patients</small><b>' + money(paid) + '</b></div><div class="thdc-kpi r"><small>Balance due</small><b>' + money(due) + "</b></div></div>" +
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px"><div class="card"><h3 style="margin-top:0">Procedure-wise</h3><table class="table thdc-t">' + Object.keys(byProc).sort(function (a, b) { return byProc[b] - byProc[a]; }).map(function (k) { return "<tr><td>" + E(k) + '</td><td class="r"><b>' + byProc[k] + "</b></td></tr>"; }).join("") + "</table></div>" +
+      '<div class="card"><h3 style="margin-top:0">Payer-wise</h3><table class="table thdc-t">' + Object.keys(byPayer).map(function (k) { return "<tr><td>" + E(k) + '</td><td class="r"><b>' + byPayer[k] + "</b></td></tr>"; }).join("") + "</table></div></div>" +
+      '<div class="card">' + (list.length ? table(list) : '<p style="color:#64748b">No Day Care case in this period.</p>') + "</div></div>";
+    return h;
+  });
+
+  /* ================= 5. settings ================= */
+  TH.page("thDCSet", function () {
+    var c = CFG();
+    return '<div class="thdc"><div class="thdc-hero"><h2>⚙ Day Care Settings</h2><button class="btn" type="button" onclick="go(\'thDCHome\')">◀ Day Care dashboard</button></div>' +
+      '<div class="card"><h3 style="margin-top:0">Beds / chairs</h3><p style="font-size:12px;color:#64748b">One per line, e.g. DC-1, Dialysis-1, Chemo chair 2</p><textarea id="ths_b" style="width:100%;min-height:110px">' + E(c.beds.join("\n")) + "</textarea></div>" +
+      '<div class="card"><h3 style="margin-top:0">Procedures / packages and rates</h3><p style="font-size:12px;color:#64748b">One per line: <b>Name | Category | Rate</b></p><textarea id="ths_p" style="width:100%;min-height:220px">' + E(c.procs.map(function (p) { return p.name + " | " + (p.cat || "") + " | " + (p.rate || 0); }).join("\n")) + "</textarea></div>" +
+      '<div class="card"><h3 style="margin-top:0">Other charge items and rates</h3><p style="font-size:12px;color:#64748b">One per line: <b>Name | Rate</b></p><textarea id="ths_i" style="width:100%;min-height:140px">' + E(c.items.map(function (p) { return p.name + " | " + (p.rate || 0); }).join("\n")) + "</textarea></div>" +
+      '<button class="btn" type="button" onclick="thDC.saveSet()">Save settings</button>' + paperSettings() + "</div>";
+  });
+
+  /* ================= prints ================= */
+  function ptTable(x) {
+    return "<table><tr><th>Day Care No.</th><td><b>" + E(x.no) + "</b></td><th>UHID</th><td>" + E(x.uhid) + "</td></tr>" +
+      "<tr><th>Patient name</th><td><b>" + E(x.ptName) + "</b></td><th>Age / Sex</th><td>" + E([x.age, x.sex].filter(Boolean).join(" / ")) + "</td></tr>" +
+      "<tr><th>Mobile</th><td>" + E(x.mobile) + "</td><th>Address</th><td>" + E(x.address) + "</td></tr>" +
+      "<tr><th>Admission</th><td>" + show(x.date) + " " + E(x.inTime || "") + "</td><th>Discharge</th><td>" + (x.disDate ? show(x.disDate) + " " + E(x.outTime || "") : "—") + "</td></tr>" +
+      "<tr><th>Bed / chair</th><td>" + E(x.bed) + "</td><th>Consultant</th><td>" + E(x.doctor) + "</td></tr>" +
+      "<tr><th>Procedure</th><td>" + E(x.procedure) + "</td><th>Payer</th><td>" + E(x.payer) + "</td></tr></table>";
+  }
+  function pAdm(x) {
+    printHTML("<h3>DAY CARE ADMISSION SHEET</h3>" + ptTable(x) +
+      "<table><tr><th>Provisional diagnosis</th><td>" + E(x.diagnosis) + "</td></tr><tr><th>Allergies</th><td>" + E(x.allergy || "") + "</td></tr><tr><th>Referred by</th><td>" + E(x.refBy) + "</td></tr><tr><th>Attendant</th><td>" + E([x.attendant, x.attMobile].filter(Boolean).join(" · ")) + "</td></tr></table>" +
+      '<div class="sec">Vitals at admission</div><table><tr><th>BP</th><th>Pulse</th><th>Temp</th><th>SpO₂</th><th>RR</th><th>Weight</th></tr><tr><td>&nbsp;</td><td></td><td></td><td></td><td></td><td></td></tr></table>' +
+      '<div class="sec">Doctor\'s orders</div><div style="height:120px;border:1px solid #333"></div>' +
+      '<div class="sec">Consent</div><p style="font-size:12px">I have been explained the nature of the Day Care procedure, its benefits, risks and alternatives in a language I understand. I give my consent for admission and treatment. / मला डे-केअर उपचाराची माहिती, फायदे, धोके व पर्याय समजेल अशा भाषेत सांगितले आहेत. मी दाखल होण्यास व उपचारास संमती देतो/देते.</p>' +
+      '<div class="sig"><span>Patient / attendant signature</span><span>Witness</span><span>Doctor signature</span></div>');
+    audit2("Day Care admission sheet printed", x.no);
+  }
+  function pBill(x) {
+    var T = totals(x);
+    printHTML("<h3>DAY CARE BILL</h3>" + ptTable(x) +
+      '<table><tr><th>#</th><th>Particulars</th><th class="r">Qty</th><th class="r">Rate</th><th class="r">Amount</th></tr>' +
+      (x.charges || []).map(function (c, i) { return "<tr><td>" + (i + 1) + "</td><td>" + E(c.item) + '</td><td class="r">' + E(c.qty) + '</td><td class="r">' + money(c.rate) + '</td><td class="r">' + money(c.qty * c.rate) + "</td></tr>"; }).join("") +
+      '<tr><th colspan="4" class="r">Gross total</th><th class="r">' + money(T.gross) + "</th></tr>" + (T.disc ? '<tr><td colspan="4" class="r">Discount</td><td class="r">- ' + money(T.disc) + "</td></tr>" : "") +
+      '<tr><th colspan="4" class="r">Net bill</th><th class="r">' + money(T.net) + "</th></tr>" + (T.cover ? '<tr><td colspan="4" class="r">Payable by ' + E(x.payer) + '</td><td class="r">' + money(T.cover) + "</td></tr>" : "") +
+      '<tr><td colspan="4" class="r">Paid by patient</td><td class="r">' + money(T.paid) + '</td></tr><tr><th colspan="4" class="r">Balance</th><th class="r">' + money(T.due) + "</th></tr></table>" +
+      "<p style='font-size:12px'>Amount in words: <b>Rupees " + words(T.net) + " only</b></p>" +
+      '<div class="sig"><span>Patient / attendant</span><span>Billing</span><span>Authorised signatory</span></div>');
+    audit2("Day Care bill printed", x.no + " " + money(T.net));
+  }
+  function pRcpt(x, p) {
+    printHTML("<h3>" + (p.refund ? "REFUND VOUCHER" : "RECEIPT") + " — DAY CARE</h3><table><tr><th>Receipt no.</th><td><b>" + E(p.rno) + "</b></td><th>Date</th><td>" + show(p.date) + " " + E(p.time || "") + "</td></tr>" +
+      "<tr><th>Patient</th><td>" + E(x.ptName) + "</td><th>UHID / DC No.</th><td>" + E(x.uhid) + " / " + E(x.no) + "</td></tr>" +
+      "<tr><th>Amount</th><td><b>" + money(p.amount) + "</b></td><th>Mode</th><td>" + E(p.mode) + (p.ref ? " (" + E(p.ref) + ")" : "") + "</td></tr>" +
+      "<tr><th>In words</th><td colspan='3'>Rupees " + words(p.amount) + " only</td></tr><tr><th>Towards</th><td colspan='3'>Day Care — " + E(x.procedure) + "</td></tr></table>" +
+      '<div class="sig"><span>' + (p.refund ? "Received by (patient)" : "Patient / attendant") + "</span><span>Received by: " + E(p.by) + "</span></div>");
+  }
+  function pDis(x) {
+    var d = x.dis || {};
+    printHTML("<h3>DAY CARE DISCHARGE SUMMARY</h3>" + ptTable(x) +
+      "<table><tr><th style='width:28%'>Discharge type</th><td>" + E(x.status === "Admitted" ? "—" : x.status) + "</td></tr><tr><th>Final diagnosis</th><td>" + E(d.diag || x.diagnosis) + "</td></tr>" +
+      "<tr><th>Allergies</th><td>" + E(x.allergy || "") + "</td></tr><tr><th>Treatment / procedure summary</th><td>" + E(d.summary || autoSummary(x)).replace(/\n/g, "<br>") + "</td></tr>" +
+      (x.procNote && x.procNote.findings ? "<tr><th>Procedure findings</th><td>" + E(x.procNote.findings).replace(/\n/g, "<br>") + "</td></tr>" : "") +
+      "<tr><th>Condition at discharge</th><td>" + E(d.cond) + "</td></tr>" + (d.refTo ? "<tr><th>Referred to</th><td>" + E(d.refTo) + "</td></tr>" : "") + "</table>" +
+      (d.rx ? '<div class="sec">Medicines advised</div><table><tr><th>#</th><th>Medicine / dose / duration</th></tr>' + d.rx.split(/\n/).filter(function (l) { return l.trim(); }).map(function (l, i) { return "<tr><td>" + (i + 1) + "</td><td>" + E(l) + "</td></tr>"; }).join("") + "</table>" : "") +
+      '<div class="sec">Advice</div><p style="font-size:12px">' + E(d.advice).replace(/\n/g, "<br>") + "</p>" +
+      (d.follow ? '<div class="sec">Follow-up</div><p style="font-size:12px">' + E(d.follow).replace(/\n/g, "<br>") + "</p>" : "") +
+      '<p style="font-size:11.5px">In case of emergency contact the hospital immediately. / आपत्कालीन स्थितीत त्वरित रुग्णालयाशी संपर्क साधा.</p>' +
+      '<div class="sig"><span>Patient / attendant (explained &amp; received)</span><span>Doctor: ' + E(d.by || x.doctor) + "</span></div>");
+    audit2("Day Care discharge summary printed", x.no);
+  }
+
+  /* ================= actions ================= */
+  function cur() { return byId(ST.id); }
+  window.thDC = {
+    open: function (id) { ST.id = id; ST.tab = "details"; refresh("thDCCase"); },
+    tab: function (t) { ST.tab = t; refresh("thDCCase"); },
+    newOnBed: function (b) { ST.bed = b; ST.pick = null; refresh("thDCNew"); },
+    search: function (v) { ST.q = v; clearTimeout(window.__thdcT); window.__thdcT = setTimeout(function () { refresh("thDCNew"); setTimeout(function () { var i = document.getElementById("thdc_q"); if (i) { i.focus(); i.setSelectionRange(i.value.length, i.value.length); } }, 30); }, 350); },
+    pick: function (u) { ST.pick = u; refresh("thDCNew"); },
+    admit: function (print) {
+      var P = patBy(ST.pick); if (!P) return toast("Select a patient");
+      var bed = g("thdc_bed"), proc = g("thdc_proc");
+      if (!bed) return toast("Select a free bed / chair");
+      if (bedBusy(bed)) return toast("Bed " + bed + " is already occupied");
+      if (!proc) return toast("Select procedure / treatment");
+      var pi = pinfo(P);
+      if (live().some(function (x) { return x.uhid === pi.uhid && x.status === "Admitted"; }) && !confirm(pi.name + " is already admitted in Day Care. Admit again?")) return;
+      var c = CFG(), pr = c.procs.filter(function (p) { return p.name === proc; })[0];
+      var x = { id: uid(), no: nextNo(), uhid: pi.uhid, ptName: pi.name, age: pi.age, sex: pi.sex, mobile: pi.mobile, address: pi.address,
+        date: g("thdc_date") || iso(), inTime: g("thdc_in"), bed: bed, doctor: g("thdc_doc"), procedure: proc, procCat: pr ? pr.cat : "", diagnosis: g("thdc_diag"),
+        payer: g("thdc_payer"), refBy: g("thdc_ref"), attendant: g("thdc_att"), attMobile: g("thdc_attm"), allergy: g("thdc_all"), remarks: g("thdc_rem"),
+        consent: !!(document.getElementById("thdc_cons") || {}).checked, procConsent: !!(document.getElementById("thdc_proccons") || {}).checked,
+        status: "Admitted", vitals: [], meds: [], charges: [], payments: [], discount: 0, createdBy: who(), createdAt: new Date().toISOString() };
+      if ((document.getElementById("thdc_bill") || {}).checked) {
+        c.items.slice(0, 3).forEach(function (it) { if (+it.rate) x.charges.push({ item: it.name, qty: 1, rate: +it.rate }); });
+        if (pr && +pr.rate) x.charges.push({ item: pr.name, qty: 1, rate: +pr.rate });
+      }
+      DC().push(x); save(); audit2("Day Care admission", x.no + " " + x.ptName + " (" + x.uhid + ") — " + proc);
+      toast("Admitted: " + x.no);
+      ST.pick = null; ST.q = ""; ST.bed = null; ST.id = x.id; ST.tab = "details";
+      refresh("thDCCase");
+      if (print) setTimeout(function () { pAdm(x); }, 200);
+    },
+    saveDetails: function () {
+      var x = cur(); if (!x) return;
+      var bed = g("thdc_bed");
+      if (bed && bed !== x.bed && x.status === "Admitted" && bedBusy(bed, x.id)) return toast("Bed " + bed + " is occupied");
+      x.date = g("thdc_date") || x.date; x.inTime = g("thdc_in"); x.bed = bed; x.doctor = g("thdc_doc"); x.procedure = g("thdc_proc") || x.procedure; x.diagnosis = g("thdc_diag");
+      x.payer = g("thdc_payer"); x.schemeAmount = +g("thdc_samt") || 0; x.refBy = g("thdc_ref"); x.allergy = g("thdc_all"); x.attendant = g("thdc_att"); x.attMobile = g("thdc_attm"); x.remarks = g("thdc_rem");
+      x.consent = !!document.getElementById("thdc_cons").checked; x.procConsent = !!document.getElementById("thdc_proccons").checked;
+      save(); audit2("Day Care details updated", x.no); toast("Saved"); refresh("thDCCase");
+    },
+    cancelCase: function () {
+      var x = cur(); if (!x) return;
+      if (!confirm("Cancel Day Care admission " + x.no + "? (record is kept as Cancelled)")) return;
+      x.status = "Cancelled"; x.cancelledBy = who(); x.cancelledAt = new Date().toISOString(); save(); audit2("Day Care admission cancelled", x.no); refresh("thDCCase");
+    },
+    addVital: function () {
+      var x = cur(); if (!x) return;
+      var v = { time: g("thv_t"), bp: g("thv_bp"), pulse: g("thv_p"), temp: g("thv_tp"), spo2: g("thv_s"), rr: g("thv_rr"), pain: g("thv_pain"), other: g("thv_o"), note: g("thv_n"), by: who(), at: new Date().toISOString() };
+      if (!v.bp && !v.pulse && !v.note && !v.spo2) return toast("Enter vitals or a note");
+      (x.vitals = x.vitals || []).push(v); save(); toast("Entry added"); refresh("thDCCase");
+    },
+    addMed: function () {
+      var x = cur(); if (!x) return;
+      var m = { time: g("thm_t"), drug: g("thm_d"), dose: g("thm_ds"), route: g("thm_r"), orderBy: g("thm_o"), remark: g("thm_rm"), by: who() };
+      if (!m.drug) return toast("Enter drug name");
+      (x.meds = x.meds || []).push(m); save(); toast("Medicine added"); refresh("thDCCase");
+    },
+    delRow: function (k, i) {
+      var x = cur(); if (!x || !x[k] || !x[k][i]) return;
+      if (!confirm("Delete this entry?")) return;
+      var r = x[k].splice(i, 1)[0]; save(); audit2("Day Care entry deleted", x.no + " " + k + " " + JSON.stringify(r).slice(0, 80)); refresh("thDCCase");
+    },
+    saveProc: function () {
+      var x = cur(); if (!x) return;
+      x.procNote = { name: g("thp_name"), start: g("thp_s"), end: g("thp_e"), by: g("thp_by"), asst: g("thp_as"), anaes: g("thp_an"), check: g("thp_ck"), findings: g("thp_f"), specimen: g("thp_sp"), comp: g("thp_c"), orders: g("thp_o"), savedBy: who() };
+      save(); audit2("Day Care procedure note saved", x.no); toast("Procedure note saved"); refresh("thDCCase");
+    },
+    addCharge: function () {
+      var x = cur(); if (!x) return;
+      var it = g("thb_i"), q = +g("thb_q") || 1, r = g("thb_r");
+      if (!it) return toast("Enter item");
+      if (r === "") { var c = CFG(), f = c.items.concat(c.procs).filter(function (p) { return p.name === it; })[0]; r = f ? f.rate : 0; }
+      (x.charges = x.charges || []).push({ item: it, qty: q, rate: +r || 0 }); save(); audit2("Day Care charge added", x.no + " " + it + " " + money(q * (+r || 0))); refresh("thDCCase");
+    },
+    saveDisc: function () { var x = cur(); if (!x) return; x.discount = +g("thb_d") || 0; save(); audit2("Day Care discount", x.no + " " + money(x.discount)); refresh("thDCCase"); },
+    pay: function () {
+      var x = cur(); if (!x) return;
+      var a = +g("thr_a"); if (!(a > 0)) return toast("Enter amount");
+      var p = { rno: receiptNo(), date: iso(), time: nowTime(), amount: a, mode: g("thr_m"), ref: g("thr_ref"), refund: g("thr_t") === "Refund", by: who() };
+      (x.payments = x.payments || []).push(p); save(); audit2(p.refund ? "Day Care refund" : "Day Care payment", x.no + " " + p.rno + " " + money(a) + " " + p.mode);
+      toast("Saved " + p.rno); refresh("thDCCase"); setTimeout(function () { pRcpt(x, p); }, 200);
+    },
+    discharge: function (print) {
+      var x = cur(); if (!x) return;
+      if (x.status === "Cancelled") return toast("This admission is cancelled");
+      var T = totals(x);
+      if (x.status === "Admitted" && T.due > 0 && !confirm("Balance due " + money(T.due) + ". Discharge anyway?")) return;
+      x.dis = { diag: g("thd_fd"), summary: g("thd_sum"), rx: g("thd_rx"), advice: g("thd_adv"), follow: g("thd_fu"), refTo: g("thd_rt"), by: g("thd_by"), cond: g("thd_c") };
+      var wasAdm = x.status === "Admitted";
+      x.status = g("thd_ty") || "Discharged"; x.disDate = g("thd_d") || iso(); x.outTime = g("thd_t"); x.dischargedBy = who();
+      save(); audit2(wasAdm ? "Day Care discharge" : "Day Care discharge updated", x.no + " — " + x.status);
+      toast(wasAdm ? "Discharged" : "Updated"); refresh("thDCCase"); if (print) setTimeout(function () { pDis(x); }, 200);
+    },
+    readmit: function () {
+      var x = cur(); if (!x) return;
+      if (bedBusy(x.bed, x.id)) return toast("Bed " + x.bed + " is now occupied — change bed in Details first");
+      if (!confirm("Undo discharge of " + x.no + "?")) return;
+      x.status = "Admitted"; save(); audit2("Day Care discharge undone", x.no); refresh("thDCCase");
+    },
+    pAdm: function () { var x = cur(); if (x) pAdm(x); },
+    pBill: function () { var x = cur(); if (x) pBill(x); },
+    pDis: function () { var x = cur(); if (x) pDis(x); },
+    pRcpt: function (i) { var x = cur(); if (x && x.payments[i]) pRcpt(x, x.payments[i]); },
+    tpa: function () { var x = cur(); if (!x) return; if (window.thTPA && thTPA.openFor) thTPA.openFor("DC", x.id); else toast("Install the TPA / Scheme module update"); },
+    filter: function () { ST.from = g("thr_f") || ST.from; ST.to = g("thr_to") || ST.to; ST.st = g("thr_s"); ST.payer = g("thr_p"); refresh("thDCReg"); },
+    regList: function () { return live().filter(function (x) { return x.date >= ST.from && x.date <= ST.to && (!ST.st || x.status === ST.st) && (!ST.payer || x.payer === ST.payer); }).sort(function (a, b) { return (a.date + a.inTime) > (b.date + b.inTime) ? 1 : -1; }); },
+    pReg: function () {
+      var l = thDC.regList();
+      printHTML("<h3>DAY CARE REGISTER</h3><p style='text-align:center;font-size:12px'>" + show(ST.from) + " to " + show(ST.to) + "</p>" +
+        "<table><tr><th>#</th><th>DC No.</th><th>Date / in</th><th>UHID</th><th>Patient</th><th>Age/Sex</th><th>Procedure</th><th>Doctor</th><th>Payer</th><th>Out</th><th>Status</th><th class='r'>Net</th></tr>" +
+        l.map(function (x, i) { return "<tr><td>" + (i + 1) + "</td><td>" + E(x.no) + "</td><td>" + show(x.date) + " " + E(x.inTime || "") + "</td><td>" + E(x.uhid) + "</td><td>" + E(x.ptName) + "</td><td>" + E([x.age, x.sex].filter(Boolean).join("/")) + "</td><td>" + E(x.procedure) + "</td><td>" + E(x.doctor) + "</td><td>" + E(x.payer) + "</td><td>" + E(x.outTime || "") + "</td><td>" + E(x.status) + "</td><td class='r'>" + money(totals(x).net) + "</td></tr>"; }).join("") + "</table>");
+    },
+    csv: function () {
+      var rows = [["DC No", "Date", "Time in", "Time out", "Discharge date", "UHID", "Patient", "Age", "Sex", "Mobile", "Bed", "Procedure", "Category", "Diagnosis", "Doctor", "Payer", "Status", "Gross", "Discount", "Net", "Scheme amount", "Paid", "Due"]];
+      thDC.regList().forEach(function (x) { var T = totals(x); rows.push([x.no, x.date, x.inTime, x.outTime, x.disDate, x.uhid, x.ptName, x.age, x.sex, x.mobile, x.bed, x.procedure, x.procCat, x.diagnosis, x.doctor, x.payer, x.status, T.gross, T.disc, T.net, T.cover, T.paid, T.due]); });
+      csv("DayCare_" + ST.from + "_to_" + ST.to + ".csv", rows);
+    },
+    saveSet: function () {
+      var c = CFG();
+      var beds = g("ths_b").split(/\n/).map(function (s) { return s.trim(); }).filter(Boolean);
+      var procs = g("ths_p").split(/\n/).map(function (l) { var p = l.split("|").map(function (s) { return s.trim(); }); return p[0] ? { name: p[0], cat: p[1] || "", rate: +p[2] || 0 } : null; }).filter(Boolean);
+      var items = g("ths_i").split(/\n/).map(function (l) { var p = l.split("|").map(function (s) { return s.trim(); }); return p[0] ? { name: p[0], rate: +p[1] || 0 } : null; }).filter(Boolean);
+      if (!beds.length) return toast("Add at least one bed / chair");
+      var missing = live().filter(function (x) { return x.status === "Admitted" && beds.indexOf(x.bed) < 0; });
+      if (missing.length) return toast("Bed " + missing[0].bed + " has a patient (" + missing[0].no + ") — keep it in the list");
+      c.beds = beds; if (procs.length) c.procs = procs; if (items.length) c.items = items;
+      save(); audit2("Day Care settings saved", beds.length + " beds, " + c.procs.length + " procedures"); toast("Settings saved");
+    },
+    // for other modules (TPA)
+    get: function (id) { return byId(id); },
+    list: function () { return live(); },
+    totals: function (x) { return totals(x); }
+  };
+})();
+/*TH-SIGN:01180183c5d0c7b972b3647b3c5847ec*/

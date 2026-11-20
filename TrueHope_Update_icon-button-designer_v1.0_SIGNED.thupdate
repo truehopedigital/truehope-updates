@@ -1,0 +1,80 @@
+/*TRUEHOPE-UPDATE {"id":"icon-button-designer","name":"Icon & Button Designer","version":"1.0","date":"2026-11-19","description":"Set size, shape, colour and design of home icons and all buttons (and left menu) with live preview and ready-made designs. SETTING MENU → Icon & Button Designer."} */
+const DS_DEF = { on: false,
+  tSize: 'm', tShape: 'r12', tStyle: 'card', tBg: '#ffffff', tBg2: '#e7f6ef', tBorder: '#d0d9e4', tTitle: '', tIcon: 'm', tCols: 'auto', tShadow: 'soft',
+  bSize: 'm', bShape: 'r6', bStyle: 'solid', bBg: '', bTx: '#ffffff', bBg2: '', bWeight: '600', bShadow: 'none', b2Style: 'outline',
+  mSize: 'm', mGap: 'line' };
+TH.setting('ds', { ...DS_DEF });
+const DS_PRESETS = {
+  'Classic (default)': { ...DS_DEF, on: false },
+  'Modern rounded': { on: true, tSize: 'm', tShape: 'r20', tStyle: 'card', tBg: '#ffffff', tBg2: '#e7f6ef', tBorder: '#e4e7ec', tTitle: '', tIcon: 'l', tCols: 'auto', tShadow: 'strong', bSize: 'm', bShape: 'pill', bStyle: 'solid', bBg: '', bTx: '#ffffff', bBg2: '', bWeight: '600', bShadow: 'soft', b2Style: 'outline', mSize: 'm', mGap: 'none' },
+  'Big touch screen': { on: true, tSize: 'xl', tShape: 'r16', tStyle: 'card', tBg: '#ffffff', tBg2: '#e7f6ef', tBorder: '#c9d3df', tTitle: '', tIcon: 'xl', tCols: '3', tShadow: 'soft', bSize: 'l', bShape: 'r10', bStyle: 'solid', bBg: '', bTx: '#ffffff', bBg2: '', bWeight: '700', bShadow: 'soft', b2Style: 'outline', mSize: 'l', mGap: 'line' },
+  'Colourful gradient': { on: true, tSize: 'm', tShape: 'r16', tStyle: 'gradient', tBg: '#11795a', tBg2: '#1f5f99', tBorder: '#11795a', tTitle: '#ffffff', tIcon: 'l', tCols: 'auto', tShadow: 'strong', bSize: 'm', bShape: 'pill', bStyle: 'gradient', bBg: '#11795a', bTx: '#ffffff', bBg2: '#1f5f99', bWeight: '600', bShadow: 'soft', b2Style: 'outline', mSize: 'm', mGap: 'line' },
+  'Soft pastel': { on: true, tSize: 'm', tShape: 'r16', tStyle: 'tint', tBg: '#f0f7ff', tBg2: '#f0f7ff', tBorder: '#cfe3fb', tTitle: '#1f5f99', tIcon: 'm', tCols: 'auto', tShadow: 'none', bSize: 'm', bShape: 'r10', bStyle: 'solid', bBg: '#5b8def', bTx: '#ffffff', bBg2: '', bWeight: '600', bShadow: 'none', b2Style: 'light', mSize: 'm', mGap: 'none' },
+  'Square bold': { on: true, tSize: 'm', tShape: 'r0', tStyle: 'outline', tBg: '#ffffff', tBg2: '#ffffff', tBorder: '#1d2939', tTitle: '#1d2939', tIcon: 'm', tCols: 'auto', tShadow: 'none', bSize: 'm', bShape: 'r0', bStyle: 'solid', bBg: '#1d2939', bTx: '#ffffff', bBg2: '', bWeight: '700', bShadow: 'none', b2Style: 'outline', mSize: 'm', mGap: 'line' },
+  'Round icons (circle)': { on: true, tSize: 's', tShape: 'circle', tStyle: 'card', tBg: '#ffffff', tBg2: '#e7f6ef', tBorder: '#d0d9e4', tTitle: '', tIcon: 'm', tCols: 'auto', tShadow: 'soft', bSize: 'm', bShape: 'pill', bStyle: 'solid', bBg: '', bTx: '#ffffff', bBg2: '', bWeight: '600', bShadow: 'none', b2Style: 'outline', mSize: 'm', mGap: 'line' }
+};
+const TSIZE = { s: ['Small', 16, 160], m: ['Medium', 26, 210], l: ['Large', 34, 250], xl: ['Extra large', 44, 300] };
+const ISIZE = { s: ['Small', 28], m: ['Medium', 38], l: ['Large', 50], xl: ['Extra large', 64] };
+const SHAPE = { r0: ['Square corners', '0'], r6: ['Slightly rounded', '6px'], r12: ['Rounded', '12px'], r16: ['More rounded', '16px'], r20: ['Very rounded', '22px'], circle: ['Circle', '50%'] };
+const BSHAPE = { r0: ['Square', '0'], r6: ['Slightly rounded', '5px'], r10: ['Rounded', '10px'], pill: ['Pill (fully round)', '999px'] };
+const BSIZE = { s: ['Small', '6px 12px', '13px'], m: ['Normal', '8px 16px', '14px'], l: ['Large', '12px 22px', '16px'], xl: ['Extra large', '16px 28px', '18px'] };
+const SHADOW = { none: ['None', 'none'], soft: ['Soft', '0 2px 8px rgba(0,0,0,.08)'], strong: ['Strong', '0 6px 18px rgba(0,0,0,.15)'] };
+const MSIZE = { s: ['Small', '7px 14px', '13px'], m: ['Normal', '', ''], l: ['Large', '14px 18px', '16px'] };
+let dsEl = null;
+function dsCSS(d) {
+  if (!d || !d.on) return '';
+  const c = v => v || 'var(--g)', ts = TSIZE[d.tSize] || TSIZE.m, is = ISIZE[d.tIcon] || ISIZE.m, sh = SHAPE[d.tShape] || SHAPE.r12, circ = d.tShape === 'circle';
+  let tbg = d.tBg, tbd = `1px solid ${d.tBorder}`;
+  if (d.tStyle === 'gradient') tbg = `linear-gradient(135deg,${d.tBg},${d.tBg2})`;
+  if (d.tStyle === 'outline') { tbg = 'transparent'; tbd = `2px solid ${d.tBorder}` }
+  if (d.tStyle === 'flat') tbd = '1px solid transparent';
+  if (d.tStyle === 'glass') { tbg = 'rgba(255,255,255,.55)'; tbd = '1px solid rgba(255,255,255,.7)' }
+  const cols = d.tCols === 'auto' ? `repeat(auto-fill,minmax(${ts[2]}px,1fr))` : `repeat(${d.tCols},1fr)`;
+  let css = `.tiles{grid-template-columns:${cols}!important}
+  .tile{background:${tbg}!important;border:${tbd}!important;border-radius:${sh[1]}!important;padding:${ts[1]}px 12px!important;box-shadow:${SHADOW[d.tShadow][1]}!important;${d.tStyle === 'glass' ? 'backdrop-filter:blur(6px);' : ''}${circ ? 'aspect-ratio:1/1;display:flex;flex-direction:column;align-items:center;justify-content:center;max-width:' + (ts[2] + 10) + 'px;margin:auto;width:100%;' : ''}}
+  .tile .ic{font-size:${is[1]}px!important}${d.tTitle ? `.tile .tl{color:${d.tTitle}!important}.tile .ts{color:${d.tTitle}!important;opacity:.8}` : ''}`;
+  const bs = BSIZE[d.bSize] || BSIZE.m, bsh = BSHAPE[d.bShape] || BSHAPE.r6, bbg = d.bStyle === 'gradient' ? `linear-gradient(135deg,${c(d.bBg)},${d.bBg2 || 'var(--gd)'})` : c(d.bBg);
+  css += `.btn{border-radius:${bsh[1]}!important;padding:${bs[1]};font-size:${bs[2]};font-weight:${d.bWeight}!important;box-shadow:${SHADOW[d.bShadow][1]}}
+  .btn:not(.sec):not(.red){background:${bbg}!important;color:${d.bTx}!important}.btn:not(.sec):not(.red):hover{filter:brightness(.92)}
+  .btn.sm{padding:${d.bSize === 'xl' || d.bSize === 'l' ? '6px 12px' : '4px 10px'}!important;font-size:${d.bSize === 'xl' || d.bSize === 'l' ? '14px' : '12px'}!important}
+  .btn.red{border-radius:${bsh[1]}!important}
+  .btn.sec{${d.b2Style === 'light' ? `background:var(--gl)!important;border:1px solid transparent!important;color:${c(d.bBg)}!important` : `background:#fff!important;border:${d.bWeight === '700' ? 2 : 1}px solid ${c(d.bBg)}!important;color:${c(d.bBg)}!important`}}
+  header .btn, header button{border-radius:${bsh[1]}!important}`;
+  const ms = MSIZE[d.mSize] || MSIZE.m;
+  if (ms[1]) css += `nav button{padding:${ms[1]}!important;font-size:${ms[2]}!important}`;
+  if (d.mGap === 'none') css += `nav button{border-bottom:0!important}`;
+  if (d.mGap === 'gap') css += `nav button{border-bottom:0!important;margin:3px 8px!important;border-radius:${bsh[1]}!important;width:calc(100% - 16px)!important}`;
+  return css;
+}
+function dsApply(d) { if (!dsEl || !document.getElementById('dsStyle')) { dsEl = document.createElement('style'); dsEl.id = 'dsStyle'; document.head.appendChild(dsEl) } dsEl.textContent = dsCSS(d || db.settings.ds) }
+dsApply();
+TH.after('hdr', () => { try { if (!document.getElementById('dsStyle')) dsApply() } catch (e) { } });
+TH.addMenuItem('set', 'dsgn', 'Icon & Button Designer');
+const dsSel = (id, obj, v) => `<select id="ds_${id}" onchange="dsPrev()">${Object.entries(obj).map(([k, l]) => `<option value="${k}" ${k === v ? 'selected' : ''}>${Array.isArray(l) ? l[0] : l}</option>`).join('')}</select>`;
+const dsCol = (id, v, ph) => `<div style="display:flex;gap:6px;align-items:center"><input id="ds_${id}" type="color" value="${esc(v || ph || '#11795a')}" style="width:56px;height:36px;padding:2px" oninput="this.dataset.set=1;dsPrev()" ${v ? 'data-set="1"' : ''}>${ph !== undefined ? `<button class="btn sm sec" onclick="const e=$('#ds_${id}');e.dataset.set='';dsPrev()" title="Use theme colour">Theme</button>` : ''}</div>`;
+TH.page('dsgn', () => { const d = DS_SHOW || { ...DS_DEF, ...(db.settings.ds || {}) }; DS_SHOW = null; dsOn = !!d.on;
+  return `<h2>🎨 Icon & Button Designer / आयकॉन व बटण डिझाइन</h2>
+  <div class="card"><h3 style="margin-top:0">Ready-made designs / तयार डिझाइन</h3><div style="display:flex;gap:8px;flex-wrap:wrap">${Object.keys(DS_PRESETS).map(k => `<button class="btn sec" onclick="dsPreset('${k}')">${k}</button>`).join('')}</div><p class="muted" style="margin-bottom:0">Click one to try it, change anything below, then Save.</p></div>
+  <div class="card"><h3 style="margin-top:0">🏠 Home icons / होम आयकॉन</h3><div class="row">
+   <div><label>Size</label>${dsSel('tSize', TSIZE, d.tSize)}</div><div><label>Icon picture size</label>${dsSel('tIcon', ISIZE, d.tIcon)}</div><div><label>Shape</label>${dsSel('tShape', SHAPE, d.tShape)}</div>
+   <div><label>Design</label>${dsSel('tStyle', { card: 'White card', tint: 'Light colour', gradient: 'Two-colour gradient', outline: 'Outline only', flat: 'Flat (no border)', glass: 'Glass' }, d.tStyle)}</div>
+   <div><label>Icons per row</label>${dsSel('tCols', { auto: 'Automatic', 2: '2', 3: '3', 4: '4', 5: '5', 6: '6' }, d.tCols)}</div><div><label>Shadow</label>${dsSel('tShadow', SHADOW, d.tShadow)}</div></div>
+   <div class="row" style="margin-top:8px"><div><label>Background colour</label>${dsCol('tBg', d.tBg)}</div><div><label>2nd colour (gradient)</label>${dsCol('tBg2', d.tBg2)}</div><div><label>Border colour</label>${dsCol('tBorder', d.tBorder)}</div><div><label>Title text colour</label>${dsCol('tTitle', d.tTitle, '')}</div></div></div>
+  <div class="card"><h3 style="margin-top:0">🔘 Buttons (everywhere) / सर्व बटणे</h3><div class="row">
+   <div><label>Size</label>${dsSel('bSize', BSIZE, d.bSize)}</div><div><label>Shape</label>${dsSel('bShape', BSHAPE, d.bShape)}</div><div><label>Design</label>${dsSel('bStyle', { solid: 'Solid colour', gradient: 'Two-colour gradient' }, d.bStyle)}</div>
+   <div><label>Text weight</label>${dsSel('bWeight', { 400: 'Normal', 600: 'Semi-bold', 700: 'Bold' }, d.bWeight)}</div><div><label>Shadow</label>${dsSel('bShadow', SHADOW, d.bShadow)}</div><div><label>Second (white) buttons</label>${dsSel('b2Style', { outline: 'White with border', light: 'Light colour, no border' }, d.b2Style)}</div></div>
+   <div class="row" style="margin-top:8px"><div><label>Button colour</label>${dsCol('bBg', d.bBg, '')}</div><div><label>2nd colour (gradient)</label>${dsCol('bBg2', d.bBg2, '')}</div><div><label>Button text colour</label>${dsCol('bTx', d.bTx)}</div></div></div>
+  <div class="card"><h3 style="margin-top:0">☰ Left menu / डावा मेनू</h3><div class="row"><div><label>Menu item size</label>${dsSel('mSize', MSIZE, d.mSize)}</div><div><label>Separation</label>${dsSel('mGap', { line: 'Thin line between items', none: 'No line', gap: 'Separate rounded buttons' }, d.mGap)}</div></div></div>
+  <div class="card"><h3 style="margin-top:0">👁 Preview</h3><div class="tiles">${[['🩺', 'OPD MASTER', '8 options'], ['🛏️', 'IPD MASTER', '8 options'], ['🧾', 'BILLING MASTER', '5 options'], ['⚙️', 'SETTING MENU', '16 options']].map(([i, l, s]) => `<div class="tile"><div class="ic">${i}</div><div class="tl">${l}</div><div class="ts">${s}</div></div>`).join('')}</div>
+   <div style="margin-top:14px;display:flex;gap:8px;flex-wrap:wrap;align-items:center"><button class="btn">Main button</button><button class="btn sec">Second button</button><button class="btn sm">Small</button><button class="btn sm sec">Small 2</button><button class="btn red">Delete</button></div></div>
+  <div class="card" style="position:sticky;bottom:0;z-index:5;display:flex;gap:8px;flex-wrap:wrap"><button class="btn" onclick="dsSave()">💾 Save design</button><button class="btn sec" onclick="dsReset()">↩ Back to original look</button><span class="muted" style="align-self:center">Changes show immediately on this page and the left menu. / बदल लगेच दिसतात.</span></div>`; });
+let dsOn = true;
+function dsRead() { const g = k => { const e = $('#ds_' + k); return e ? e.value : '' }, gc = k => { const e = $('#ds_' + k); return e && e.dataset.set ? e.value : '' };
+  return { on: dsOn, tSize: g('tSize'), tShape: g('tShape'), tStyle: g('tStyle'), tBg: g('tBg'), tBg2: g('tBg2'), tBorder: g('tBorder'), tTitle: gc('tTitle'), tIcon: g('tIcon'), tCols: g('tCols'), tShadow: g('tShadow'),
+    bSize: g('bSize'), bShape: g('bShape'), bStyle: g('bStyle'), bBg: gc('bBg'), bTx: g('bTx'), bBg2: gc('bBg2'), bWeight: g('bWeight'), bShadow: g('bShadow'), b2Style: g('b2Style'), mSize: g('mSize'), mGap: g('mGap') } }
+window.dsPrev = () => { dsOn = true; dsApply(dsRead()) };
+let DS_SHOW = null;
+window.dsPreset = function (k) { const p = DS_PRESETS[k]; if (!p) return; DS_SHOW = { ...DS_DEF, ...p }; go('dsgn'); dsOn = !!p.on; dsApply(DS_SHOW) };
+window.dsSave = function () { const d = dsRead(); db.settings.ds = d; DS_SHOW = null; save(true); dsApply(); audit('Icon & button design changed', d.on ? 'custom' : 'original'); toast('Design saved') };
+window.dsReset = function () { db.settings.ds = { ...DS_DEF, on: false }; DS_SHOW = null; save(true); dsApply(); go('dsgn'); toast('Original look restored') };
+/*TH-SIGN:4f883c62759bbfa29ef67c9639c4aa93*/

@@ -1,0 +1,194 @@
+/*TRUEHOPE-UPDATE {"id":"appearance-theme-studio","name":"Appearance & Theme Studio","version":"1.0","date":"2026-11-18","description":"Change the look of the software: ready themes, colours, background photo (login / home / all pages), font, size, rounded corners, dark mode, header logo, home clock and notice board."} */
+
+const UI_DEF = {
+  preset: 'green', primary: '#1e7d4f', primary2: '#2fa36b', headerStyle: 'solid',
+  sideBg: '#ffffff', sideText: '#1f2a33', pageBg: '#f4f6f8', cardBg: '#ffffff',
+  font: 'Segoe UI', size: 14, radius: 5, cardRadius: 8, dark: false, compact: false, tileStyle: 'white',
+  bgImg: '', bgWhere: 'none', bgOverlay: 0.55, loginImg: '', loginOverlay: 0.35, loginWelcome: '',
+  headerLogo: true, clock: true, notice: '', noticeAll: false
+};
+const PRESETS = {
+  green:   { label: 'Hospital Green', primary: '#1e7d4f', primary2: '#2fa36b', headerStyle: 'solid',    sideBg: '#ffffff', sideText: '#1f2a33', pageBg: '#f4f6f8', cardBg: '#ffffff', dark: false },
+  blue:    { label: 'Medical Blue',   primary: '#1f5fa8', primary2: '#3b8fe0', headerStyle: 'gradient', sideBg: '#ffffff', sideText: '#1f2a33', pageBg: '#f2f6fb', cardBg: '#ffffff', dark: false },
+  navy:    { label: 'Navy Sidebar',   primary: '#16365c', primary2: '#2a6db5', headerStyle: 'gradient', sideBg: '#16365c', sideText: '#e8eef6', pageBg: '#eef2f7', cardBg: '#ffffff', dark: false },
+  teal:    { label: 'Fresh Teal',     primary: '#0f8b8d', primary2: '#29b6a8', headerStyle: 'gradient', sideBg: '#ffffff', sideText: '#1f2a33', pageBg: '#f1f8f8', cardBg: '#ffffff', dark: false },
+  purple:  { label: 'Royal Purple',   primary: '#5b3a9e', primary2: '#8a5cd6', headerStyle: 'gradient', sideBg: '#2e1f52', sideText: '#ece6fb', pageBg: '#f5f3fb', cardBg: '#ffffff', dark: false },
+  maroon:  { label: 'Maroon',         primary: '#8e1c2b', primary2: '#c0392b', headerStyle: 'gradient', sideBg: '#ffffff', sideText: '#1f2a33', pageBg: '#fbf4f4', cardBg: '#ffffff', dark: false },
+  orange:  { label: 'Sunrise Orange', primary: '#c25b0a', primary2: '#f39c12', headerStyle: 'gradient', sideBg: '#ffffff', sideText: '#1f2a33', pageBg: '#fdf7f0', cardBg: '#ffffff', dark: false },
+  dark:    { label: 'Night (Dark)',   primary: '#2fa36b', primary2: '#1e7d4f', headerStyle: 'solid',    sideBg: '#1b1f22', sideText: '#d9dee2', pageBg: '#15181a', cardBg: '#22272b', dark: true }
+};
+const FONTS = ['Segoe UI', 'Calibri', 'Arial', 'Verdana', 'Tahoma', 'Trebuchet MS', 'Georgia', 'Cambria', 'Times New Roman', 'Nirmala UI', 'Mangal', 'Courier New'];
+
+TH.setting('ui', JSON.parse(JSON.stringify(UI_DEF)));
+const U = () => { const u = db.settings.ui || (db.settings.ui = {}); for (const k in UI_DEF) if (u[k] === undefined) u[k] = UI_DEF[k]; return u; };
+TH.addMenuItem('set', 'appearance', 'Appearance & Theme');
+
+/* ---------- apply the look ---------- */
+window.applyUI = function () {
+  const u = U();
+  let st = document.getElementById('thUI');
+  if (!st) { st = document.createElement('style'); st.id = 'thUI'; document.head.appendChild(st); }
+  const P = u.primary, P2 = u.primary2;
+  const headerBg = u.headerStyle === 'gradient' ? `linear-gradient(90deg,${P},${P2})` : P;
+  const darkSide = isDark(u.sideBg);
+  const ov = Math.min(.92, Math.max(0, +u.bgOverlay || 0));
+  const ovc = u.dark ? '21,24,26' : '255,255,255';
+  const bgCss = u.bgImg ? `linear-gradient(rgba(${ovc},${ov}),rgba(${ovc},${ov})),url(${u.bgImg}) center/cover fixed` : '';
+  let css = `
+:root{--g:${P};--gd:${P};--bg:${u.pageBg};--pc:${P}}
+body{font-family:'${u.font}',Arial,sans-serif;font-size:${+u.size || 14}px;background:${u.pageBg}}
+input,select,textarea,.btn{font-family:inherit}
+header{background:${headerBg}!important}
+nav{background:${u.sideBg}!important}
+nav button{color:${u.sideText}!important}
+nav button:hover,nav button.active{background:${darkSide ? 'rgba(255,255,255,.12)' : 'var(--gl)'}!important}
+nav button.active{border-left-color:${darkSide ? P2 : P}!important}
+nav .mtop{border-top-color:${darkSide ? 'rgba(255,255,255,.08)' : '#eef1f3'}!important}
+.card,.stat,.tile,table{background:${u.cardBg}}
+.btn{border-radius:${+u.radius}px}
+.btn.sec{background:${u.cardBg}}
+.card,.stat,.tile,input,select,textarea{border-radius:${Math.max(+u.radius, 0)}px}
+.card,.stat,.tile{border-radius:${+u.cardRadius}px}
+h2,h3,.stat .n,.tile .tl{color:${u.dark ? P2 : P}}
+#thHLogo{height:38px;width:38px;object-fit:contain;background:#fff;border-radius:50%;padding:2px;margin-right:10px}
+header .brand{display:flex;flex-direction:column}
+#thNotice{background:${P};color:#fff;border-radius:${+u.cardRadius}px;padding:7px 12px;margin-bottom:14px;overflow:hidden;white-space:nowrap;font-weight:600}
+#thNotice span{display:inline-block;padding-left:100%;animation:thMarq 22s linear infinite}
+@keyframes thMarq{from{transform:translateX(0)}to{transform:translateX(-100%)}}
+#thClock{text-align:center;color:var(--mut);font-size:13px;margin-top:4px}
+#thWelcome{font-size:15px;font-weight:600;margin:-8px 0 14px}
+@media print{body{background:#fff!important;color:#000!important}}`;
+  if (u.tileStyle === 'color') css += `.tile{background:${P}!important;border-color:${P}!important}.tile .tl,.tile .ts,.tile .ic{color:#fff!important}`;
+  if (u.tileStyle === 'gradient') css += `.tile{background:linear-gradient(135deg,${P},${P2})!important;border:0!important}.tile .tl,.tile .ts,.tile .ic{color:#fff!important}`;
+  if (u.tileStyle === 'glass') css += `.tile{background:rgba(255,255,255,.55)!important;backdrop-filter:blur(6px);border:1px solid rgba(255,255,255,.7)!important}`;
+  if (u.compact) css += `th,td{padding:3px 6px!important;font-size:12px}.card{padding:10px!important;margin-bottom:10px!important}nav button{padding:7px 18px!important}input,select,textarea{padding:4px 7px!important}`;
+  if (u.dark) css += `
+:root{--tx:#e3e7ea;--mut:#9aa4ab;--bd:#3a4248;--gl:#2c3a33}
+body{color:#e3e7ea}
+input,select,textarea{background:#1c2023!important;color:#e3e7ea!important;border-color:#3a4248!important}
+th{background:#2d353a!important;color:#e3e7ea!important}
+tr:hover td{background:#2a3035!important}
+.warn{background:#3a3320!important;border-color:#6b5a26!important;color:#f1e3b3}
+.pinfo{background:#26332c!important}
+.muted{color:#9aa4ab!important}
+#login{background:#15181a}`;
+  if (u.bgImg && u.bgWhere === 'all') css += `.layout{background:${bgCss}!important}main{background:transparent}`;
+  if (u.bgImg && u.bgWhere === 'home') css += `body[data-page="home"] .layout,body[data-page="menu"] .layout{background:${bgCss}!important}`;
+  if (u.loginImg) {
+    const lo = Math.min(.9, Math.max(0, +u.loginOverlay || 0));
+    css += `#login{background:linear-gradient(rgba(0,0,0,${lo}),rgba(0,0,0,${lo})),url(${u.loginImg}) center/cover!important}
+#lgBrand,#lgTag,#lgSup,#thWelcome{color:#fff!important;text-shadow:0 2px 6px rgba(0,0,0,.6)}
+#login .card{background:rgba(255,255,255,.93)!important;box-shadow:0 10px 30px rgba(0,0,0,.35)}`;
+  } else css += `#thWelcome{color:${P}}`;
+  st.textContent = css;
+  if (u.primary && db.settings.color !== u.primary) { db.settings.color = u.primary; }
+  if (typeof init_theme === 'function') init_theme();
+  // login welcome text
+  const tag = document.getElementById('lgTag');
+  let w = document.getElementById('thWelcome');
+  if (u.loginWelcome && tag) { if (!w) { w = document.createElement('div'); w.id = 'thWelcome'; tag.after(w); } w.textContent = u.loginWelcome; }
+  else if (w) w.remove();
+  hdrLogo();
+};
+function isDark(hex) { const h = String(hex || '#fff').replace('#', ''); if (h.length < 6) return false; const r = parseInt(h.substr(0, 2), 16), g = parseInt(h.substr(2, 2), 16), b = parseInt(h.substr(4, 2), 16); return (r * 299 + g * 587 + b * 114) / 1000 < 128; }
+function hdrLogo() {
+  const hd = document.querySelector('header'); if (!hd) return;
+  let img = document.getElementById('thHLogo');
+  if (U().headerLogo && db.settings.logo && (typeof cur === 'undefined' || cur)) {
+    if (!img) { img = document.createElement('img'); img.id = 'thHLogo'; hd.insertBefore(img, hd.firstChild); hd.style.justifyContent = 'flex-start'; const hr = hd.querySelector('.hr'); if (hr) hr.style.marginLeft = 'auto'; }
+    img.src = db.settings.logo;
+  } else if (img) img.remove();
+}
+
+/* ---------- hooks ---------- */
+TH.after('hdr', () => hdrLogo());
+TH.after('go', () => {
+  document.body.dataset.page = (typeof page !== 'undefined') ? page : '';
+  const u = U();
+  if (u.notice && (u.noticeAll || page === 'home')) {
+    const m = document.getElementById('main');
+    if (m && !document.getElementById('thNotice')) m.insertAdjacentHTML('afterbegin', `<div id="thNotice"><span>📢 ${esc(u.notice)}</span></div>`);
+  }
+});
+const _home = P.home;
+P.home = () => {
+  const html = _home();
+  if (!U().clock) return html;
+  return html.replace('</div></div>\n  <div class="tiles">', `</div><div id="thClock">${clockText()}</div></div>\n  <div class="tiles">`);
+};
+function clockText() { const d = new Date(); return d.toLocaleDateString('en-IN', { weekday: 'long', day: '2-digit', month: 'long', year: 'numeric' }) + ' • ' + d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit' }); }
+setInterval(() => { const c = document.getElementById('thClock'); if (c) c.textContent = clockText(); }, 1000);
+
+/* ---------- editor screen ---------- */
+window.uiSet = function (k, v) { const u = U(); u[k] = v; if (['primary', 'primary2', 'headerStyle', 'sideBg', 'sideText', 'pageBg', 'cardBg', 'dark'].includes(k)) u.preset = 'custom'; applyUI(); save(true); };
+window.uiPreset = function (k) { const p = PRESETS[k]; if (!p) return; const u = U(); Object.keys(p).forEach(x => { if (x !== 'label') u[x] = p[x]; }); u.preset = k; applyUI(); save(true); audit('Theme changed', p.label); go('appearance'); };
+window.uiImg = function (inp, key, maxW) {
+  const f = inp.files[0]; if (!f) return;
+  const r = new FileReader();
+  r.onload = () => {
+    const img = new Image();
+    img.onload = () => {
+      const k = Math.min(1, (maxW || 1600) / img.width, 1100 / img.height);
+      const c = document.createElement('canvas'); c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+      let q = .75, url = c.toDataURL('image/jpeg', q);
+      while (url.length > 900000 && q > .35) { q -= .1; url = c.toDataURL('image/jpeg', q); }
+      const u = U(); u[key] = url; if (key === 'bgImg' && u.bgWhere === 'none') u.bgWhere = 'home';
+      applyUI(); save(true); audit('Background photo changed', key); toast('Photo applied'); go('appearance');
+    };
+    img.src = r.result;
+  };
+  r.readAsDataURL(f);
+};
+window.uiReset = function () { if (!confirm('Reset the whole look to default (green)? Photos will be removed.')) return; db.settings.ui = JSON.parse(JSON.stringify(UI_DEF)); applyUI(); save(true); audit('Theme reset', ''); go('appearance'); };
+window.uiExport = function () { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([JSON.stringify(U())], { type: 'application/json' })); a.download = 'TrueHope_Theme_' + today() + '.json'; a.click(); };
+window.uiImport = function (inp) { const f = inp.files[0]; if (!f) return; const r = new FileReader(); r.onload = () => { try { const t = JSON.parse(r.result); db.settings.ui = { ...UI_DEF, ...t }; applyUI(); save(true); toast('Theme imported'); go('appearance'); } catch (e) { alert('Not a valid theme file'); } }; r.readAsText(f); };
+
+const col = (k, l) => `<div><label>${l}</label><input type="color" value="${esc(U()[k])}" oninput="uiSet('${k}',this.value)" style="height:38px;padding:2px"></div>`;
+const chk = (k, l) => `<label style="display:flex;gap:8px;align-items:center;font-weight:400;color:var(--tx);margin:6px 18px 6px 0"><input type="checkbox" style="width:auto" ${U()[k] ? 'checked' : ''} onchange="uiSet('${k}',this.checked)"> ${l}</label>`;
+const rng = (k, l, min, max, step, unit) => `<div><label>${l}: <b id="rv_${k}">${U()[k]}${unit || ''}</b></label><input type="range" min="${min}" max="${max}" step="${step}" value="${U()[k]}" oninput="document.getElementById('rv_${k}').textContent=this.value+'${unit || ''}';uiSet('${k}',+this.value)" style="padding:0"></div>`;
+
+TH.page('appearance', () => {
+  const u = U();
+  return `<h2>🎨 Appearance &amp; Theme</h2><p class="muted">Every change shows <b>immediately</b> and is saved automatically. Printed forms are not affected.</p>
+  <div class="card"><h3 style="margin-top:0">1. Ready-made themes (one click)</h3><div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px">
+   ${Object.entries(PRESETS).map(([k, p]) => `<div onclick="uiPreset('${k}')" style="cursor:pointer;border:2px solid ${u.preset === k ? p.primary : 'var(--bd)'};border-radius:10px;overflow:hidden;background:#fff">
+     <div style="height:22px;background:${p.headerStyle === 'gradient' ? `linear-gradient(90deg,${p.primary},${p.primary2})` : p.primary}"></div>
+     <div style="display:flex;height:42px"><div style="width:30%;background:${p.sideBg}"></div><div style="flex:1;background:${p.pageBg};padding:6px"><div style="height:100%;background:${p.cardBg};border-radius:4px"></div></div></div>
+     <div style="padding:6px 8px;font-size:12px;font-weight:600;color:#1f2a33">${u.preset === k ? '✔ ' : ''}${p.label}</div></div>`).join('')}</div></div>
+
+  <div class="card"><h3 style="margin-top:0">2. Background photo</h3><div class="grid">
+   <div><label>Main background photo</label><input type="file" accept="image/*" onchange="uiImg(this,'bgImg',1600)">
+    ${u.bgImg ? `<img src="${u.bgImg}" style="margin-top:6px;max-width:100%;max-height:90px;border-radius:6px"><br><button class="btn sm red" onclick="uiSet('bgImg','');go('appearance')">Remove photo</button>` : ''}</div>
+   <div><label>Show background photo on</label><select onchange="uiSet('bgWhere',this.value)">${[['none', 'Nowhere'], ['home', 'Home screen only'], ['all', 'All screens']].map(([v, l]) => `<option value="${v}" ${u.bgWhere === v ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
+   ${rng('bgOverlay', 'Photo fade (higher = lighter, easier to read)', 0, .9, .05, '')}
+   <div><label>Login screen photo</label><input type="file" accept="image/*" onchange="uiImg(this,'loginImg',1600)">
+    ${u.loginImg ? `<img src="${u.loginImg}" style="margin-top:6px;max-width:100%;max-height:90px;border-radius:6px"><br><button class="btn sm red" onclick="uiSet('loginImg','');go('appearance')">Remove photo</button>` : ''}</div>
+   ${rng('loginOverlay', 'Login photo darkness', 0, .8, .05, '')}
+   <div class="full"><label>Welcome message on login screen</label><input value="${esc(u.loginWelcome)}" placeholder="e.g. Welcome to Skylark Hospital — Caring with Excellence" onchange="uiSet('loginWelcome',this.value)"></div>
+  </div><p class="muted" style="font-size:12px;margin-bottom:0">Tip: use a hospital building or reception photo. Photos are compressed automatically.</p></div>
+
+  <div class="card"><h3 style="margin-top:0">3. Colours</h3><div class="grid">
+   ${col('primary', 'Main colour (buttons, headings)')}${col('primary2', 'Second colour (gradient)')}
+   <div><label>Top bar style</label><select onchange="uiSet('headerStyle',this.value)"><option value="solid" ${u.headerStyle === 'solid' ? 'selected' : ''}>Solid colour</option><option value="gradient" ${u.headerStyle === 'gradient' ? 'selected' : ''}>Gradient (2 colours)</option></select></div>
+   ${col('sideBg', 'Left menu background')}${col('sideText', 'Left menu text')}${col('pageBg', 'Page background')}${col('cardBg', 'Box / card background')}
+  </div></div>
+
+  <div class="card"><h3 style="margin-top:0">4. Font &amp; style</h3><div class="grid">
+   <div><label>Font</label><select onchange="uiSet('font',this.value)">${FONTS.map(f => `<option style="font-family:'${f}'" ${u.font === f ? 'selected' : ''}>${f}</option>`).join('')}</select></div>
+   ${rng('size', 'Text size', 12, 18, 1, 'px')}${rng('radius', 'Button corner round', 0, 20, 1, 'px')}${rng('cardRadius', 'Box corner round', 0, 24, 1, 'px')}
+   <div><label>Home tiles style</label><select onchange="uiSet('tileStyle',this.value)">${[['white', 'White'], ['color', 'Solid colour'], ['gradient', 'Gradient'], ['glass', 'Glass (best with photo)']].map(([v, l]) => `<option value="${v}" ${u.tileStyle === v ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
+  </div><div class="row" style="margin-top:8px">${chk('dark', 'Dark mode (night)')}${chk('compact', 'Compact tables (more rows on screen)')}${chk('headerLogo', 'Show hospital logo in top bar')}${chk('clock', 'Show date & clock on Home')}</div>
+  <p class="muted" style="font-size:12px;margin-bottom:0">For Marathi / Hindi text, choose <b>Nirmala UI</b> or <b>Mangal</b>.</p></div>
+
+  <div class="card"><h3 style="margin-top:0">5. Notice board (scrolling message)</h3><div class="grid">
+   <div class="full"><label>Notice text (leave empty to hide)</label><input value="${esc(u.notice)}" placeholder="e.g. Free health camp on Sunday 9 AM • MJPJAY / AB-PMJAY accepted" onchange="uiSet('notice',this.value);go('appearance')"></div></div>
+   <div class="row">${chk('noticeAll', 'Show on all screens (otherwise only on Home)')}</div></div>
+
+  <div class="card row"><button class="btn sec" onclick="uiExport()">Save theme to file</button>
+   <div><label>Load theme from file</label><input type="file" accept=".json" onchange="uiImport(this)"></div>
+   <button class="btn red" onclick="uiReset()">Reset to default</button></div>`;
+}, 'appearance');
+
+applyUI();
+/*TH-SIGN:8d1421463267a0039dae18d7f412ba20*/

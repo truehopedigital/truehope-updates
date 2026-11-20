@@ -1,0 +1,1144 @@
+/*TRUEHOPE-UPDATE {"id":"th-surgery-docs-bilingual-20261120","name":"Surgery & OT Documents + Bilingual Documents","version":"1.2","date":"2026-11-20","description":"Professional Surgery & OT screen. Language dropdown + Gujarati built in. NABH surgery/OT documents (consents, PAC, WHO checklist, OT notes with one-click default notes, anaesthesia, recovery, implants, counts), drug chart, general consent, and a master setting to print ALL documents in English + Marathi / Hindi / any language."} */
+(function () {
+  if (window.__thSurgDocs) return;
+  window.__thSurgDocs = true;
+
+  /* =====================================================================
+     1. STORAGE (new keys only - existing data is never changed)
+     ===================================================================== */
+  function S() {
+    db.settings = db.settings || {};
+    var s = db.settings.thDocLang;
+    if (!s) s = db.settings.thDocLang = { mode: "mr", customName: "", applyAll: true, extra: {} };
+    s.extra = s.extra || {};
+    ["mr", "hi", "custom"].forEach(function (k) { s.extra[k] = s.extra[k] || {}; });
+    if (s.mode === "custom" && s.customName) {
+      var nm = s.customName.toLowerCase();
+      Object.keys(LANG_LIST).forEach(function (c) { if (LANG_LIST[c].en.toLowerCase() === nm) { s.mode = c; if (s.extra.custom && Object.keys(s.extra.custom).length && !s.extra[c]) s.extra[c] = s.extra.custom; } });
+    }
+    if (!s.extra[s.mode]) s.extra[s.mode] = {};
+    return s;
+  }
+  function SD() {
+    db.thSurg = db.thSurg || {};
+    var d = db.thSurg;
+    d.notes = d.notes || {};
+    if (!Array.isArray(d.lib)) d.lib = DEF_LIB.map(function (x) { return Object.assign({}, x); });
+    return d;
+  }
+  function V(x) { return x == null ? "" : (typeof x === "object" ? String(x.name || x.label || "") : String(x)); }
+  function E(x) { try { return esc(V(x)); } catch (e) { return V(x).replace(/[&<>"]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; }); } }
+
+  /* =====================================================================
+     2. LANGUAGE ENGINE
+     ===================================================================== */
+  /* ---- languages: Marathi & Hindi built in, others come from language packs ---- */
+  var LANG_LIST = {
+    gu: { en: "Gujarati", nat: "ગુજરાતી" }, kn: { en: "Kannada", nat: "ಕನ್ನಡ" }, te: { en: "Telugu", nat: "తెలుగు" },
+    ta: { en: "Tamil", nat: "தமிழ்" }, bn: { en: "Bengali", nat: "বাংলা" }, ml: { en: "Malayalam", nat: "മലയാളം" },
+    pa: { en: "Punjabi", nat: "ਪੰਜਾਬੀ" }, or: { en: "Odia", nat: "ଓଡ଼ିଆ" }, as: { en: "Assamese", nat: "অসমীয়া" }, ur: { en: "Urdu", nat: "اردو" }
+  };
+  var PACKS = window.TH_LANG_PACKS = window.TH_LANG_PACKS || {};
+  var PACK_CACHE = {};
+  function packMap(m) {
+    var pk = PACKS[m];
+    if (!pk || !pk.t) return null;
+    var n = Object.keys(pk.t).length;
+    if (PACK_CACHE[m] && PACK_CACHE[m].n === n) return PACK_CACHE[m].map;
+    var map = {};
+    Object.keys(pk.t).forEach(function (en) { map[norm(en)] = pk.t[en]; });
+    PACK_CACHE[m] = { n: n, map: map };
+    return map;
+  }
+  if (!PACKS.gu) PACKS.gu = { name: "ગુજરાતી", t: {"Bp": "બીપી", "No": "ના", "Age": "ઉંમર", "Bed": "બેડ", "Doa": "દાખલ તારીખ", "Dod": "રજા તારીખ", "Fit": "યોગ્ય", "ICU": "આઈસીયુ", "N/A": "લાગુ નથી", "Qty": "જથ્થો", "Sex": "જાતિ", "Yes": "હા", "Bill": "બિલ", "Both": "બંને", "Date": "તારીખ", "Dept": "વિભાગ", "Diet": "આહાર", "Dose": "માત્રા", "Drug": "દવા", "Fees": "ફી", "Item": "વિગત", "Left": "ડાબી", "Name": "નામ", "Page": "પાનું", "Paid": "ચૂકવેલ", "Rate": "દર", "Side": "બાજુ", "Sign": "સહી", "size": "માપ", "Temp": "તાપમાન", "Time": "સમય", "Type": "પ્રકાર", "UHID": "યુએચઆઈડી", "Ward": "વોર્ડ", "Added": "ઉમેરેલ", "Drain": "ડ્રેન", "Freq.": "આવર્તન", "Local": "સ્થાનિક", "Minor": "સગીર", "Notes": "નોંધ", "Nurse": "નર્સ", "Other": "અન્ય", "Phone": "ફોન", "Place": "સ્થળ", "Pulse": "નાડી", "Right": "જમણી", "Route": "માર્ગ", "Score": "ગુણ", "Total": "કુલ", "Urine": "પેશાબ", "Advice": "સલાહ", "Airway": "શ્વાસમાર્ગ", "Amount": "રકમ", "Bed No": "બેડ નં.", "Blades": "બ્લેડ", "Doctor": "ડૉક્ટર", "Expiry": "સમાપ્તિ તારીખ", "Gender": "જાતિ", "Height": "ઊંચાઈ", "Ipd No": "આઈપીડી નં.", "Mobile": "મોબાઈલ", "Opd No": "ઓપીડી નં.", "Others": "અન્ય", "Scheme": "યોજના", "Spinal": "સ્પાઇનલ", "Vitals": "વાઇટલ્સ", "Weight": "વજન", "Address": "સરનામું", "Advance": "એડવાન્સ રકમ", "Age/Sex": "ઉંમર / જાતિ", "Allergy": "એલર્જી", "Balance": "બાકી", "Bed No.": "બેડ નં.", "Bill No": "બિલ નં.", "Closure": "ઘા બંધ કરવો", "Company": "કંપની", "Consent": "સંમતિ", "females": "સ્ત્રીઓ માટે", "General": "જનરલ", "History": "ઇતિહાસ", "IPD No.": "આઈપીડી નં.", "Needles": "સોય", "Opd No.": "ઓપીડી નં.", "Patient": "દર્દી", "Receipt": "રસીદ", "Remarks": "ટિપ્પણી", "Surgeon": "સર્જન", "Surgery": "શસ્ત્રક્રિયા", "Thyroid": "થાઇરોઇડ", "Witness": "સાક્ષી", "Bill No.": "બિલ નં.", "Criteria": "માપદંડ", "Diabetes": "ડાયાબિટીસ", "Discount": "છૂટ", "Dr. sign": "ડૉ. સહી", "Duration": "સમયગાળો", "End time": "સમાપ્તિ સમય", "Epidural": "એપિડ્યુરલ", "Epilepsy": "વાઈ (ખેંચ)", "Guardian": "વાલી", "Id Proof": "ઓળખપત્ર", "Incision": "ચીરો", "OT nurse": "ઓટી નર્સ", "Position": "સ્થિતિ", "Quantity": "જથ્થો", "Relation": "સંબંધ", "Relative": "સગા", "Sedation": "સેડેશન", "Age / Sex": "ઉંમર / જાતિ", "Allergies": "એલર્જી", "Date/Time": "તારીખ / સમય", "Diagnosis": "નિદાન", "Drug Name": "દવાનું નામ", "Emergency": "ઇમરજન્સી", "Face mask": "ફેસ માસ્ક", "Follow Up": "ફરી તપાસ", "Follow-Up": "ફરી તપાસ", "Frequency": "આવર્તન", "IV fluids": "આઈવી પ્રવાહી", "Medicines": "દવાઓ", "Mobile No": "મોબાઈલ નં.", "Operation": "ઓપરેશન", "Platelets": "પ્લેટલેટ્સ", "Procedure": "પ્રક્રિયા", "Signature": "સહી", "Stop date": "બંધ તારીખ", "Treatment": "સારવાર", "Ambulation": "હરવું-ફરવું", "Analgesics": "પીડાનાશક દવાઓ", "Anesthesia": "એનેસ્થેસિયા", "Blood loss": "લોહીનો વ્યય", "Checked By": "તપાસનાર", "Complaints": "ફરિયાદો", "Consultant": "કન્સલ્ટન્ટ ડૉક્ટર", "Contact No": "સંપર્ક નં.", "Department": "વિભાગ", "Drug Chart": "દવા ચાર્ટ", "Medication": "દવા", "Mobile No.": "મોબાઈલ નં.", "Monitoring": "દેખરેખ", "Net Amount": "ચોખ્ખી રકમ", "Occupation": "વ્યવસાય", "On arrival": "આવતાં જ", "Ordered by": "આદેશ આપનાર", "Receipt No": "રસીદ નં.", "Serial No.": "સીરીયલ નં.", "Shifted to": "ક્યાં ખસેડ્યા", "Start time": "શરૂઆતનો સમય", "Visit Date": "મુલાકાત તારીખ", "Ward / Bed": "વોર્ડ / બેડ", "Amount Paid": "ચૂકવેલ રકમ", "Anaesthesia": "એનેસ્થેસિયા", "Anesthetist": "એનેસ્થેટિસ્ટ", "Antibiotics": "એન્ટિબાયોટિક્સ", "Blood group": "બ્લડ ગ્રુપ", "Contact No.": "સંપર્ક નં.", "Date / Time": "તારીખ / સમય", "Date & Time": "તારીખ અને સમય", "Date of PAC": "PAC તારીખ", "Description": "વર્ણન", "Drugs given": "આપેલી દવાઓ", "Examination": "તપાસ", "Final count": "અંતિમ ગણતરી", "Instruments": "સાધનો", "Mops / pads": "મોપ / પેડ", "Pain (0-10)": "દુખાવો (0-10)", "Particulars": "વિગતો", "Prepared By": "તૈયાર કરનાર", "Receipt No.": "રસીદ નં.", "Referred By": "રિફર કરનાર", "Scrub nurse": "સ્ક્રબ નર્સ", "Side / Site": "બાજુ / સ્થાન", "Staff Nurse": "સ્ટાફ નર્સ", "Temperature": "તાપમાન", "Time / sign": "સમય / સહી", "Total score": "કુલ ગુણ", "Unconscious": "બેભાન", "Whole blood": "સંપૂર્ણ લોહી", "Anaesthetist": "એનેસ્થેટિસ્ટ", "Assistant(s)": "સહાયક", "At discharge": "બહાર મોકલતી વખતે", "Consent Form": "સંમતિ પત્ર", "Drug allergy": "દવાની એલર્જી", "Hypertension": "હાઈ બ્લડ પ્રેશર", "Implant name": "ઇમ્પ્લાન્ટનું નામ", "Instructions": "સૂચનાઓ", "Past History": "અગાઉનો ઇતિહાસ", "Patient Name": "દર્દીનું નામ", "Payment Mode": "ચુકવણીની રીત", "Relationship": "સંબંધ", "Total Amount": "કુલ રકમ", "Tuberculosis": "ટીબી (ક્ષય)", "Urine output": "પેશાબનું પ્રમાણ", "Asthma / COPD": "દમ / COPD", "Complications": "જટિલતાઓ", "Count correct": "ગણતરી સાચી", "Heart disease": "હૃદય રોગ", "Implants used": "વપરાયેલ ઇમ્પ્લાન્ટ", "Initial count": "શરૂઆતની ગણતરી", "Intake Output": "ઇનટેક-આઉટપુટ", "Investigation": "તપાસ", "Liver disease": "લીવર રોગ", "Mouth opening": "મોં ખોલવું", "Neck movement": "ગરદનની હલનચલન", "Nursing Notes": "નર્સિંગ નોંધ", "Relative Name": "સગાનું નામ", "Admission Date": "દાખલ તારીખ", "Before closure": "ઘા બંધ કરતાં પહેલાં", "Blood Pressure": "બ્લડ પ્રેશર", "Discharge Date": "રજા તારીખ", "Doctor on duty": "ફરજ પરના ડૉક્ટર", "Doctor'S Notes": "ડૉક્ટરની નોંધ", "Implant Record": "ઇમ્પ્લાન્ટ રેકોર્ડ", "Investigations": "તપાસો", "Kidney disease": "કિડની રોગ", "Marital Status": "વૈવાહિક સ્થિતિ", "Natural airway": "કુદરતી શ્વાસ", "Not applicable": "લાગુ નથી", "On Examination": "તપાસમાં", "Pre-medication": "પૂર્વ દવાઓ", "Progress Notes": "પ્રગતિ નોંધ", "Recovery nurse": "રિકવરી નર્સ", "Regional block": "નર્વ બ્લૉક", "Batch / Lot No.": "બેચ / લોટ નં.", "Blood component": "લોહીનો ઘટક", "Cryoprecipitate": "ક્રાયોપ્રેસિપિટેટ", "Date of surgery": "શસ્ત્રક્રિયાની તારીખ", "Final Diagnosis": "અંતિમ નિદાન", "Gauze / sponges": "ગૉઝ / સ્પોન્જ", "Given by / time": "આપનાર / સમય", "Intake / Output": "ઇનટેક / આઉટપુટ", "IV line secured": "આઈવી લાઇન લગાવી", "Medical history": "તબીબી ઇતિહાસ", "Name Of Patient": "દર્દીનું નામ", "Operation Notes": "ઓપરેશન નોંધ", "Other medicines": "અન્ય દવાઓ", "Registration No": "નોંધણી નં.", "Treating Doctor": "સારવાર કરનાર ડૉક્ટર", "Treatment Given": "આપેલ સારવાર", "Admission Record": "દાખલ રેકોર્ડ", "Anaesthesia plan": "એનેસ્થેસિયા યોજના", "Blood / products": "લોહી / ઘટકો", "Blood transfused": "ચડાવેલ લોહી", "Chief Complaints": "મુખ્ય ફરિયાદો", "Consultation Fee": "કન્સલ્ટેશન ફી", "Doctor Signature": "ડૉક્ટરની સહી", "Inform doctor if": "ડૉક્ટરને જાણ કરો જો", "Nurse (verified)": "નર્સ (ચકાસણી)", "Respiratory Rate": "શ્વસન દર", "Scrub / OT nurse": "સ્ક્રબ / ઓટી નર્સ", "Surgeon / doctor": "સર્જન / ડૉક્ટર", "Teeth / dentures": "દાંત / નકલી દાંત", "Time in recovery": "રિકવરીમાં આવવાનો સમય", "Time of shifting": "ખસેડવાનો સમય", "Unfit / postpone": "અયોગ્ય / મુલતવી", "Airway assessment": "શ્વાસમાર્ગ તપાસ", "Bleeding disorder": "રક્તસ્રાવ વિકાર", "Changes since PAC": "PAC પછીના ફેરફાર", "Circulating nurse": "સર્ક્યુલેટિંગ નર્સ", "Consultant Doctor": "કન્સલ્ટન્ટ ડૉક્ટર", "Current medicines": "હાલની દવાઓ", "Date of Admission": "દાખલ તારીખ", "Date Of Discharge": "રજા તારીખ", "Discharge Summary": "ડિસ્ચાર્જ સારાંશ", "Emergency Contact": "કટોકટી સંપર્ક", "High Risk Consent": "ઉચ્ચ જોખમ સંમતિ પત્ર", "IV fluids (total)": "આઈવી પ્રવાહી (કુલ)", "Nausea / vomiting": "ઉબકા / ઉલટી", "Nil by mouth from": "ભૂખ્યા પેટે (થી)", "Nil by mouth till": "ભૂખ્યા પેટે ક્યાં સુધી", "Operating surgeon": "ઓપરેશન કરનાર સર્જન", "Pain score (0-10)": "દુખાવાના ગુણ (0-10)", "Patient Signature": "દર્દીની સહી", "Procedure details": "પ્રક્રિયાની વિગત", "SOS / STAT orders": "SOS / તાત્કાલિક આદેશ", "Type Of Admission": "દાખલ પ્રકાર", "Course In Hospital": "હોસ્પિટલમાં સારવારનો ક્રમ", "Fit with high risk": "ઉચ્ચ જોખમ સાથે યોગ્ય", "Known drug allergy": "જાણીતી દવાની એલર્જી", "Operative findings": "ઓપરેશનના તારણો", "Proposed procedure": "સૂચિત પ્રક્રિયા", "Advice On Discharge": "રજા વખતે સલાહ", "OT nurse (received)": "ઓટી નર્સ (સ્વીકારનાર)", "Planned anaesthesia": "આયોજિત એનેસ્થેસિયા", "Procedure performed": "કરેલ પ્રક્રિયા", "Surgery start / end": "શસ્ત્રક્રિયા શરૂ / પૂર્ણ", "Type of anaesthesia": "એનેસ્થેસિયાનો પ્રકાર", "Authorised Signatory": "અધિકૃત સહીકર્તા", "Authorized Signatory": "અધિકૃત સહીકર્તા", "Clinical Examination": "શારીરિક તપાસ", "Doctor who explained": "માહિતી આપનાર ડૉક્ટર", "Drug name (CAPITALS)": "દવાનું નામ (કેપિટલ અક્ષરોમાં)", "Estimated blood loss": "અંદાજિત લોહીનો વ્યય", "Interpreter (if any)": "દુભાષિયો (જો હોય)", "Pre-medication given": "પૂર્વ દવાઓ આપી", "Reason For Admission": "દાખલ થવાનું કારણ", "Drain / catheter care": "ડ્રેન / કેથેટરની કાળજી", "Operative site marked": "ઓપરેશનનું સ્થાન ચિહ્નિત", "Provisional Diagnosis": "પ્રાથમિક નિદાન", "Reversal / extubation": "રિવર્સલ / નળી કાઢવી", "Surgical Site Marking": "ઓપરેશન સ્થાન ચિહ્નિત કરવું", "Anaesthetist signature": "એનેસ્થેટિસ્ટની સહી", "Condition At Discharge": "રજા વખતે સ્થિતિ", "Condition at shift-out": "બહાર ખસેડતી વખતે સ્થિતિ", "Nil by mouth confirmed": "ભૂખ્યા પેટે હોવાની ખાતરી", "Reason for transfusion": "લોહી ચડાવવાનું કારણ", "Anaesthesia start / end": "એનેસ્થેસિયા શરૂ / પૂર્ણ", "Consent for Anaesthesia": "એનેસ્થેસિયા માટે સંમતિ પત્ર", "Fitness for anaesthesia": "એનેસ્થેસિયા માટે યોગ્યતા", "Packed red cells (PRBC)": "લાલ કણો (PRBC)", "Pre-operative diagnosis": "ઓપરેશન પહેલાંનું નિદાન", "Surgical consent signed": "શસ્ત્રક્રિયા સંમતિ પત્ર પર સહી", "Admitting doctor / staff": "દાખલ કરનાર ડૉક્ટર / સ્ટાફ", "Post-operative diagnosis": "ઓપરેશન પછીનું નિદાન", "Surgeon (site marked by)": "સર્જન (ચિહ્નિત કરનાર)", "Ward nurse (handed over)": "વોર્ડ નર્સ (સોંપનાર)", "Continue / stop medicines": "દવાઓ ચાલુ / બંધ", "Father'S / Husband'S Name": "પિતા / પતિનું નામ", "Fresh frozen plasma (FFP)": "પ્લાઝ્મા (FFP)", "Known allergy?  ☐ No  ☐ Yes": "જાણીતી એલર્જી?  ☐ ના  ☐ હા", "Number of units (approx.)": "યુનિટની સંખ્યા (અંદાજે)", "Anaesthesia consent signed": "એનેસ્થેસિયા સંમતિ પર સહી", "Level / digit / exact site": "સ્તર / આંગળી / ચોક્કસ સ્થાન", "Pre-operative instructions": "ઓપરેશન પહેલાંની સૂચનાઓ", "Paste implant stickers here": "ઇમ્પ્લાન્ટ સ્ટીકર અહીં ચોંટાડો", "Post-operative instructions": "ઓપરેશન પછીની સૂચનાઓ", "Smoking / Alcohol / Tobacco": "ધૂમ્રપાન / દારૂ / તમાકુ", "Blood to be arranged (units)": "લોહીની વ્યવસ્થા (યુનિટ)", "Part / skin preparation done": "ત્વચાની તૈયારી કરી", "Proposed surgery / procedure": "સૂચિત શસ્ત્રક્રિયા / પ્રક્રિયા", "Proposed treatment / surgery": "સૂચિત સારવાર / શસ્ત્રક્રિયા", "Receiving nurse (ward / ICU)": "સ્વીકારનાર નર્સ (વોર્ડ / આઈસીયુ)", "Site marked / not applicable": "સ્થાન ચિહ્નિત / લાગુ નથી", "Blood arranged (units) ______": "લોહીની વ્યવસ્થા (યુનિટ) ______", "Intra-operative complications": "ઓપરેશન દરમિયાન જટિલતાઓ", "Specimen sent (HPE / culture)": "મોકલેલ નમૂનો (HPE / કલ્ચર)", "WHO Surgical Safety Checklist": "WHO શસ્ત્રક્રિયા સલામતી ચેકલિસ્ટ", "General & systemic examination": "સામાન્ય અને પ્રણાલીગત તપાસ", "Name of the procedure recorded": "પ્રક્રિયાનું નામ નોંધ્યું", "Patient / relative (confirmed)": "દર્દી / સગા (ખાતરી કરી)", "Pre-Anaesthesia Check-up (PAC)": "એનેસ્થેસિયા પૂર્વ તપાસ (PAC)", "Previous surgery / anaesthesia": "અગાઉની શસ્ત્રક્રિયા / એનેસ્થેસિયા", "Monitoring (every 5–15 minutes)": "દેખરેખ (દર 5–15 મિનિટે)", "Post-operative monitoring chart": "ઓપરેશન પછીનો દેખરેખ ચાર્ટ", "Swab, Needle & Instrument Count": "ગૉઝ, સોય અને સાધન ગણતરી રેકોર્ડ", "TIME OUT (before skin incision)": "ટાઇમ આઉટ (ચીરો મૂકતાં પહેલાં)", "Vitals recorded before shifting": "ખસેડતાં પહેલાં વાઇટલ્સ નોંધ્યા", "Nil by mouth since (time) ______": "ભૂખ્યા પેટે ક્યારથી (સમય) ______", "Condition on shifting to recovery": "રિકવરીમાં ખસેડતી વખતે સ્થિતિ", "Valuables handed over to relative": "કિંમતી વસ્તુઓ સગાને સોંપી", "Equipment problems to be addressed": "સાધનોની સમસ્યાઓ નોંધી", "Intra-operative Anaesthesia Record": "ઓપરેશન દરમિયાન એનેસ્થેસિયા રેકોર્ડ", "Post-Operative Orders & Monitoring": "ઓપરેશન પછીના આદેશો અને દેખરેખ", "Bladder emptied / catheter in place": "પેશાબ કરાવ્યો / કેથેટર લગાવેલ", "Pre-induction re-assessment (in OT)": "એનેસ્થેસિયા પહેલાં ફરી તપાસ (ઓટીમાં)", "SIGN OUT (before patient leaves OT)": "સાઇન આઉટ (દર્દી ઓટી છોડે તે પહેલાં)", "PAC done and patient fit for surgery": "PAC થયું અને દર્દી શસ્ત્રક્રિયા માટે યોગ્ય", "Pre-Operative Checklist (Ward to OT)": "ઓપરેશન પહેલાંની ચેકલિસ્ટ (વોર્ડથી ઓટી)", "Specimen labelled (with patient name)": "નમૂના પર લેબલ (દર્દીના નામ સાથે)", "Anaesthetist: patient-specific concerns": "એનેસ્થેટિસ્ટ: દર્દી સંબંધિત ચિંતાઓ", "Implants / special equipment available": "ઇમ્પ્લાન્ટ / ખાસ સાધનો ઉપલબ્ધ", "Blood transfusion consent (if required)": "લોહી ચડાવવાની સંમતિ (જરૂર હોય તો)", "Nail polish, make-up, hair pins removed": "નેઇલ પોલિશ, મેકઅપ, હેર પિન કાઢ્યા", "Informed Consent for Surgery / Procedure": "શસ્ત્રક્રિયા / પ્રક્રિયા માટે માહિતગાર સંમતિ પત્ર", "Patient identity verified and ID band on": "દર્દીની ઓળખ ચકાસી અને ઓળખ પટ્ટી લગાવી", "General Consent for Admission & Treatment": "દાખલ અને સારવાર માટે સામાન્ય સંમતિ પત્ર", "Pulse oximeter on patient and functioning": "પલ્સ ઓક્સિમીટર લગાવેલ અને ચાલુ", "SIGN IN (before induction of anaesthesia)": "સાઇન ઇન (એનેસ્થેસિયા આપતાં પહેલાં)", "Specific risks of this procedure explained": "આ પ્રક્રિયાના ખાસ જોખમો (સમજાવ્યા)", "Reason for high risk (condition of patient)": "ઉચ્ચ જોખમનું કારણ (દર્દીની સ્થિતિ)", "All team members introduced by name and role": "ટીમના તમામ સભ્યોએ નામ અને ભૂમિકા જણાવી", "Essential imaging displayed / not applicable": "જરૂરી ઇમેજિંગ દર્શાવ્યું / લાગુ નથી", "Instrument, sponge and needle counts correct": "સાધન, સ્પોન્જ અને સોયની ગણતરી સાચી", "Pre-operative antibiotic given (time) ______": "ઓપરેશન પહેલાં એન્ટિબાયોટિક આપી (સમય) ______", "Drug Chart (Medication Administration Record)": "દવા ચાર્ટ (દવા આપવાનો રેકોર્ડ)", "Relative / Legal guardian (with relationship)": "સગા / કાનૂની વાલી (સંબંધ સાથે)", "Consent for Blood / Blood Component Transfusion": "લોહી / લોહીના ઘટકો ચડાવવા માટે સંમતિ પત્ર", "If the patient is unable to give consent, reason": "જો દર્દી સંમતિ આપવા અસમર્થ હોય તો કારણ", "Post-Anaesthesia Recovery Record (Aldrete Score)": "એનેસ્થેસિયા પછી રિકવરી રેકોર્ડ (એલ્ડ્રેટ સ્કોર)", "Allergy status checked (allergy band if allergic)": "એલર્જી તપાસી (એલર્જી હોય તો એલર્જી પટ્ટી)", "Anaesthesia machine and medication check complete": "એનેસ્થેસિયા મશીન અને દવાઓની તપાસ પૂર્ણ", "Key concerns for recovery and management reviewed": "રિકવરી અને આગળની સારવારના મુખ્ય મુદ્દાઓ ચર્ચ્યા", "Investigation reports, X-ray / scans sent with file": "તપાસ રિપોર્ટ, એક્સ-રે / સ્કેન ફાઇલ સાથે મોકલ્યા", "Surgeon: critical steps, duration, expected blood loss": "સર્જન: મહત્વના પગલાં, સમયગાળો, અપેક્ષિત લોહીનો વ્યય", "Jewellery, dentures, contact lens, hearing aid removed": "ઘરેણાં, નકલી દાંત, કોન્ટેક્ટ લેન્સ, શ્રવણ યંત્ર કાઢ્યા", "Mark the operative site with “X” on the diagram below.": "નીચેના ચિત્ર પર ઓપરેશનનું સ્થાન “X” થી દર્શાવો.", "Antibiotic prophylaxis given within the last 60 minutes": "છેલ્લી 60 મિનિટમાં પ્રતિરોધક એન્ટિબાયોટિક આપી", "Patient has confirmed identity, site, procedure and consent": "દર્દીએ ઓળખ, સ્થાન, પ્રક્રિયા અને સંમતિની ખાતરી કરી", "Nurse: sterility confirmed (indicator results), equipment issues": "નર્સ: જંતુરહિતતાની ખાતરી (ઇન્ડિકેટર), સાધનોની સમસ્યાઓ", "Difficult airway / aspiration risk? Equipment and help available": "મુશ્કેલ શ્વાસમાર્ગ / એસ્પિરેશનનું જોખમ? સાધનો અને મદદ ઉપલબ્ધ", "If not correct, action taken (search / X-ray / surgeon informed)": "ગણતરી ખોટી હોય તો લીધેલ પગલાં (શોધ / એક્સ-રે / સર્જનને જાણ)", "Vitals every 15 min for 1 hr, every 30 min for 2 hrs, then hourly": "વાઇટલ્સ: 1 કલાક દર 15 મિનિટે, 2 કલાક દર 30 મિનિટે, પછી દર કલાકે", "Surgeon, anaesthetist and nurse confirm patient, site and procedure": "સર્જન, એનેસ્થેટિસ્ટ અને નર્સે દર્દી, સ્થાન અને પ્રક્રિયાની ખાતરી કરી", "A total score of 9 or more is required to shift the patient out of recovery.": "રિકવરીમાંથી બહાર ખસેડવા માટે કુલ ગુણ 9 અથવા વધુ હોવા જરૂરી છે.", "Risk of more than 500 ml blood loss (7 ml/kg in children)? IV access and fluids planned": "500 મિલીથી વધુ લોહીના વ્યયનું જોખમ (બાળકોમાં 7 મિલી/કિગ્રા)? આઈવી લાઇન અને પ્રવાહીનું આયોજન", "Write drug names in CAPITAL letters. Verbal orders must be signed by the doctor within 24 hours.": "દવાઓના નામ કેપિટલ અક્ષરોમાં લખો. મૌખિક આદેશ પર ડૉક્ટરે 24 કલાકમાં સહી કરવી.", "BP below 90/60, pulse above 120, SpO2 below 94%, excess bleeding / drain output, no urine for 4 hrs, severe pain": "બીપી 90/60 થી ઓછું, નાડી 120 થી વધુ, SpO2 94% થી ઓછું, વધુ રક્તસ્રાવ / ડ્રેન, 4 કલાક પેશાબ નહીં, તીવ્ર દુખાવો", "Understanding these risks fully, I / we request and authorise the hospital and doctors to proceed with the treatment.": "આ તમામ જોખમો સંપૂર્ણ સમજીને, હું / અમે હોસ્પિટલ અને ડૉક્ટરોને સારવાર ચાલુ રાખવા વિનંતી કરીએ છીએ અને મંજૂરી આપીએ છીએ.", "The operative site has been marked by the operating surgeon with a permanent marker in the presence of the patient / relative, before shifting to OT.": "ઓટીમાં લઈ જતાં પહેલાં દર્દી / સગાની હાજરીમાં ઓપરેશન કરનાર સર્જને કાયમી માર્કરથી ઓપરેશનનું સ્થાન ચિહ્નિત કર્યું છે.", "The need for transfusion of blood / blood components, its benefits and the alternatives (if any) have been explained to me in a language I understand.": "લોહી / લોહીના ઘટકો ચડાવવાની જરૂરિયાત, તેના ફાયદા અને વિકલ્પો (જો હોય તો) મને સમજાય તેવી ભાષામાં સમજાવવામાં આવ્યા છે.", "I understand that a separate written consent will be taken for any surgery, anaesthesia, blood transfusion, high-risk procedure or special investigation.": "હું સમજું છું કે કોઈપણ શસ્ત્રક્રિયા, એનેસ્થેસિયા, લોહી ચડાવવું, ઉચ્ચ જોખમી પ્રક્રિયા અથવા ખાસ તપાસ માટે અલગ લેખિત સંમતિ લેવામાં આવશે.", "I give my consent for transfusion of the required number of units of blood / blood components during this hospital stay, as advised by the treating doctor.": "આ હોસ્પિટલમાં દાખલ રહેવા દરમિયાન સારવાર કરનાર ડૉક્ટરની સલાહ મુજબ જરૂરી યુનિટ લોહી / લોહીના ઘટકો ચડાવવા માટે હું સંમતિ આપું છું.", "The hospital is not responsible for the loss of any valuables kept with the patient. I agree to follow the hospital rules regarding visitors, smoking and safety.": "દર્દી પાસે રાખેલી કોઈપણ કિંમતી વસ્તુ ખોવાય તો હોસ્પિટલ જવાબદાર રહેશે નહીં. મુલાકાતીઓ, ધૂમ્રપાન અને સલામતી અંગેના હોસ્પિટલના નિયમોનું પાલન કરવા હું સંમત છું.", "If an unexpected condition is found during the procedure, I authorise the surgeon to carry out any additional or different procedure that he / she considers necessary in my best interest.": "પ્રક્રિયા દરમિયાન કોઈ અણધારી સ્થિતિ જણાય તો, મારા હિતમાં જરૂરી લાગે તેવી કોઈપણ વધારાની અથવા અલગ પ્રક્રિયા કરવાનો અધિકાર હું સર્જનને આપું છું.", "I agree that any tissue or organ removed may be sent for laboratory examination and then disposed of as per hospital policy. Blood transfusion, if needed, will be given after a separate consent.": "કાઢવામાં આવેલ કોઈપણ પેશી અથવા અંગ લેબોરેટરી તપાસ માટે મોકલી પછી હોસ્પિટલની નીતિ મુજબ નિકાલ કરવા હું સંમત છું. જરૂર પડ્યે લોહી અલગ સંમતિ લીધા પછી ચડાવવામાં આવશે.", "There is a higher chance of complications, need for ICU care or ventilator support, prolonged hospital stay, further procedures, permanent disability and death, even with the best possible care.": "શ્રેષ્ઠ શક્ય સારવાર છતાં જટિલતાઓ, આઈસીયુ અથવા વેન્ટિલેટરની જરૂરિયાત, લાંબો સમય દાખલ રહેવું, વધુ પ્રક્રિયાઓ, કાયમી અપંગતા અને મૃત્યુની શક્યતા વધુ છે.", "I voluntarily consent to my / the patient’s admission to this hospital and to routine examination, nursing care, investigations, medicines and treatment considered necessary by the treating doctors.": "હું સ્વેચ્છાએ મારા / દર્દીના આ હોસ્પિટલમાં દાખલ થવા માટે તેમજ સારવાર કરનાર ડૉક્ટરો દ્વારા જરૂરી ગણાતી નિયમિત તપાસ, નર્સિંગ સંભાળ, પરીક્ષણો, દવાઓ અને સારવાર માટે સંમતિ આપું છું.", "The doctor has explained to me that the patient’s condition is serious and that the risk involved in the proposed treatment / surgery / anaesthesia is higher than usual because of the reasons mentioned above.": "ડૉક્ટરે મને સમજાવ્યું છે કે દર્દીની સ્થિતિ ગંભીર છે અને ઉપર જણાવેલ કારણોસર સૂચિત સારવાર / શસ્ત્રક્રિયા / એનેસ્થેસિયામાં સામાન્ય કરતાં વધુ જોખમ છે.", "My rights and responsibilities as a patient, the hospital rules and the estimated cost of treatment have been explained to me. I agree to pay the hospital charges as per the hospital tariff / applicable scheme.": "દર્દી તરીકે મારા અધિકારો અને જવાબદારીઓ, હોસ્પિટલના નિયમો અને સારવારનો અંદાજિત ખર્ચ મને સમજાવવામાં આવ્યો છે. હોસ્પિટલના દરપત્રક / લાગુ યોજના મુજબ ચાર્જ ચૂકવવા હું સંમત છું.", "I authorise the hospital to share my medical information with the insurance company / TPA / government health scheme (such as AB-PMJAY / MJPJAY) for processing of my claim, and with authorities as required by law.": "મારા દાવાની પ્રક્રિયા માટે વીમા કંપની / ટીપીએ / સરકારી આરોગ્ય યોજના (જેમ કે AB-PMJAY / MJPJAY) સાથે તેમજ કાયદા મુજબ જરૂરી હોય ત્યારે સંબંધિત અધિકારીઓ સાથે મારી તબીબી માહિતી શેર કરવાની હું હોસ્પિટલને મંજૂરી આપું છું.", "No guarantee has been given to me about the outcome. I was given the opportunity to ask questions and all my questions were answered to my satisfaction. I am signing this consent voluntarily and in a sound state of mind.": "પરિણામ અંગે મને કોઈ ગેરંટી આપવામાં આવી નથી. મને પ્રશ્નો પૂછવાની તક આપવામાં આવી અને મારા તમામ પ્રશ્નોના સંતોષકારક જવાબ મળ્યા. હું આ સંમતિ પત્ર પર સ્વેચ્છાએ અને પૂર્ણ સભાન અવસ્થામાં સહી કરું છું.", "I understand that every surgery carries certain risks, such as bleeding, infection, injury to nearby organs, blood clots, reaction to drugs or anaesthesia, need for another operation and, rarely, permanent disability or death.": "હું સમજું છું કે દરેક શસ્ત્રક્રિયામાં કેટલાક જોખમો હોય છે, જેમ કે રક્તસ્રાવ, ચેપ, આસપાસના અંગોને ઈજા, લોહીના ગઠ્ઠા, દવા અથવા એનેસ્થેસિયાની પ્રતિક્રિયા, ફરી ઓપરેશનની જરૂરિયાત અને ભાગ્યે જ કાયમી અપંગતા અથવા મૃત્યુ.", "I confirm that I have given true information about my health, medicines, allergies, previous anaesthesia and fasting (nothing by mouth) status. I agree to additional procedures such as IV lines, central lines or arterial lines if required.": "મેં મારા સ્વાસ્થ્ય, દવાઓ, એલર્જી, અગાઉના એનેસ્થેસિયા અને ભૂખ્યા પેટે (મોં વાટે કંઈ ન લેવું) હોવા અંગે સાચી માહિતી આપી છે. જરૂર પડ્યે આઈવી લાઇન, સેન્ટ્રલ લાઇન અથવા આર્ટેરિયલ લાઇન જેવી વધારાની પ્રક્રિયાઓ માટે હું સંમત છું.", "The nature of the illness, the proposed procedure, its expected benefits, the available alternatives (including not having the procedure) and the likely result if the procedure is not done have been explained to me in a language I understand.": "બીમારીનું સ્વરૂપ, સૂચિત પ્રક્રિયા, તેના અપેક્ષિત ફાયદા, ઉપલબ્ધ વિકલ્પો (પ્રક્રિયા ન કરાવવા સહિત) અને પ્રક્રિયા ન કરાવવાથી થનાર સંભવિત પરિણામ મને સમજાય તેવી ભાષામાં સમજાવવામાં આવ્યા છે.", "I, the undersigned, being the patient / legal guardian of the patient named above, hereby give my free and informed consent for the above surgery / procedure to be performed by the operating surgeon and his / her team, including assistants and anaesthetists.": "હું, નીચે સહી કરનાર, ઉપર જણાવેલ દર્દી / દર્દીના કાનૂની વાલી તરીકે, ઉપરોક્ત શસ્ત્રક્રિયા / પ્રક્રિયા ઓપરેશન કરનાર સર્જન અને તેમની ટીમ (સહાયકો અને એનેસ્થેટિસ્ટ સહિત) દ્વારા કરવા માટે મારી સ્વૈચ્છિક અને માહિતગાર સંમતિ આપું છું.", "I consent to the administration of anaesthesia as planned by the anaesthetist for the above procedure. The type of anaesthesia, its benefits and alternatives have been explained to me. I understand that the plan may need to be changed during the procedure for my safety.": "ઉપરોક્ત પ્રક્રિયા માટે એનેસ્થેટિસ્ટ દ્વારા નક્કી કર્યા મુજબ એનેસ્થેસિયા આપવા માટે હું સંમતિ આપું છું. એનેસ્થેસિયાનો પ્રકાર, તેના ફાયદા અને વિકલ્પો મને સમજાવવામાં આવ્યા છે. હું સમજું છું કે મારી સલામતી માટે પ્રક્રિયા દરમિયાન આયોજન બદલવું પડી શકે છે.", "I understand that although blood is tested as per government guidelines (HIV, Hepatitis B, Hepatitis C, Syphilis, Malaria), a very small risk of infection remains. Other possible reactions include fever, chills, itching, rash, breathlessness, fluid overload and, rarely, serious or life-threatening reactions.": "હું સમજું છું કે સરકારી માર્ગદર્શિકા મુજબ લોહીની તપાસ (એચઆઈવી, હિપેટાઇટિસ બી, હિપેટાઇટિસ સી, સિફિલિસ, મેલેરિયા) કરવામાં આવે છે છતાં ચેપનું ખૂબ ઓછું જોખમ રહે છે. અન્ય સંભવિત પ્રતિક્રિયાઓ: તાવ, ઠંડી, ખંજવાળ, ફોલ્લીઓ, શ્વાસ ચડવો, શરીરમાં પ્રવાહી વધવું અને ભાગ્યે જ ગંભીર અથવા જીવલેણ પ્રતિક્રિયા.", "Common side effects include sore throat, nausea, vomiting, headache, shivering, back pain and drowsiness. Uncommon risks include injury to teeth or lips, allergic reaction, breathing difficulty, nerve injury and awareness during anaesthesia. Rare but serious risks include heart attack, stroke, brain damage and death.": "સામાન્ય આડઅસરો: ગળામાં દુખાવો, ઉબકા, ઉલટી, માથાનો દુખાવો, ધ્રુજારી, કમરનો દુખાવો અને ઘેન. ઓછા જોવા મળતા જોખમો: દાંત અથવા હોઠને ઈજા, એલર્જીક પ્રતિક્રિયા, શ્વાસ લેવામાં તકલીફ, ચેતાને ઈજા અને એનેસ્થેસિયા દરમિયાન ભાન આવવું. દુર્લભ પણ ગંભીર જોખમો: હાર્ટ એટેક, લકવો, મગજને નુકસાન અને મૃત્યુ."} };
+  function packWord(m, k) { var pm = packMap(m); return (pm && pm[k]) || ""; }
+  var AMBIG = { "no": 1, "yes": 1 };
+  var USED = {};
+  function norm(s) { return String(s || "").toLowerCase().replace(/[*:]/g, "").replace(/\s+/g, " ").trim(); }
+
+  // common words used in ALL existing documents of the software  [Marathi, Hindi]
+  var DICT = {
+    "patient name": ["रुग्णाचे नाव", "मरीज़ का नाम"], "name": ["नाव", "नाम"], "name of patient": ["रुग्णाचे नाव", "मरीज़ का नाम"],
+    "age": ["वय", "आयु"], "sex": ["लिंग", "लिंग"], "gender": ["लिंग", "लिंग"], "age / sex": ["वय / लिंग", "आयु / लिंग"], "age/sex": ["वय / लिंग", "आयु / लिंग"],
+    "address": ["पत्ता", "पता"], "mobile": ["मोबाईल", "मोबाइल"], "mobile no": ["मोबाईल क्र.", "मोबाइल नं."], "mobile no.": ["मोबाईल क्र.", "मोबाइल नं."],
+    "phone": ["फोन", "फोन"], "contact no": ["संपर्क क्र.", "संपर्क नं."], "contact no.": ["संपर्क क्र.", "संपर्क नं."],
+    "date": ["दिनांक", "दिनांक"], "time": ["वेळ", "समय"], "date & time": ["दिनांक व वेळ", "दिनांक व समय"], "date / time": ["दिनांक / वेळ", "दिनांक / समय"], "date/time": ["दिनांक / वेळ", "दिनांक / समय"],
+    "doctor": ["डॉक्टर", "डॉक्टर"], "consultant": ["सल्लागार डॉक्टर", "परामर्शदाता डॉक्टर"], "consultant doctor": ["सल्लागार डॉक्टर", "परामर्शदाता डॉक्टर"],
+    "treating doctor": ["उपचार करणारे डॉक्टर", "उपचार करने वाले डॉक्टर"], "department": ["विभाग", "विभाग"], "dept": ["विभाग", "विभाग"],
+    "ward": ["वॉर्ड", "वार्ड"], "bed": ["बेड", "बेड"], "bed no": ["बेड क्र.", "बेड नं."], "bed no.": ["बेड क्र.", "बेड नं."], "ward / bed": ["वॉर्ड / बेड", "वार्ड / बेड"],
+    "ipd no": ["आयपीडी क्र.", "आईपीडी नं."], "ipd no.": ["आयपीडी क्र.", "आईपीडी नं."], "opd no": ["ओपीडी क्र.", "ओपीडी नं."], "opd no.": ["ओपीडी क्र.", "ओपीडी नं."],
+    "date of admission": ["दाखल दिनांक", "भर्ती दिनांक"], "admission date": ["दाखल दिनांक", "भर्ती दिनांक"], "doa": ["दाखल दिनांक", "भर्ती दिनांक"],
+    "date of discharge": ["डिस्चार्ज दिनांक", "छुट्टी दिनांक"], "discharge date": ["डिस्चार्ज दिनांक", "छुट्टी दिनांक"], "dod": ["डिस्चार्ज दिनांक", "छुट्टी दिनांक"],
+    "diagnosis": ["निदान", "निदान"], "provisional diagnosis": ["प्राथमिक निदान", "प्रारंभिक निदान"], "final diagnosis": ["अंतिम निदान", "अंतिम निदान"],
+    "chief complaints": ["मुख्य तक्रारी", "मुख्य शिकायतें"], "complaints": ["तक्रारी", "शिकायतें"], "history": ["इतिहास", "इतिहास"], "past history": ["पूर्वीचा इतिहास", "पूर्व इतिहास"],
+    "examination": ["तपासणी", "जांच"], "clinical examination": ["शारीरिक तपासणी", "शारीरिक जांच"], "on examination": ["तपासणीत", "जांच में"],
+    "investigations": ["तपासण्या", "जांचें"], "investigation": ["तपासणी", "जांच"], "treatment": ["उपचार", "उपचार"], "treatment given": ["दिलेले उपचार", "दिया गया उपचार"],
+    "advice": ["सल्ला", "सलाह"], "advice on discharge": ["डिस्चार्जवेळी सल्ला", "छुट्टी के समय सलाह"], "follow up": ["पुन्हा तपासणी", "पुनः जांच"], "follow-up": ["पुन्हा तपासणी", "पुनः जांच"],
+    "medicines": ["औषधे", "दवाइयां"], "medication": ["औषधोपचार", "दवा"], "drug": ["औषध", "दवा"], "drug name": ["औषधाचे नाव", "दवा का नाम"],
+    "dose": ["मात्रा", "खुराक"], "route": ["मार्ग", "मार्ग"], "frequency": ["वारंवारता", "आवृत्ति"], "duration": ["कालावधी", "अवधि"], "remarks": ["शेरा", "टिप्पणी"],
+    "signature": ["सही", "हस्ताक्षर"], "sign": ["सही", "हस्ताक्षर"], "patient signature": ["रुग्णाची सही", "मरीज़ के हस्ताक्षर"], "doctor signature": ["डॉक्टरांची सही", "डॉक्टर के हस्ताक्षर"],
+    "relative": ["नातेवाईक", "रिश्तेदार"], "relative name": ["नातेवाईकाचे नाव", "रिश्तेदार का नाम"], "relation": ["नाते", "संबंध"], "relationship": ["नाते", "संबंध"], "witness": ["साक्षीदार", "गवाह"],
+    "nurse": ["परिचारिका", "नर्स"], "staff nurse": ["परिचारिका", "स्टाफ नर्स"], "receipt": ["पावती", "रसीद"], "receipt no": ["पावती क्र.", "रसीद नं."], "receipt no.": ["पावती क्र.", "रसीद नं."],
+    "bill": ["बिल", "बिल"], "bill no": ["बिल क्र.", "बिल नं."], "bill no.": ["बिल क्र.", "बिल नं."], "amount": ["रक्कम", "राशि"], "total": ["एकूण", "कुल"], "total amount": ["एकूण रक्कम", "कुल राशि"],
+    "advance": ["आगाऊ रक्कम", "अग्रिम राशि"], "discount": ["सवलत", "छूट"], "paid": ["भरलेले", "भुगतान"], "amount paid": ["भरलेली रक्कम", "भुगतान राशि"], "balance": ["बाकी", "शेष"],
+    "net amount": ["निव्वळ रक्कम", "शुद्ध राशि"], "payment mode": ["भरणा पद्धत", "भुगतान का तरीका"], "particulars": ["तपशील", "विवरण"], "description": ["वर्णन", "विवरण"],
+    "qty": ["नग", "मात्रा"], "quantity": ["नग", "मात्रा"], "rate": ["दर", "दर"], "weight": ["वजन", "वजन"], "height": ["उंची", "लंबाई"],
+    "temperature": ["तापमान", "तापमान"], "temp": ["तापमान", "तापमान"], "pulse": ["नाडी", "नाड़ी"], "bp": ["रक्तदाब", "रक्तचाप"], "blood pressure": ["रक्तदाब", "रक्तचाप"],
+    "respiratory rate": ["श्वसन दर", "श्वसन दर"], "allergy": ["अॅलर्जी", "एलर्जी"], "allergies": ["अॅलर्जी", "एलर्जी"], "blood group": ["रक्तगट", "रक्त समूह"],
+    "procedure": ["प्रक्रिया", "प्रक्रिया"], "surgery": ["शस्त्रक्रिया", "सर्जरी"], "operation": ["ऑपरेशन", "ऑपरेशन"], "surgeon": ["शल्यचिकित्सक", "सर्जन"],
+    "anaesthetist": ["भूलतज्ज्ञ", "एनेस्थेटिस्ट"], "anesthetist": ["भूलतज्ज्ञ", "एनेस्थेटिस्ट"], "anaesthesia": ["भूल", "एनेस्थीसिया"], "anesthesia": ["भूल", "एनेस्थीसिया"],
+    "condition at discharge": ["डिस्चार्जवेळी स्थिती", "छुट्टी के समय स्थिति"], "discharge summary": ["डिस्चार्ज सारांश", "डिस्चार्ज सारांश"], "admission record": ["दाखल नोंद", "भर्ती रिकॉर्ड"],
+    "consent": ["संमती", "सहमति"], "consent form": ["संमतीपत्र", "सहमति पत्र"], "referred by": ["संदर्भित करणारे", "रेफर करने वाले"], "visit date": ["भेटीचा दिनांक", "विज़िट दिनांक"],
+    "consultation fee": ["सल्ला शुल्क", "परामर्श शुल्क"], "fees": ["शुल्क", "शुल्क"], "emergency contact": ["आपत्कालीन संपर्क", "आपातकालीन संपर्क"], "occupation": ["व्यवसाय", "व्यवसाय"],
+    "marital status": ["वैवाहिक स्थिती", "वैवाहिक स्थिति"], "id proof": ["ओळखपत्र", "पहचान पत्र"], "scheme": ["योजना", "योजना"], "prepared by": ["तयार करणारे", "तैयार कर्ता"],
+    "checked by": ["तपासणारे", "जांचकर्ता"], "authorised signatory": ["अधिकृत स्वाक्षरी", "अधिकृत हस्ताक्षरकर्ता"], "authorized signatory": ["अधिकृत स्वाक्षरी", "अधिकृत हस्ताक्षरकर्ता"],
+    "instructions": ["सूचना", "निर्देश"], "diet": ["आहार", "आहार"], "notes": ["नोंदी", "टिप्पणियाँ"], "nursing notes": ["परिचारिका नोंदी", "नर्सिंग नोट्स"],
+    "progress notes": ["प्रगती नोंदी", "प्रगति नोट्स"], "doctor's notes": ["डॉक्टरांच्या नोंदी", "डॉक्टर के नोट्स"], "vitals": ["जीवनचिन्हे", "वाइटल्स"],
+    "intake output": ["सेवन-उत्सर्जन", "इनटेक-आउटपुट"], "intake / output": ["सेवन / उत्सर्जन", "इनटेक / आउटपुट"], "drug chart": ["औषध तक्ता", "दवा चार्ट"], "place": ["ठिकाण", "स्थान"],
+    "father's / husband's name": ["वडिलांचे / पतीचे नाव", "पिता / पति का नाम"], "guardian": ["पालक", "अभिभावक"], "registration no": ["नोंदणी क्र.", "पंजीकरण नं."],
+    "type of admission": ["दाखल प्रकार", "भर्ती का प्रकार"], "reason for admission": ["दाखल होण्याचे कारण", "भर्ती का कारण"], "course in hospital": ["रुग्णालयातील उपचारक्रम", "अस्पताल में उपचार क्रम"]
+  };
+  function dictL(k, i) { var e = DICT[k]; return e ? e[i] : ""; }
+
+  function tx(en, mr, hi) {
+    var k = norm(en);
+    if (!USED[k]) USED[k] = { en: en, mr: mr || "", hi: hi || "" };
+    var s = S(), m = s.mode;
+    if (m === "en") return "";
+    var o = s.extra[m] && s.extra[m][k];
+    if (o) return o;
+    if (m === "mr") return mr || dictL(k, 0);
+    if (m === "hi") return hi || dictL(k, 1);
+    return packWord(m, k);
+  }
+  function L(en, mr, hi) { var t = tx(en, mr, hi); return en + (t ? ' <span class="thd-t">/ ' + t + "</span>" : ""); }
+  function P(en, mr, hi) { var t = tx(en, mr, hi); return '<p class="thd-p">' + en + "</p>" + (t ? '<p class="thd-tp">' + t + "</p>" : ""); }
+  function TITLE(en, mr, hi) { var t = tx(en, mr, hi); return '<div class="thd-titlebar"><div class="thd-title">' + en + "</div>" + (t ? '<div class="thd-ttr">' + t + "</div>" : "") + "</div>"; }
+  function SEC(en, mr, hi) { return '<div class="thd-sec">' + L(en, mr, hi) + "</div>"; }
+
+  /* ---- auto translation of the software's EXISTING documents ---- */
+  function tlabel(label) {
+    var s = S(), m = s.mode, k = norm(label);
+    if (m === "en" || !k) return "";
+    var o = s.extra[m] && s.extra[m][k];
+    if (o) return o;
+    if (AMBIG[k]) return "";
+    if (m === "mr") return dictL(k, 0) || (USED[k] && USED[k].mr) || "";
+    if (m === "hi") return dictL(k, 1) || (USED[k] && USED[k].hi) || "";
+    return packWord(m, k);
+  }
+  function translateRoot(root) {
+    var s = S();
+    if (!root || s.mode === "en" || !s.applyAll) return;
+    var w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null), list = [], n;
+    while ((n = w.nextNode())) list.push(n);
+    list.forEach(function (node) {
+      var par = node.parentElement;
+      if (!par || par.closest(".thd,.thd-auto,script,style,textarea,select,option,input")) return;
+      var raw = node.nodeValue;
+      if (!raw || raw.length > 70) return;
+      var t = raw.trim();
+      if (!t || !/[A-Za-z]/.test(t)) return;
+      var ci = t.indexOf(":");
+      var label = ci >= 0 ? t.slice(0, ci) : t, rest = ci >= 0 ? t.slice(ci) : "";
+      var tr = tlabel(label);
+      if (!tr || raw.indexOf(tr) >= 0) return;
+      var lead = (raw.match(/^\s*/) || [""])[0], trail = (raw.match(/\s*$/) || [""])[0];
+      var sp = document.createElement("span");
+      sp.className = "thd-auto";
+      sp.innerHTML = E(lead + label.trim()) + ' <span class="thd-t">/ ' + E(tr) + "</span>" + E(rest + trail);
+      par.replaceChild(sp, node);
+    });
+  }
+  function translateHTML(str) {
+    var s = S();
+    if (typeof str !== "string" || s.mode === "en" || !s.applyAll) return str;
+    try { var d = document.createElement("div"); d.innerHTML = str; translateRoot(d); return d.innerHTML; } catch (e) { return str; }
+  }
+  var hooked = {};
+  function hookPrints() {
+    Object.keys(window).forEach(function (k) {
+      if (hooked[k] || !/^print[A-Z]/.test(k) || k === "printHead" || typeof window[k] !== "function") return;
+      hooked[k] = 1;
+      try {
+        TH.wrap(k, function (orig) {
+          return function () {
+            var saved = window.print;
+            window.print = function () {
+              try { translateRoot(document.getElementById("printArea")); } catch (e) {}
+              return saved.apply(window, arguments);
+            };
+            try { return orig.apply(this, arguments); } finally { window.print = saved; }
+          };
+        });
+      } catch (e) {}
+    });
+    if (!hooked.fillTpl && typeof window.fillTpl === "function") {
+      hooked.fillTpl = 1;
+      try { TH.wrap("fillTpl", function (orig) { return function () { return translateHTML(orig.apply(this, arguments)); }; }); } catch (e) {}
+    }
+    var pa = document.getElementById("printArea");
+    if (pa && !pa.__thObs) {
+      pa.__thObs = true;
+      var tm = null;
+      new MutationObserver(function () { clearTimeout(tm); tm = setTimeout(function () { translateRoot(pa); }, 0); })
+        .observe(pa, { childList: true, subtree: true });
+    }
+  }
+
+  /* =====================================================================
+     3. DOCUMENT BUILDING BLOCKS
+     ===================================================================== */
+  TH.css([
+    ".thd{font-family:'Segoe UI','Nirmala UI','Mangal',Arial,sans-serif;font-size:11.5px;color:#111;line-height:1.42}",
+    ".thd-titlebar{border-top:2px solid #0b2545;border-bottom:2px solid #0b2545;padding:4px 0;margin:4px 0 8px;text-align:center}",
+    ".thd-title{font-weight:800;font-size:14.5px;letter-spacing:.4px;text-transform:uppercase;color:#0b2545}",
+    ".thd-ttr{font-size:13px;font-weight:700;color:#0b2545}",
+    ".thd .thd-t,.thd-auto .thd-t{font-weight:normal;color:#333}",
+    ".thd table{width:100%;border-collapse:collapse;margin:3px 0 6px}",
+    ".thd td,.thd th{border:1px solid #666;padding:3px 5px;vertical-align:top;text-align:left}",
+    ".thd th{background:#eef2f7;font-weight:700;font-size:10.5px}",
+    ".thd td.thd-k{background:#f5f7fa;width:17%;font-weight:600;font-size:10.5px}",
+    ".thd-sec{font-weight:700;background:#0b2545;color:#fff;padding:3px 7px;margin:8px 0 4px;font-size:11px;-webkit-print-color-adjust:exact;print-color-adjust:exact}",
+    ".thd-sec .thd-t{color:#dbe4f0 !important}",
+    ".thd-p{margin:3px 0 0;text-align:justify}",
+    ".thd-tp{margin:1px 0 5px;text-align:justify;font-size:11px;color:#222}",
+    ".thd-ol{margin:4px 0;padding-left:18px}",
+    ".thd-ol li{margin-bottom:3px}",
+    ".thd-blank{display:inline-block;border-bottom:1px dotted #333;min-width:150px;height:13px;vertical-align:bottom}",
+    ".thd-line{border-bottom:1px dotted #444;height:19px}",
+    ".thd-f{margin:4px 0}",
+    ".thd-cb{display:inline-block;margin:1px 12px 1px 0;white-space:nowrap}",
+    ".thd-sigs{display:grid;grid-template-columns:repeat(3,1fr);gap:7px;margin-top:12px}",
+    ".thd-sig{border:1px solid #666;padding:4px 6px;min-height:70px;font-size:10.5px;page-break-inside:avoid}",
+    ".thd-sig .thd-sp{height:26px}",
+    ".thd-foot{margin-top:8px;font-size:9px;color:#555;display:flex;justify-content:space-between;border-top:1px solid #aaa;padding-top:2px}",
+    ".thd-grid td{height:19px}",
+    ".thd-who{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}",
+    ".thd-who>div{border:1.5px solid #0b2545;padding:5px;font-size:10.5px}",
+    ".thd-who h4{margin:-5px -5px 5px;background:#0b2545;color:#fff;padding:4px 6px;font-size:10.5px;-webkit-print-color-adjust:exact;print-color-adjust:exact}",
+    ".thd-who h4 .thd-t{color:#dbe4f0 !important}",
+    ".thd-who .thd-it{margin:0 0 5px}",
+    ".thd-box{border:1px dashed #666;min-height:110px;text-align:center;color:#666;padding:6px;margin-top:6px}",
+    ".thd-pre{white-space:pre-wrap}",
+    ".thd-note{font-size:10.5px;background:#f5f7fa;border-left:3px solid #0b2545;padding:3px 7px;margin:5px 0}",
+    ".thd-page{page-break-after:always;break-after:page}",
+    ".thd-page:last-child{page-break-after:auto;break-after:auto}",
+    ".thd-auto .thd-t{font-size:.92em}",
+    /* screens */
+    ".thsd-docs{display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:8px;margin-top:8px}",
+    ".thsd-doc{display:flex;align-items:center;gap:8px;border:1px solid #e2e8f0;border-radius:8px;padding:7px 9px;background:#fff}",
+    ".thsd-doc span{flex:1;font-size:13px}",
+    ".thsd-strip{background:#ecfdf5;border:1px solid #bbf7d0;border-radius:8px;padding:8px 12px;margin:8px 0;font-size:13px}",
+    ".thsd-form{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px 12px}",
+    ".thsd-form label{font-size:12px;color:#475569;display:block}",
+    ".thsd-form input,.thsd-form select,.thsd-form textarea{width:100%;box-sizing:border-box}",
+    ".thsd-form .full{grid-column:1/-1}",
+    ".thsd-form textarea{min-height:70px}",
+    ".sdx input[type=checkbox]{width:auto !important;height:auto !important;margin:0 !important;flex:none;accent-color:#0b2545;transform:scale(1.15)}",
+    ".sdx-hero{display:flex;align-items:center;gap:16px;background:linear-gradient(135deg,#0b2545,#13315c 60%,#0f5132);color:#fff;border-radius:14px;padding:16px 20px;margin-bottom:12px}",
+    ".sdx-hero h2{color:#fff;margin:0 0 4px;font-size:22px}.sdx-hero p{margin:0;opacity:.85;font-size:13px}.sdx-hero>div:first-child{flex:1}",
+    ".sdx-lang{background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.25);border-radius:10px;padding:8px 12px;font-size:12.5px;text-align:right}.sdx-lang a{color:#86efac}",
+    ".sdx-pick{display:grid;grid-template-columns:auto 1fr auto;gap:10px;align-items:center}.sdx-pick select{width:100%}",
+    ".sdx-lbl{font-size:12px;font-weight:700;color:#475569;white-space:nowrap}",
+    ".sdx-tg{display:flex !important;align-items:center;gap:7px;font-size:13px;white-space:nowrap;cursor:pointer}",
+    ".sdx-pt{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:8px 22px;align-items:center;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:12px;padding:10px 14px;margin-top:4px}",
+    ".sdx-pt small{display:block;font-size:10.5px;color:#64748b;text-transform:uppercase;letter-spacing:.4px}.sdx-pt b{font-size:13.5px;color:#0b2545}",
+    ".sdx-av{width:40px;height:40px;border-radius:50%;background:linear-gradient(135deg,#16a34a,#0f5132);color:#fff;font:800 18px Arial;display:flex;align-items:center;justify-content:center}",
+    ".sdx-empty{grid-column:1/-1;color:#64748b;margin:6px 0 0}",
+    ".sdx-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap;border-bottom:1px solid #eef2f7;padding-bottom:9px;margin-bottom:10px}",
+    ".sdx-head h3{margin:0;font-size:16px;color:#0b2545}.sdx-head span{flex:1;font-size:12px;color:#64748b}",
+    ".sdx-groups{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}",
+    ".sdx-grp{border:1px solid #e2e8f0;border-radius:12px;overflow:hidden;background:#f8fafc}",
+    ".sdx-grp h4{margin:0;padding:8px 11px;color:#fff;font-size:13px}",
+    ".sdx-g1 h4{background:linear-gradient(135deg,#7c3aed,#a855f7)}.sdx-g2 h4{background:linear-gradient(135deg,#0369a1,#0ea5e9)}.sdx-g3 h4{background:linear-gradient(135deg,#0b2545,#1d4f91)}.sdx-g4 h4{background:linear-gradient(135deg,#15803d,#22c55e)}",
+    ".sdx-doc{display:flex;align-items:center;gap:8px;padding:7px 10px;border-top:1px solid #eef2f7;background:#fff}",
+    ".sdx-doc label{display:flex !important;align-items:center;gap:9px;flex:1;cursor:pointer;margin:0}",
+    ".sdx-doc label span{line-height:1.25}.sdx-doc b{display:block;font-size:12.8px;font-weight:600;color:#1e293b}.sdx-doc small{display:block;font-size:10px;color:#94a3b8}",
+    ".sdx-pb{border:1px solid #cbd5e1;background:#fff;border-radius:8px;padding:4px 9px;font-size:11.5px;cursor:pointer;white-space:nowrap;color:#0b2545}",
+    ".sdx-pb:hover{background:#0b2545;color:#fff;border-color:#0b2545}",
+    ".sdx-common{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.sdx-common .sdx-doc{border:1px solid #e2e8f0;border-radius:10px}",
+    "@media(max-width:1150px){.sdx-groups{grid-template-columns:repeat(2,minmax(0,1fr))}}",
+    ".thls-dict{max-height:460px;overflow:auto;border:1px solid #e2e8f0;border-radius:8px}",
+    ".thls-dict table{width:100%}",
+    ".thls-dict td{vertical-align:top;font-size:12px}",
+    ".thls-dict input,.thls-dict textarea{width:100%;box-sizing:border-box}"
+  ].join(""));
+
+  function blank(w) { return '<span class="thd-blank"' + (w ? ' style="min-width:' + w + 'px"' : "") + "></span>"; }
+  function lines(n) { var h = ""; for (var i = 0; i < (n || 1); i++) h += '<div class="thd-line"></div>'; return h; }
+  function cb(en, mr, hi) { return '<span class="thd-cb">☐ ' + L(en, mr, hi) + "</span>"; }
+  function F(lbl, val, w) { return '<div class="thd-f"><b>' + L(lbl[0], lbl[1], lbl[2]) + ":</b> " + (val ? E(val) : blank(w)) + "</div>"; }
+  function sig(l) {
+    return '<div class="thd-sig"><b>' + L(l[0], l[1], l[2]) + '</b><div class="thd-sp"></div>' +
+      "<div>" + L("Name", "नाव", "नाम") + ": ____________________</div>" +
+      "<div>" + L("Date / Time", "दिनांक / वेळ", "दिनांक / समय") + ": ______________</div></div>";
+  }
+  function sigs(arr) { return '<div class="thd-sigs">' + arr.map(sig).join("") + "</div>"; }
+  function rows(n, cols) { var h = ""; for (var i = 0; i < n; i++) { h += "<tr>"; for (var j = 0; j < cols; j++) h += "<td>&nbsp;</td>"; h += "</tr>"; } return h; }
+  function TH_(cols) { return "<tr>" + cols.map(function (c) { return "<th>" + (Array.isArray(c) ? L(c[0], c[1], c[2]) : c) + "</th>"; }).join("") + "</tr>"; }
+
+  var SG = {
+    patient: ["Patient", "रुग्ण", "मरीज़"],
+    relative: ["Relative / Legal guardian (with relationship)", "नातेवाईक / कायदेशीर पालक (नात्यासह)", "रिश्तेदार / कानूनी अभिभावक (संबंध सहित)"],
+    witness: ["Witness", "साक्षीदार", "गवाह"],
+    doctor: ["Doctor who explained", "माहिती देणारे डॉक्टर", "जानकारी देने वाले डॉक्टर"],
+    interp: ["Interpreter (if any)", "दुभाषी (असल्यास)", "दुभाषिया (यदि हो)"],
+    surgeon: ["Surgeon", "शल्यचिकित्सक", "सर्जन"],
+    anaes: ["Anaesthetist", "भूलतज्ज्ञ", "एनेस्थेटिस्ट"],
+    circ: ["Circulating nurse", "सर्क्युलेटिंग परिचारिका", "सर्कुलेटिंग नर्स"],
+    scrub: ["Scrub nurse", "स्क्रब परिचारिका", "स्क्रब नर्स"],
+    otnurse: ["OT nurse", "ओटी परिचारिका", "ओटी नर्स"]
+  };
+
+  /* ---- patient values (works with different field names) ---- */
+  function fd(d) { if (!d) return ""; try { return dmy(d) || V(d); } catch (e) { return V(d); } }
+  function pv(p, A) {
+    p = p || {}; A = A || {};
+    var age = "";
+    try { age = ageText(p); } catch (e) { age = p.age || ""; }
+    return {
+      name: V(p.name || p.pname || p.fullName || p.patientName || A.name || A.pname),
+      uhid: V(p.uhid || A.uhid || p.id),
+      age: V(age), sex: V(p.sex || p.gender),
+      mobile: V(p.mobile || p.phone || p.mob),
+      ipd: V(A.ipdNo || A.ipd || A.ipdno || A.no || A.id),
+      ward: V(A.ward || A.wardName), bed: V(A.bed || A.bedNo || A.bedName),
+      doa: fd(A.date || A.admDate || A.doa || A.admitDate || A.admissionDate),
+      doctor: V(A.doctor || A.consultant || A.drName || A.doctorName),
+      diag: V(A.diagnosis || A.provDiag || A.dx || A.provisionalDiagnosis),
+      blood: V(p.bloodGroup || p.blood || p.bg)
+    };
+  }
+  function pinfo(c) {
+    var v = c.v;
+    function k(a, b, d) { return '<td class="thd-k">' + L(a, b, d) + "</td>"; }
+    return '<table class="thd-info">' +
+      "<tr>" + k("Patient Name", "रुग्णाचे नाव", "मरीज़ का नाम") + "<td><b>" + E(v.name) + "</b></td>" + k("UHID", "यूएचआयडी", "यूएचआईडी") + "<td>" + E(v.uhid) + "</td></tr>" +
+      "<tr>" + k("Age / Sex", "वय / लिंग", "आयु / लिंग") + "<td>" + E(v.age) + (v.sex ? " / " + E(v.sex) : "") + "</td>" + k("IPD No.", "आयपीडी क्र.", "आईपीडी नं.") + "<td>" + E(v.ipd) + "</td></tr>" +
+      "<tr>" + k("Ward / Bed", "वॉर्ड / बेड", "वार्ड / बेड") + "<td>" + E(v.ward) + (v.bed ? " / " + E(v.bed) : "") + "</td>" + k("Date of Admission", "दाखल दिनांक", "भर्ती दिनांक") + "<td>" + E(v.doa) + "</td></tr>" +
+      "<tr>" + k("Consultant", "सल्लागार डॉक्टर", "परामर्शदाता डॉक्टर") + "<td>" + E(v.doctor) + "</td>" + k("Diagnosis", "निदान", "निदान") + "<td>" + E(v.diag) + "</td></tr>" +
+      "</table>";
+  }
+  function anaesTypes() {
+    return cb("General", "पूर्ण भूल", "जनरल") + cb("Spinal", "स्पायनल", "स्पाइनल") + cb("Epidural", "एपिड्युरल", "एपिड्यूरल") +
+      cb("Regional block", "नर्व्ह ब्लॉक", "नर्व ब्लॉक") + cb("Local", "स्थानिक भूल", "लोकल") + cb("Sedation", "सेडेशन", "सेडेशन");
+  }
+  function sides() { return cb("Right", "उजवी", "दायां") + cb("Left", "डावी", "बायां") + cb("Both", "दोन्ही", "दोनों") + cb("Not applicable", "लागू नाही", "लागू नहीं"); }
+  function consentEnd() {
+    return P("No guarantee has been given to me about the outcome. I was given the opportunity to ask questions and all my questions were answered to my satisfaction. I am signing this consent voluntarily and in a sound state of mind.",
+      "निकालाबाबत मला कोणतीही हमी दिलेली नाही. मला प्रश्न विचारण्याची संधी देण्यात आली व माझ्या सर्व प्रश्नांची समाधानकारक उत्तरे मिळाली. मी हे संमतीपत्र स्वेच्छेने व पूर्ण शुद्धीत सही करत आहे.",
+      "परिणाम के बारे में मुझे कोई गारंटी नहीं दी गई है। मुझे प्रश्न पूछने का अवसर दिया गया और मेरे सभी प्रश्नों के संतोषजनक उत्तर मिले। मैं यह सहमति पत्र स्वेच्छा से एवं पूर्ण होश में हस्ताक्षर कर रहा / रही हूँ।");
+  }
+  function ol(items) { return '<ol class="thd-ol">' + items.map(function (x) { return "<li>" + x + "</li>"; }).join("") + "</ol>"; }
+  function unable() {
+    return '<div class="thd-f"><b>' + L("If the patient is unable to give consent, reason", "रुग्ण संमती देण्यास असमर्थ असल्यास कारण", "यदि मरीज़ सहमति देने में असमर्थ है तो कारण") + ":</b> " +
+      cb("Minor", "अल्पवयीन", "नाबालिग") + cb("Unconscious", "बेशुद्ध", "बेहोश") + cb("Other", "इतर", "अन्य") + blank(160) + "</div>";
+  }
+  function checkTable(items) {
+    return "<table>" + TH_(["#", ["Item", "बाब", "विषय"], ["Yes", "होय", "हाँ"], ["No", "नाही", "नहीं"], ["N/A", "लागू नाही", "लागू नहीं"], ["Remarks", "शेरा", "टिप्पणी"]]) +
+      items.map(function (it, i) { return "<tr><td>" + (i + 1) + "</td><td>" + L(it[0], it[1], it[2]) + "</td><td>☐</td><td>☐</td><td>☐</td><td style='width:22%'></td></tr>"; }).join("") + "</table>";
+  }
+  function bodySVG(front) {
+    var l = front ? "R" : "L", r = front ? "L" : "R";
+    return '<svg viewBox="0 0 130 270" width="125" height="255" xmlns="http://www.w3.org/2000/svg" style="margin:0 14px">' +
+      '<g fill="none" stroke="#222" stroke-width="1.6">' +
+      '<circle cx="65" cy="24" r="17"/><path d="M58 41 L58 49 M72 41 L72 49"/>' +
+      '<rect x="38" y="49" width="54" height="92" rx="14"/>' +
+      '<rect x="20" y="53" width="15" height="88" rx="7"/><rect x="95" y="53" width="15" height="88" rx="7"/>' +
+      '<rect x="41" y="141" width="21" height="118" rx="9"/><rect x="68" y="141" width="21" height="118" rx="9"/></g>' +
+      '<text x="4" y="40" font-size="12" font-weight="700">' + l + '</text><text x="117" y="40" font-size="12" font-weight="700">' + r + "</text>" +
+      '<text x="65" y="269" font-size="10" text-anchor="middle">' + (front ? "FRONT" : "BACK") + "</text></svg>";
+  }
+
+  /* =====================================================================
+     4. THE DOCUMENTS
+     ===================================================================== */
+  var NOTE_FIELDS = [
+    ["date", ["Date of surgery", "शस्त्रक्रियेचा दिनांक", "सर्जरी दिनांक"], "date"],
+    ["start", ["Start time", "सुरुवातीची वेळ", "प्रारंभ समय"], "time"],
+    ["end", ["End time", "समाप्तीची वेळ", "समाप्ति समय"], "time"],
+    ["surgeon", ["Surgeon", "शल्यचिकित्सक", "सर्जन"], "doc"],
+    ["assistant", ["Assistant(s)", "सहायक", "सहायक"], "doc"],
+    ["anaesthetist", ["Anaesthetist", "भूलतज्ज्ञ", "एनेस्थेटिस्ट"], "doc"],
+    ["anaesthesia", ["Type of anaesthesia", "भुलेचा प्रकार", "एनेस्थीसिया का प्रकार"], "text"],
+    ["nurse", ["Scrub / OT nurse", "स्क्रब / ओटी परिचारिका", "स्क्रब / ओटी नर्स"], "text"],
+    ["procedure", ["Procedure performed", "केलेली प्रक्रिया", "की गई प्रक्रिया"], "text"],
+    ["preDx", ["Pre-operative diagnosis", "शस्त्रक्रियापूर्व निदान", "ऑपरेशन पूर्व निदान"], "text"],
+    ["postDx", ["Post-operative diagnosis", "शस्त्रक्रियेनंतरचे निदान", "ऑपरेशन पश्चात निदान"], "text"],
+    ["position", ["Position", "रुग्णाची स्थिती", "मरीज़ की स्थिति"], "text"],
+    ["incision", ["Incision", "छेद", "चीरा"], "text"],
+    ["findings", ["Operative findings", "शस्त्रक्रियेतील निष्कर्ष", "ऑपरेशन निष्कर्ष"], "area"],
+    ["steps", ["Procedure details", "प्रक्रियेचा तपशील", "प्रक्रिया विवरण"], "area"],
+    ["closure", ["Closure", "जखम बंद करणे", "घाव बंद करना"], "area"],
+    ["drain", ["Drain", "ड्रेन", "ड्रेन"], "text"],
+    ["implants", ["Implants used", "वापरलेले इम्प्लांट", "उपयोग किए गए इम्प्लांट"], "text"],
+    ["specimen", ["Specimen sent (HPE / culture)", "पाठवलेला नमुना (HPE / कल्चर)", "भेजा गया नमूना (HPE / कल्चर)"], "text"],
+    ["ebl", ["Estimated blood loss", "अंदाजे रक्तस्राव", "अनुमानित रक्तस्राव"], "text"],
+    ["blood", ["Blood transfused", "दिलेले रक्त", "चढ़ाया गया रक्त"], "text"],
+    ["complications", ["Intra-operative complications", "शस्त्रक्रियेदरम्यान गुंतागुंत", "ऑपरेशन के दौरान जटिलताएं"], "text"],
+    ["condition", ["Condition at shift-out", "बाहेर हलवताना स्थिती", "बाहर शिफ्ट करते समय स्थिति"], "text"],
+    ["postop", ["Post-operative instructions", "शस्त्रक्रियेनंतरच्या सूचना", "ऑपरेशन पश्चात निर्देश"], "area"]
+  ];
+  var LIB_FIELDS = ["anaesthesia", "position", "incision", "findings", "steps", "closure", "drain", "specimen", "ebl", "postop"];
+
+  var DOCS = {
+    consent_surgery: { cat: "S", code: "THD-SUR-01", name: ["Informed Consent for Surgery / Procedure", "शस्त्रक्रिया / प्रक्रियेसाठी माहितीपूर्ण संमतीपत्र", "सर्जरी / प्रक्रिया हेतु सूचित सहमति पत्र"],
+      fn: function (c) {
+        return pinfo(c) +
+          F(["Proposed surgery / procedure", "प्रस्तावित शस्त्रक्रिया / प्रक्रिया", "प्रस्तावित सर्जरी / प्रक्रिया"], "", 330) +
+          '<div class="thd-f"><b>' + L("Side / Site", "बाजू / जागा", "पक्ष / स्थान") + ":</b> " + sides() + "</div>" +
+          F(["Operating surgeon", "शस्त्रक्रिया करणारे डॉक्टर", "ऑपरेशन करने वाले सर्जन"], "", 260) +
+          '<div class="thd-f"><b>' + L("Type of anaesthesia", "भुलेचा प्रकार", "एनेस्थीसिया का प्रकार") + ":</b> " + anaesTypes() + "</div>" +
+          ol([
+            P("I, the undersigned, being the patient / legal guardian of the patient named above, hereby give my free and informed consent for the above surgery / procedure to be performed by the operating surgeon and his / her team, including assistants and anaesthetists.",
+              "मी, खाली सही करणारा / करणारी, वर नमूद केलेला रुग्ण / रुग्णाचा कायदेशीर पालक, वरील शस्त्रक्रिया / प्रक्रिया शस्त्रक्रिया करणारे डॉक्टर व त्यांच्या टीमकडून (सहायक व भूलतज्ज्ञांसह) करण्यास माझी स्वेच्छेने व पूर्ण माहितीनिशी संमती देत आहे.",
+              "मैं, नीचे हस्ताक्षर करने वाला / वाली, ऊपर उल्लिखित मरीज़ / मरीज़ का कानूनी अभिभावक, उपरोक्त सर्जरी / प्रक्रिया को ऑपरेशन करने वाले सर्जन एवं उनकी टीम (सहायकों व एनेस्थेटिस्ट सहित) द्वारा किए जाने हेतु अपनी स्वैच्छिक एवं सूचित सहमति देता / देती हूँ।"),
+            P("The nature of the illness, the proposed procedure, its expected benefits, the available alternatives (including not having the procedure) and the likely result if the procedure is not done have been explained to me in a language I understand.",
+              "आजाराचे स्वरूप, प्रस्तावित प्रक्रिया, तिचे अपेक्षित फायदे, उपलब्ध पर्याय (प्रक्रिया न करण्यासह) आणि प्रक्रिया न केल्यास होणारे संभाव्य परिणाम मला समजणाऱ्या भाषेत समजावून सांगितले आहेत.",
+              "बीमारी का स्वरूप, प्रस्तावित प्रक्रिया, उसके अपेक्षित लाभ, उपलब्ध विकल्प (प्रक्रिया न कराने सहित) तथा प्रक्रिया न कराने पर संभावित परिणाम मुझे मेरी समझ की भाषा में समझाए गए हैं।"),
+            P("I understand that every surgery carries certain risks, such as bleeding, infection, injury to nearby organs, blood clots, reaction to drugs or anaesthesia, need for another operation and, rarely, permanent disability or death.",
+              "प्रत्येक शस्त्रक्रियेत काही धोके असतात हे मला समजले आहे, जसे की रक्तस्राव, जंतुसंसर्ग, जवळच्या अवयवांना इजा, रक्ताच्या गुठळ्या, औषधे किंवा भुलेची प्रतिक्रिया, पुन्हा शस्त्रक्रियेची गरज आणि क्वचित प्रसंगी कायमचे अपंगत्व किंवा मृत्यू.",
+              "मैं समझता / समझती हूँ कि हर सर्जरी में कुछ जोखिम होते हैं, जैसे रक्तस्राव, संक्रमण, आसपास के अंगों को चोट, खून के थक्के, दवा या एनेस्थीसिया की प्रतिक्रिया, दोबारा ऑपरेशन की आवश्यकता और कभी-कभी स्थायी विकलांगता या मृत्यु।"),
+            P("If an unexpected condition is found during the procedure, I authorise the surgeon to carry out any additional or different procedure that he / she considers necessary in my best interest.",
+              "प्रक्रियेदरम्यान अनपेक्षित स्थिती आढळल्यास, माझ्या हितासाठी आवश्यक वाटणारी कोणतीही अतिरिक्त किंवा वेगळी प्रक्रिया करण्याचा अधिकार मी शस्त्रक्रिया करणाऱ्या डॉक्टरांना देत आहे.",
+              "प्रक्रिया के दौरान कोई अनपेक्षित स्थिति मिलने पर, मैं सर्जन को मेरे हित में आवश्यक समझी जाने वाली कोई भी अतिरिक्त या भिन्न प्रक्रिया करने का अधिकार देता / देती हूँ।"),
+            P("I agree that any tissue or organ removed may be sent for laboratory examination and then disposed of as per hospital policy. Blood transfusion, if needed, will be given after a separate consent.",
+              "काढलेले कोणतेही ऊतक किंवा अवयव प्रयोगशाळा तपासणीसाठी पाठवून नंतर रुग्णालयाच्या नियमानुसार नष्ट करण्यास माझी संमती आहे. आवश्यक असल्यास रक्त स्वतंत्र संमतीनंतर दिले जाईल.",
+              "निकाले गए किसी भी ऊतक या अंग को प्रयोगशाला जांच हेतु भेजकर बाद में अस्पताल नीति अनुसार नष्ट करने के लिए मैं सहमत हूँ। आवश्यकता होने पर रक्त अलग सहमति के बाद चढ़ाया जाएगा।"),
+            consentEnd()
+          ]) +
+          '<div class="thd-f"><b>' + L("Specific risks of this procedure explained", "या प्रक्रियेचे विशेष धोके (समजावलेले)", "इस प्रक्रिया के विशेष जोखिम (समझाए गए)") + ":</b></div>" + lines(2) +
+          unable() + sigs([SG.patient, SG.relative, SG.witness, SG.doctor, SG.interp]);
+      } },
+
+    consent_anaesthesia: { cat: "S", code: "THD-SUR-02", name: ["Consent for Anaesthesia", "भूल (अॅनेस्थेशिया) साठी संमतीपत्र", "एनेस्थीसिया हेतु सहमति पत्र"],
+      fn: function (c) {
+        return pinfo(c) +
+          F(["Proposed surgery / procedure", "प्रस्तावित शस्त्रक्रिया / प्रक्रिया", "प्रस्तावित सर्जरी / प्रक्रिया"], "", 330) +
+          '<div class="thd-f"><b>' + L("Planned anaesthesia", "नियोजित भूल", "नियोजित एनेस्थीसिया") + ":</b> " + anaesTypes() + "</div>" +
+          F(["Anaesthetist", "भूलतज्ज्ञ", "एनेस्थेटिस्ट"], "", 260) +
+          ol([
+            P("I consent to the administration of anaesthesia as planned by the anaesthetist for the above procedure. The type of anaesthesia, its benefits and alternatives have been explained to me. I understand that the plan may need to be changed during the procedure for my safety.",
+              "वरील प्रक्रियेसाठी भूलतज्ज्ञांनी ठरवल्याप्रमाणे भूल देण्यास माझी संमती आहे. भुलेचा प्रकार, त्याचे फायदे व पर्याय मला समजावून सांगितले आहेत. माझ्या सुरक्षिततेसाठी प्रक्रियेदरम्यान नियोजन बदलावे लागू शकते हे मला समजले आहे.",
+              "मैं उपरोक्त प्रक्रिया हेतु एनेस्थेटिस्ट द्वारा तय एनेस्थीसिया देने की सहमति देता / देती हूँ। एनेस्थीसिया का प्रकार, लाभ व विकल्प मुझे समझाए गए हैं। मैं समझता / समझती हूँ कि मेरी सुरक्षा हेतु प्रक्रिया के दौरान योजना बदलनी पड़ सकती है।"),
+            P("Common side effects include sore throat, nausea, vomiting, headache, shivering, back pain and drowsiness. Uncommon risks include injury to teeth or lips, allergic reaction, breathing difficulty, nerve injury and awareness during anaesthesia. Rare but serious risks include heart attack, stroke, brain damage and death.",
+              "सामान्य दुष्परिणाम: घसा दुखणे, मळमळ, उलटी, डोकेदुखी, थंडी वाजणे, पाठदुखी व गुंगी. कमी आढळणारे धोके: दात किंवा ओठांना इजा, अॅलर्जी, श्वास घेण्यास त्रास, मज्जातंतूला इजा व भूल असताना जाणीव होणे. दुर्मिळ पण गंभीर धोके: हृदयविकाराचा झटका, पक्षाघात, मेंदूला इजा व मृत्यू.",
+              "सामान्य दुष्प्रभाव: गले में खराश, जी मिचलाना, उल्टी, सिरदर्द, कंपकंपी, कमर दर्द व सुस्ती। कम पाए जाने वाले जोखिम: दांत या होंठ में चोट, एलर्जी, सांस लेने में कठिनाई, नस में चोट व एनेस्थीसिया के दौरान होश आना। दुर्लभ परंतु गंभीर जोखिम: हार्ट अटैक, लकवा, मस्तिष्क क्षति एवं मृत्यु।"),
+            P("I confirm that I have given true information about my health, medicines, allergies, previous anaesthesia and fasting (nothing by mouth) status. I agree to additional procedures such as IV lines, central lines or arterial lines if required.",
+              "माझे आरोग्य, औषधे, अॅलर्जी, पूर्वीची भूल व उपाशीपोटी (तोंडाने काहीही न घेणे) असल्याबाबत मी खरी माहिती दिली आहे. आवश्यक असल्यास सलाईन लाईन, सेंट्रल लाईन किंवा आर्टेरियल लाईनसारख्या अतिरिक्त प्रक्रियांना माझी संमती आहे.",
+              "मैंने अपने स्वास्थ्य, दवाओं, एलर्जी, पूर्व एनेस्थीसिया तथा खाली पेट (मुंह से कुछ न लेने) की सही जानकारी दी है। आवश्यकता होने पर आईवी लाइन, सेंट्रल लाइन या आर्टेरियल लाइन जैसी अतिरिक्त प्रक्रियाओं हेतु मैं सहमत हूँ।"),
+            consentEnd()
+          ]) + unable() + sigs([SG.patient, SG.relative, SG.witness, SG.anaes]);
+      } },
+
+    consent_blood: { cat: "S", code: "THD-SUR-03", name: ["Consent for Blood / Blood Component Transfusion", "रक्त / रक्तघटक देण्यासाठी संमतीपत्र", "रक्त / रक्त घटक चढ़ाने हेतु सहमति पत्र"],
+      fn: function (c) {
+        return pinfo(c) +
+          '<div class="thd-f"><b>' + L("Blood component", "रक्तघटक", "रक्त घटक") + ":</b> " +
+          cb("Whole blood", "संपूर्ण रक्त", "संपूर्ण रक्त") + cb("Packed red cells (PRBC)", "लाल पेशी (PRBC)", "लाल कोशिकाएं (PRBC)") +
+          cb("Fresh frozen plasma (FFP)", "प्लाझ्मा (FFP)", "प्लाज़्मा (FFP)") + cb("Platelets", "प्लेटलेट्स", "प्लेटलेट्स") + cb("Cryoprecipitate", "क्रायोप्रेसिपिटेट", "क्रायोप्रेसिपिटेट") + "</div>" +
+          F(["Blood group", "रक्तगट", "रक्त समूह"], c.v.blood, 80) +
+          F(["Number of units (approx.)", "युनिट संख्या (अंदाजे)", "यूनिट संख्या (लगभग)"], "", 80) +
+          F(["Reason for transfusion", "रक्त देण्याचे कारण", "रक्त चढ़ाने का कारण"], "", 300) +
+          ol([
+            P("The need for transfusion of blood / blood components, its benefits and the alternatives (if any) have been explained to me in a language I understand.",
+              "रक्त / रक्तघटक देण्याची गरज, त्याचे फायदे व पर्याय (असल्यास) मला समजणाऱ्या भाषेत समजावून सांगितले आहेत.",
+              "रक्त / रक्त घटक चढ़ाने की आवश्यकता, उसके लाभ तथा विकल्प (यदि हों) मुझे मेरी समझ की भाषा में समझाए गए हैं।"),
+            P("I understand that although blood is tested as per government guidelines (HIV, Hepatitis B, Hepatitis C, Syphilis, Malaria), a very small risk of infection remains. Other possible reactions include fever, chills, itching, rash, breathlessness, fluid overload and, rarely, serious or life-threatening reactions.",
+              "शासनाच्या मार्गदर्शक तत्त्वांनुसार रक्ताची तपासणी (एचआयव्ही, हिपॅटायटिस बी, हिपॅटायटिस सी, सिफिलीस, मलेरिया) केली जाते, तरीही संसर्गाचा अत्यल्प धोका राहतो हे मला समजले आहे. इतर संभाव्य प्रतिक्रिया: ताप, थंडी, खाज, पुरळ, धाप लागणे, शरीरात द्रव वाढणे आणि क्वचित गंभीर किंवा जीवघेणी प्रतिक्रिया.",
+              "मैं समझता / समझती हूँ कि सरकारी दिशा-निर्देशों अनुसार रक्त की जांच (एचआईवी, हेपेटाइटिस बी, हेपेटाइटिस सी, सिफलिस, मलेरिया) होने के बावजूद संक्रमण का बहुत कम जोखिम रहता है। अन्य संभावित प्रतिक्रियाएं: बुखार, ठंड लगना, खुजली, चकत्ते, सांस फूलना, शरीर में तरल अधिक होना तथा कभी-कभी गंभीर या जानलेवा प्रतिक्रिया।"),
+            P("I give my consent for transfusion of the required number of units of blood / blood components during this hospital stay, as advised by the treating doctor.",
+              "या रुग्णालयातील मुक्कामादरम्यान उपचार करणाऱ्या डॉक्टरांच्या सल्ल्यानुसार आवश्यक तेवढ्या युनिट रक्त / रक्तघटक देण्यास माझी संमती आहे.",
+              "इस अस्पताल में भर्ती अवधि के दौरान उपचार करने वाले डॉक्टर की सलाह अनुसार आवश्यक यूनिट रक्त / रक्त घटक चढ़ाने हेतु मैं सहमति देता / देती हूँ।"),
+            consentEnd()
+          ]) + unable() + sigs([SG.patient, SG.relative, SG.witness, SG.doctor]);
+      } },
+
+    consent_highrisk: { cat: "S", code: "THD-SUR-04", name: ["High Risk Consent", "अतिजोखमीचे संमतीपत्र", "उच्च जोखिम सहमति पत्र"],
+      fn: function (c) {
+        return pinfo(c) +
+          F(["Proposed treatment / surgery", "प्रस्तावित उपचार / शस्त्रक्रिया", "प्रस्तावित उपचार / सर्जरी"], "", 320) +
+          '<div class="thd-f"><b>' + L("Reason for high risk (condition of patient)", "अतिजोखमीचे कारण (रुग्णाची स्थिती)", "उच्च जोखिम का कारण (मरीज़ की स्थिति)") + ":</b></div>" + lines(2) +
+          ol([
+            P("The doctor has explained to me that the patient’s condition is serious and that the risk involved in the proposed treatment / surgery / anaesthesia is higher than usual because of the reasons mentioned above.",
+              "रुग्णाची स्थिती गंभीर असून वर नमूद कारणांमुळे प्रस्तावित उपचार / शस्त्रक्रिया / भुलेमध्ये नेहमीपेक्षा जास्त धोका आहे, हे डॉक्टरांनी मला समजावून सांगितले आहे.",
+              "डॉक्टर ने मुझे समझाया है कि मरीज़ की स्थिति गंभीर है तथा ऊपर बताए कारणों से प्रस्तावित उपचार / सर्जरी / एनेस्थीसिया में सामान्य से अधिक जोखिम है।"),
+            P("There is a higher chance of complications, need for ICU care or ventilator support, prolonged hospital stay, further procedures, permanent disability and death, even with the best possible care.",
+              "सर्वोत्तम उपचार देऊनही गुंतागुंत, आयसीयू किंवा व्हेंटिलेटरची गरज, रुग्णालयातील दीर्घ मुक्काम, पुढील प्रक्रिया, कायमचे अपंगत्व व मृत्यू यांची शक्यता जास्त आहे.",
+              "सर्वोत्तम संभव उपचार के बावजूद जटिलताओं, आईसीयू या वेंटिलेटर की आवश्यकता, लंबे समय तक भर्ती, आगे की प्रक्रियाओं, स्थायी विकलांगता एवं मृत्यु की संभावना अधिक है।"),
+            P("Understanding these risks fully, I / we request and authorise the hospital and doctors to proceed with the treatment.",
+              "हे सर्व धोके पूर्णपणे समजून घेऊन, मी / आम्ही रुग्णालय व डॉक्टरांना उपचार सुरू ठेवण्याची विनंती व परवानगी देत आहोत.",
+              "इन सभी जोखिमों को पूरी तरह समझकर मैं / हम अस्पताल एवं डॉक्टरों से उपचार जारी रखने का अनुरोध करते हैं और अनुमति देते हैं।"),
+            consentEnd()
+          ]) + unable() + sigs([SG.patient, SG.relative, SG.witness, SG.doctor]);
+      } },
+
+    pac: { cat: "S", code: "THD-SUR-05", name: ["Pre-Anaesthesia Check-up (PAC)", "भूलपूर्व तपासणी (PAC)", "एनेस्थीसिया पूर्व जांच (PAC)"],
+      fn: function (c) {
+        return pinfo(c) +
+          "<table><tr><td>" + L("Proposed procedure", "प्रस्तावित प्रक्रिया", "प्रस्तावित प्रक्रिया") + ":</td><td colspan='3'></td></tr>" +
+          "<tr><td>" + L("Date of PAC", "PAC दिनांक", "PAC दिनांक") + ":</td><td></td><td>" + L("Weight", "वजन", "वजन") + " / " + L("Height", "उंची", "लंबाई") + ":</td><td></td></tr></table>" +
+          SEC("Medical history", "वैद्यकीय इतिहास", "चिकित्सीय इतिहास") +
+          cb("Hypertension", "उच्च रक्तदाब", "उच्च रक्तचाप") + cb("Diabetes", "मधुमेह", "मधुमेह") + cb("Asthma / COPD", "दमा / COPD", "दमा / COPD") +
+          cb("Heart disease", "हृदयरोग", "हृदय रोग") + cb("Thyroid", "थायरॉईड", "थायरॉइड") + cb("Epilepsy", "फिट्स", "मिर्गी") +
+          cb("Kidney disease", "मूत्रपिंड आजार", "गुर्दा रोग") + cb("Liver disease", "यकृत आजार", "लीवर रोग") + cb("Tuberculosis", "क्षयरोग", "टीबी") + cb("Bleeding disorder", "रक्तस्राव विकार", "रक्तस्राव विकार") +
+          "<table><tr><td style='width:34%'>" + L("Previous surgery / anaesthesia", "पूर्वीची शस्त्रक्रिया / भूल", "पूर्व सर्जरी / एनेस्थीसिया") + "</td><td></td></tr>" +
+          "<tr><td>" + L("Drug allergy", "औषध अॅलर्जी", "दवा एलर्जी") + "</td><td></td></tr>" +
+          "<tr><td>" + L("Current medicines", "सध्याची औषधे", "वर्तमान दवाएं") + "</td><td></td></tr>" +
+          "<tr><td>" + L("Smoking / Alcohol / Tobacco", "धूम्रपान / दारू / तंबाखू", "धूम्रपान / शराब / तंबाकू") + "</td><td></td></tr>" +
+          "<tr><td>LMP (" + L("females", "स्त्रियांसाठी", "महिलाओं हेतु") + ")</td><td></td></tr></table>" +
+          SEC("General & systemic examination", "सामान्य व संस्थात्मक तपासणी", "सामान्य व प्रणालीगत जांच") +
+          "<table><tr><td>" + L("Pulse", "नाडी", "नाड़ी") + ":</td><td></td><td>BP:</td><td></td><td>SpO2:</td><td></td><td>RR:</td><td></td><td>" + L("Temp", "तापमान", "तापमान") + ":</td><td></td></tr>" +
+          "<tr><td colspan='10'>Pallor ☐ &nbsp; Icterus ☐ &nbsp; Cyanosis ☐ &nbsp; Clubbing ☐ &nbsp; Oedema ☐ &nbsp; Lymphadenopathy ☐</td></tr>" +
+          "<tr><td colspan='2'>CVS:</td><td colspan='3'></td><td colspan='2'>RS:</td><td colspan='3'></td></tr>" +
+          "<tr><td colspan='2'>CNS:</td><td colspan='3'></td><td colspan='2'>Spine:</td><td colspan='3'></td></tr></table>" +
+          SEC("Airway assessment", "श्वसनमार्ग तपासणी", "वायुमार्ग जांच") +
+          "<div>Mallampati: ☐ I ☐ II ☐ III ☐ IV &nbsp;&nbsp; " + L("Mouth opening", "तोंड उघडणे", "मुंह खुलना") + ": " + blank(60) +
+          " &nbsp; " + L("Neck movement", "मानेची हालचाल", "गर्दन की गति") + ": " + blank(60) + " &nbsp; " + L("Teeth / dentures", "दात / कृत्रिम दात", "दांत / नकली दांत") + ": " + blank(60) + " &nbsp; TMD: " + blank(40) + "</div>" +
+          SEC("Investigations", "तपासण्या", "जांचें") +
+          "<table class='thd-grid'><tr><td>Hb</td><td></td><td>TLC</td><td></td><td>Platelets</td><td></td><td>BSL</td><td></td></tr>" +
+          "<tr><td>Urea</td><td></td><td>Creatinine</td><td></td><td>Na / K</td><td></td><td>" + L("Blood group", "रक्तगट", "रक्त समूह") + "</td><td>" + E(c.v.blood) + "</td></tr>" +
+          "<tr><td>HIV</td><td></td><td>HBsAg</td><td></td><td>HCV</td><td></td><td>PT / INR</td><td></td></tr>" +
+          "<tr><td>ECG</td><td colspan='3'></td><td>Chest X-ray</td><td colspan='3'></td></tr>" +
+          "<tr><td>" + L("Others", "इतर", "अन्य") + "</td><td colspan='7'></td></tr></table>" +
+          '<div class="thd-f"><b>ASA:</b> ☐ I ☐ II ☐ III ☐ IV ☐ V ☐ VI &nbsp; ☐ E (' + L("Emergency", "तातडीची", "आपातकालीन") + ")</div>" +
+          '<div class="thd-f"><b>' + L("Anaesthesia plan", "भुलेचे नियोजन", "एनेस्थीसिया योजना") + ":</b> " + anaesTypes() + "</div>" +
+          SEC("Pre-operative instructions", "शस्त्रक्रियापूर्व सूचना", "ऑपरेशन पूर्व निर्देश") +
+          "<table><tr><td style='width:34%'>" + L("Nil by mouth from", "उपाशीपोटी वेळ (पासून)", "खाली पेट (से)") + "</td><td></td></tr>" +
+          "<tr><td>" + L("Pre-medication", "पूर्व औषधे", "पूर्व दवाएं") + "</td><td></td></tr>" +
+          "<tr><td>" + L("Continue / stop medicines", "औषधे सुरू / बंद", "दवाएं जारी / बंद") + "</td><td></td></tr>" +
+          "<tr><td>" + L("Blood to be arranged (units)", "रक्ताची व्यवस्था (युनिट)", "रक्त व्यवस्था (यूनिट)") + "</td><td></td></tr></table>" +
+          '<div class="thd-f"><b>' + L("Fitness for anaesthesia", "भुलेसाठी योग्यता", "एनेस्थीसिया हेतु फिटनेस") + ":</b> " +
+          cb("Fit", "योग्य", "फिट") + cb("Fit with high risk", "अतिजोखमीसह योग्य", "उच्च जोखिम सहित फिट") + cb("Unfit / postpone", "अयोग्य / पुढे ढकला", "अनफिट / स्थगित") + "</div>" +
+          sigs([SG.anaes]) +
+          SEC("Pre-induction re-assessment (in OT)", "भूल देण्यापूर्वी पुनर्तपासणी (ओटीमध्ये)", "एनेस्थीसिया से पहले पुनः जांच (ओटी में)") +
+          "<table><tr><td>" + L("Date / Time", "दिनांक / वेळ", "दिनांक / समय") + "</td><td></td><td>" + L("Pulse", "नाडी", "नाड़ी") + "</td><td></td><td>BP</td><td></td><td>SpO2</td><td></td></tr>" +
+          "<tr><td colspan='2'>" + L("Nil by mouth confirmed", "उपाशीपोटी असल्याची खात्री", "खाली पेट की पुष्टि") + " ☐</td><td colspan='6'>" + L("Changes since PAC", "PAC नंतरचे बदल", "PAC के बाद बदलाव") + ":</td></tr>" +
+          "<tr><td colspan='8'>" + L("Anaesthetist signature", "भूलतज्ज्ञांची सही", "एनेस्थेटिस्ट हस्ताक्षर") + ":</td></tr></table>";
+      } },
+
+    preop_checklist: { cat: "S", code: "THD-SUR-06", name: ["Pre-Operative Checklist (Ward to OT)", "शस्त्रक्रियापूर्व तपासणी यादी (वॉर्ड ते ओटी)", "ऑपरेशन पूर्व जांच सूची (वार्ड से ओटी)"],
+      fn: function (c) {
+        return pinfo(c) + F(["Proposed procedure", "प्रस्तावित प्रक्रिया", "प्रस्तावित प्रक्रिया"], "", 330) +
+          checkTable([
+            ["Patient identity verified and ID band on", "रुग्णाची ओळख पडताळली व ओळख पट्टी लावली", "मरीज़ की पहचान सत्यापित व आईडी बैंड लगा"],
+            ["Surgical consent signed", "शस्त्रक्रिया संमतीपत्रावर सही", "सर्जरी सहमति पत्र पर हस्ताक्षर"],
+            ["Anaesthesia consent signed", "भूल संमतीपत्रावर सही", "एनेस्थीसिया सहमति पर हस्ताक्षर"],
+            ["Blood transfusion consent (if required)", "रक्त संमतीपत्र (आवश्यक असल्यास)", "रक्त सहमति (यदि आवश्यक)"],
+            ["PAC done and patient fit for surgery", "भूलपूर्व तपासणी झाली व रुग्ण योग्य", "PAC हुआ एवं मरीज़ फिट"],
+            ["Nil by mouth since (time) ______", "उपाशीपोटी असल्याची वेळ ______", "खाली पेट का समय ______"],
+            ["Operative site marked", "शस्त्रक्रियेची जागा चिन्हांकित", "ऑपरेशन स्थान चिह्नित"],
+            ["Part / skin preparation done", "त्वचा तयारी केली", "त्वचा की तैयारी की गई"],
+            ["Allergy status checked (allergy band if allergic)", "अॅलर्जी तपासली (असल्यास अॅलर्जी पट्टी)", "एलर्जी जांची गई (हो तो एलर्जी बैंड)"],
+            ["Jewellery, dentures, contact lens, hearing aid removed", "दागिने, कृत्रिम दात, लेन्स, श्रवणयंत्र काढले", "गहने, नकली दांत, लेंस, श्रवण यंत्र हटाए"],
+            ["Nail polish, make-up, hair pins removed", "नेलपॉलिश, मेकअप, पिना काढल्या", "नेल पॉलिश, मेकअप, पिन हटाए"],
+            ["Bladder emptied / catheter in place", "लघवी करवली / कॅथेटर लावलेला", "मूत्राशय खाली / कैथेटर लगा"],
+            ["IV line secured", "सलाईन लाईन लावली", "आईवी लाइन लगी"],
+            ["Pre-operative antibiotic given (time) ______", "शस्त्रक्रियापूर्व प्रतिजैविक दिले (वेळ) ______", "ऑपरेशन पूर्व एंटीबायोटिक दी (समय) ______"],
+            ["Pre-medication given", "पूर्व औषधे दिली", "पूर्व दवाएं दी गईं"],
+            ["Blood arranged (units) ______", "रक्ताची व्यवस्था (युनिट) ______", "रक्त की व्यवस्था (यूनिट) ______"],
+            ["Investigation reports, X-ray / scans sent with file", "तपासणी अहवाल, एक्स-रे / स्कॅन फाईलसोबत", "जांच रिपोर्ट, एक्स-रे / स्कैन फाइल के साथ"],
+            ["Implants / special equipment available", "इम्प्लांट / विशेष साहित्य उपलब्ध", "इम्प्लांट / विशेष उपकरण उपलब्ध"],
+            ["Vitals recorded before shifting", "हलवण्यापूर्वी जीवनचिन्हे नोंदवली", "शिफ्ट करने से पहले वाइटल्स दर्ज"],
+            ["Valuables handed over to relative", "मौल्यवान वस्तू नातेवाईकांकडे सुपूर्द", "कीमती सामान रिश्तेदार को सौंपा"]
+          ]) +
+          "<table><tr><td>" + L("Pulse", "नाडी", "नाड़ी") + ":</td><td></td><td>BP:</td><td></td><td>" + L("Temp", "तापमान", "तापमान") + ":</td><td></td><td>SpO2:</td><td></td><td>" + L("Time of shifting", "हलवण्याची वेळ", "शिफ्ट करने का समय") + ":</td><td></td></tr></table>" +
+          sigs([["Ward nurse (handed over)", "वॉर्ड परिचारिका (हस्तांतरण करणारी)", "वार्ड नर्स (सौंपने वाली)"], ["OT nurse (received)", "ओटी परिचारिका (स्वीकारणारी)", "ओटी नर्स (प्राप्त करने वाली)"], ["Doctor on duty", "कर्तव्यावरील डॉक्टर", "ड्यूटी डॉक्टर"]]);
+      } },
+
+    who_checklist: { cat: "S", code: "THD-SUR-07", name: ["WHO Surgical Safety Checklist", "WHO शस्त्रक्रिया सुरक्षा तपासणी यादी", "WHO सर्जिकल सुरक्षा जांच सूची"],
+      fn: function (c) {
+        function col(h, items, who) {
+          return "<div><h4>" + L(h[0], h[1], h[2]) + "</h4>" + items.map(function (i) { return '<div class="thd-it">☐ ' + L(i[0], i[1], i[2]) + "</div>"; }).join("") +
+            "<div style='margin-top:8px'>" + L("Time", "वेळ", "समय") + ": ________</div><div>" + L(who[0], who[1], who[2]) + ": ____________</div></div>";
+        }
+        return pinfo(c) + F(["Procedure", "प्रक्रिया", "प्रक्रिया"], "", 330) + '<div class="thd-who">' +
+          col(["SIGN IN (before induction of anaesthesia)", "साइन इन (भूल देण्यापूर्वी)", "साइन इन (एनेस्थीसिया से पहले)"], [
+            ["Patient has confirmed identity, site, procedure and consent", "रुग्णाने ओळख, जागा, प्रक्रिया व संमती निश्चित केली", "मरीज़ ने पहचान, स्थान, प्रक्रिया व सहमति की पुष्टि की"],
+            ["Site marked / not applicable", "जागा चिन्हांकित / लागू नाही", "स्थान चिह्नित / लागू नहीं"],
+            ["Anaesthesia machine and medication check complete", "भूल यंत्र व औषधांची तपासणी पूर्ण", "एनेस्थीसिया मशीन व दवा जांच पूर्ण"],
+            ["Pulse oximeter on patient and functioning", "पल्स ऑक्सिमीटर लावलेला व चालू", "पल्स ऑक्सीमीटर लगा व चालू"],
+            ["Known allergy?  ☐ No  ☐ Yes", "ज्ञात अॅलर्जी?  ☐ नाही  ☐ होय", "ज्ञात एलर्जी?  ☐ नहीं  ☐ हाँ"],
+            ["Difficult airway / aspiration risk? Equipment and help available", "अवघड श्वसनमार्ग / आकांक्षेचा धोका? साहित्य व मदत उपलब्ध", "कठिन वायुमार्ग / एस्पिरेशन जोखिम? उपकरण व सहायता उपलब्ध"],
+            ["Risk of more than 500 ml blood loss (7 ml/kg in children)? IV access and fluids planned", "५०० मिली पेक्षा जास्त रक्तस्रावाचा धोका (मुलांमध्ये ७ मिली/किग्रॅ)? सलाईन लाईन व द्रव नियोजित", "500 मिली से अधिक रक्तस्राव का जोखिम (बच्चों में 7 मिली/किग्रा)? आईवी व तरल योजना"]
+          ], ["Anaesthetist", "भूलतज्ज्ञ", "एनेस्थेटिस्ट"]) +
+          col(["TIME OUT (before skin incision)", "टाइम आउट (छेद घेण्यापूर्वी)", "टाइम आउट (चीरा लगाने से पहले)"], [
+            ["All team members introduced by name and role", "सर्व सदस्यांनी नाव व भूमिका सांगितली", "सभी सदस्यों ने नाम व भूमिका बताई"],
+            ["Surgeon, anaesthetist and nurse confirm patient, site and procedure", "शल्यचिकित्सक, भूलतज्ज्ञ व परिचारिकेने रुग्ण, जागा व प्रक्रिया निश्चित केली", "सर्जन, एनेस्थेटिस्ट व नर्स ने मरीज़, स्थान व प्रक्रिया की पुष्टि की"],
+            ["Antibiotic prophylaxis given within the last 60 minutes", "मागील ६० मिनिटांत प्रतिबंधक प्रतिजैविक दिले", "पिछले 60 मिनट में एंटीबायोटिक दी गई"],
+            ["Surgeon: critical steps, duration, expected blood loss", "शल्यचिकित्सक: महत्त्वाचे टप्पे, कालावधी, अपेक्षित रक्तस्राव", "सर्जन: महत्वपूर्ण चरण, अवधि, अपेक्षित रक्तस्राव"],
+            ["Anaesthetist: patient-specific concerns", "भूलतज्ज्ञ: रुग्णविशिष्ट चिंता", "एनेस्थेटिस्ट: मरीज़ विशेष चिंताएं"],
+            ["Nurse: sterility confirmed (indicator results), equipment issues", "परिचारिका: निर्जंतुकीकरण निश्चित (इंडिकेटर), साहित्याच्या अडचणी", "नर्स: स्टेरिलिटी पुष्टि (इंडिकेटर), उपकरण समस्याएं"],
+            ["Essential imaging displayed / not applicable", "आवश्यक इमेजिंग दाखवले / लागू नाही", "आवश्यक इमेजिंग प्रदर्शित / लागू नहीं"]
+          ], ["Surgeon", "शल्यचिकित्सक", "सर्जन"]) +
+          col(["SIGN OUT (before patient leaves OT)", "साइन आउट (रुग्ण ओटीबाहेर जाण्यापूर्वी)", "साइन आउट (मरीज़ के ओटी छोड़ने से पहले)"], [
+            ["Name of the procedure recorded", "प्रक्रियेचे नाव नोंदवले", "प्रक्रिया का नाम दर्ज"],
+            ["Instrument, sponge and needle counts correct", "उपकरणे, गॉझ व सुयांची मोजणी बरोबर", "उपकरण, स्पंज व सुई गिनती सही"],
+            ["Specimen labelled (with patient name)", "नमुन्यावर लेबल (रुग्णाच्या नावासह)", "नमूने पर लेबल (मरीज़ के नाम सहित)"],
+            ["Equipment problems to be addressed", "साहित्याच्या अडचणींची नोंद", "उपकरण समस्याएं दर्ज"],
+            ["Key concerns for recovery and management reviewed", "रिकव्हरी व पुढील उपचाराबाबत मुख्य मुद्दे चर्चिले", "रिकवरी व आगे प्रबंधन के मुख्य बिंदुओं पर चर्चा"]
+          ], ["Circulating nurse", "सर्क्युलेटिंग परिचारिका", "सर्कुलेटिंग नर्स"]) +
+          "</div>" + sigs([SG.surgeon, SG.anaes, SG.circ]);
+      } },
+
+    site_marking: { cat: "S", code: "THD-SUR-08", name: ["Surgical Site Marking", "शस्त्रक्रियेच्या जागेचे चिन्हांकन", "सर्जिकल स्थान चिह्नांकन"],
+      fn: function (c) {
+        return pinfo(c) + F(["Procedure", "प्रक्रिया", "प्रक्रिया"], "", 330) +
+          '<div class="thd-f"><b>' + L("Side", "बाजू", "पक्ष") + ":</b> " + sides() + "</div>" +
+          F(["Level / digit / exact site", "स्तर / बोट / नेमकी जागा", "स्तर / अंगुली / सटीक स्थान"], "", 300) +
+          P("The operative site has been marked by the operating surgeon with a permanent marker in the presence of the patient / relative, before shifting to OT.",
+            "ओटीमध्ये नेण्यापूर्वी रुग्ण / नातेवाईकांच्या उपस्थितीत शस्त्रक्रिया करणाऱ्या डॉक्टरांनी कायम मार्करने शस्त्रक्रियेची जागा चिन्हांकित केली आहे.",
+            "ओटी ले जाने से पहले मरीज़ / रिश्तेदार की उपस्थिति में ऑपरेशन करने वाले सर्जन द्वारा स्थायी मार्कर से ऑपरेशन स्थान चिह्नित किया गया है।") +
+          '<div class="thd-note">' + L("Mark the operative site with “X” on the diagram below.", "खालील आकृतीवर शस्त्रक्रियेची जागा “X” ने दाखवा.", "नीचे दिए चित्र पर ऑपरेशन स्थान “X” से दर्शाएं।") + "</div>" +
+          '<div style="text-align:center;margin:6px 0">' + bodySVG(true) + bodySVG(false) + "</div>" +
+          sigs([["Surgeon (site marked by)", "शल्यचिकित्सक (चिन्हांकन करणारे)", "सर्जन (चिह्नित करने वाले)"], ["Patient / relative (confirmed)", "रुग्ण / नातेवाईक (खात्री केली)", "मरीज़ / रिश्तेदार (पुष्टि की)"], ["Nurse (verified)", "परिचारिका (पडताळणी)", "नर्स (सत्यापन)"]]);
+      } },
+
+    anaesthesia_record: { cat: "S", code: "THD-SUR-09", name: ["Intra-operative Anaesthesia Record", "शस्त्रक्रियेदरम्यान भूल नोंद", "ऑपरेशन के दौरान एनेस्थीसिया रिकॉर्ड"],
+      fn: function (c) {
+        var tcols = ""; for (var i = 0; i < 12; i++) tcols += "<th></th>";
+        function mrow(l) { var h = "<tr><td><b>" + l + "</b></td>"; for (var i = 0; i < 12; i++) h += "<td></td>"; return h + "</tr>"; }
+        return pinfo(c) +
+          "<table><tr><td>" + L("Procedure", "प्रक्रिया", "प्रक्रिया") + "</td><td colspan='3'></td><td>ASA</td><td></td></tr>" +
+          "<tr><td>" + L("Surgeon", "शल्यचिकित्सक", "सर्जन") + "</td><td></td><td>" + L("Anaesthetist", "भूलतज्ज्ञ", "एनेस्थेटिस्ट") + "</td><td></td><td>" + L("Type", "प्रकार", "प्रकार") + "</td><td></td></tr>" +
+          "<tr><td>" + L("Anaesthesia start / end", "भूल सुरू / समाप्त", "एनेस्थीसिया शुरू / समाप्त") + "</td><td></td><td>" + L("Surgery start / end", "शस्त्रक्रिया सुरू / समाप्त", "सर्जरी शुरू / समाप्त") + "</td><td></td><td>" + L("Position", "स्थिती", "स्थिति") + "</td><td></td></tr>" +
+          "<tr><td>" + L("Airway", "श्वसनमार्ग", "वायुमार्ग") + "</td><td colspan='5'>☐ ETT " + L("size", "आकार", "साइज़") + " ____ &nbsp; ☐ LMA ____ &nbsp; ☐ " + L("Face mask", "फेस मास्क", "फेस मास्क") + " &nbsp; ☐ " + L("Natural airway", "नैसर्गिक श्वास", "प्राकृतिक श्वास") + "</td></tr></table>" +
+          SEC("Drugs given", "दिलेली औषधे", "दी गई दवाएं") +
+          "<table class='thd-grid'>" + TH_([["Time", "वेळ", "समय"], ["Drug", "औषध", "दवा"], ["Dose", "मात्रा", "खुराक"], ["Route", "मार्ग", "मार्ग"], ["Time", "वेळ", "समय"], ["Drug", "औषध", "दवा"], ["Dose", "मात्रा", "खुराक"], ["Route", "मार्ग", "मार्ग"]]) + rows(5, 8) + "</table>" +
+          SEC("Monitoring (every 5–15 minutes)", "देखरेख (दर ५–१५ मिनिटांनी)", "निगरानी (हर 5–15 मिनट)") +
+          "<table class='thd-grid'><tr><th>" + L("Time", "वेळ", "समय") + "</th>" + tcols + "</tr>" +
+          mrow("Pulse") + mrow("BP") + mrow("SpO2") + mrow("EtCO2") + mrow("RR") + mrow("Temp") + "</table>" +
+          "<table><tr><td>" + L("IV fluids (total)", "सलाईन (एकूण)", "आईवी तरल (कुल)") + "</td><td></td><td>" + L("Blood / products", "रक्त / घटक", "रक्त / घटक") + "</td><td></td></tr>" +
+          "<tr><td>" + L("Urine output", "लघवी", "मूत्र") + "</td><td></td><td>" + L("Blood loss", "रक्तस्राव", "रक्तस्राव") + "</td><td></td></tr>" +
+          "<tr><td>" + L("Reversal / extubation", "रिव्हर्सल / नळी काढणे", "रिवर्सल / एक्सट्यूबेशन") + "</td><td></td><td>" + L("Complications", "गुंतागुंत", "जटिलताएं") + "</td><td></td></tr>" +
+          "<tr><td>" + L("Condition on shifting to recovery", "रिकव्हरीत हलवताना स्थिती", "रिकवरी में शिफ्ट करते समय स्थिति") + "</td><td colspan='3'></td></tr></table>" +
+          sigs([SG.anaes]);
+      } },
+
+    ot_notes: { cat: "S", code: "THD-SUR-10", name: ["Operation Notes", "शस्त्रक्रिया नोंदी (ओटी नोट्स)", "ऑपरेशन नोट्स"],
+      fn: function (c) {
+        var n = c.note || {};
+        var h = pinfo(c) + "<table>";
+        NOTE_FIELDS.forEach(function (f) {
+          var val = n[f[0]] || "";
+          if (f[0] === "date" && val) val = fd(val);
+          h += '<tr><td class="thd-k" style="width:24%">' + L(f[1][0], f[1][1], f[1][2]) + '</td><td class="thd-pre">' + (val ? E(val) : (f[2] === "area" ? lines(3) : "&nbsp;")) + "</td></tr>";
+        });
+        return h + "</table>" + sigs([SG.surgeon]);
+      } },
+
+    count_sheet: { cat: "S", code: "THD-SUR-11", name: ["Swab, Needle & Instrument Count", "गॉझ, सुई व उपकरण मोजणी नोंद", "स्वाब, सुई एवं उपकरण गिनती रिकॉर्ड"],
+      fn: function (c) {
+        var items = [["Gauze / sponges", "गॉझ / स्पंज", "गॉज़ / स्पंज"], ["Mops / pads", "मॉप / पॅड", "मॉप / पैड"], ["Needles", "सुया", "सुइयां"], ["Blades", "ब्लेड", "ब्लेड"], ["Instruments", "उपकरणे", "उपकरण"], ["Others", "इतर", "अन्य"]];
+        return pinfo(c) + F(["Procedure", "प्रक्रिया", "प्रक्रिया"], "", 330) +
+          "<table class='thd-grid'>" + TH_([["Item", "बाब", "विषय"], ["Initial count", "सुरुवातीची मोजणी", "प्रारंभिक गिनती"], ["Added", "वाढवलेले", "जोड़े गए"], ["Before closure", "जखम बंद करण्यापूर्वी", "घाव बंद करने से पहले"], ["Final count", "अंतिम मोजणी", "अंतिम गिनती"], ["Remarks", "शेरा", "टिप्पणी"]]) +
+          items.map(function (i) { return "<tr><td>" + L(i[0], i[1], i[2]) + "</td><td></td><td></td><td></td><td></td><td></td></tr>"; }).join("") + rows(2, 6) + "</table>" +
+          '<div class="thd-f"><b>' + L("Count correct", "मोजणी बरोबर", "गिनती सही") + ":</b> " + cb("Yes", "होय", "हाँ") + cb("No", "नाही", "नहीं") + "</div>" +
+          '<div class="thd-f"><b>' + L("If not correct, action taken (search / X-ray / surgeon informed)", "मोजणी चुकीची असल्यास केलेली कार्यवाही (शोध / एक्स-रे / डॉक्टरांना कळवले)", "गिनती गलत होने पर की गई कार्यवाही (खोज / एक्स-रे / सर्जन को सूचित)") + ":</b></div>" + lines(2) +
+          sigs([SG.scrub, SG.circ, SG.surgeon]);
+      } },
+
+    implant_record: { cat: "S", code: "THD-SUR-12", name: ["Implant Record", "इम्प्लांट नोंद", "इम्प्लांट रिकॉर्ड"],
+      fn: function (c) {
+        return pinfo(c) + F(["Procedure", "प्रक्रिया", "प्रक्रिया"], "", 330) +
+          "<table class='thd-grid'>" + TH_(["#", ["Implant name", "इम्प्लांटचे नाव", "इम्प्लांट का नाम"], ["Company", "कंपनी", "कंपनी"], ["Size", "आकार", "साइज़"], ["Batch / Lot No.", "बॅच / लॉट क्र.", "बैच / लॉट नं."], ["Serial No.", "अनुक्रमांक", "सीरियल नं."], ["Expiry", "मुदत", "एक्सपायरी"], ["Qty", "नग", "मात्रा"]]) +
+          [1, 2, 3, 4, 5, 6].map(function (i) { return "<tr><td>" + i + "</td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>"; }).join("") + "</table>" +
+          '<div class="thd-box">' + L("Paste implant stickers here", "इम्प्लांट स्टिकर येथे चिकटवा", "इम्प्लांट स्टिकर यहां चिपकाएं") + "</div>" +
+          sigs([SG.surgeon, SG.otnurse]);
+      } },
+
+    postop_orders: { cat: "S", code: "THD-SUR-13", name: ["Post-Operative Orders & Monitoring", "शस्त्रक्रियेनंतरचे आदेश व देखरेख", "ऑपरेशन पश्चात आदेश एवं निगरानी"],
+      fn: function (c) {
+        function o(l, def) { return "<tr><td class='thd-k' style='width:26%'>" + L(l[0], l[1], l[2]) + "</td><td>" + (def ? '<span style="color:#333">' + def + "</span>" : "&nbsp;") + "</td></tr>"; }
+        return pinfo(c) + F(["Procedure", "प्रक्रिया", "प्रक्रिया"], "", 330) + "<table>" +
+          o(["Position", "स्थिती", "स्थिति"]) + o(["Nil by mouth till", "उपाशीपोटी कधीपर्यंत", "खाली पेट कब तक"]) +
+          o(["IV fluids", "सलाईन", "आईवी तरल"]) + o(["Antibiotics", "प्रतिजैविके", "एंटीबायोटिक्स"]) + o(["Analgesics", "वेदनाशामक", "दर्द निवारक"]) +
+          o(["Other medicines", "इतर औषधे", "अन्य दवाएं"]) +
+          o(["Monitoring", "देखरेख", "निगरानी"], L("Vitals every 15 min for 1 hr, every 30 min for 2 hrs, then hourly", "जीवनचिन्हे: १ तास दर १५ मिनिटांनी, २ तास दर ३० मिनिटांनी, नंतर दर तासाला", "वाइटल्स: 1 घंटे हर 15 मिनट, 2 घंटे हर 30 मिनट, फिर हर घंटे")) +
+          o(["Drain / catheter care", "ड्रेन / कॅथेटर काळजी", "ड्रेन / कैथेटर देखभाल"]) + o(["Diet", "आहार", "आहार"]) + o(["Ambulation", "चालणे-फिरणे", "चलना-फिरना"]) +
+          o(["Inform doctor if", "डॉक्टरांना कळवा जर", "डॉक्टर को सूचित करें यदि"], L("BP below 90/60, pulse above 120, SpO2 below 94%, excess bleeding / drain output, no urine for 4 hrs, severe pain", "रक्तदाब ९०/६० पेक्षा कमी, नाडी १२० पेक्षा जास्त, SpO2 ९४% पेक्षा कमी, जास्त रक्तस्राव / ड्रेन, ४ तास लघवी नाही, तीव्र वेदना", "रक्तचाप 90/60 से कम, नाड़ी 120 से अधिक, SpO2 94% से कम, अधिक रक्तस्राव / ड्रेन, 4 घंटे पेशाब नहीं, तेज़ दर्द")) +
+          "</table>" + sigs([["Surgeon / doctor", "शल्यचिकित्सक / डॉक्टर", "सर्जन / डॉक्टर"]]) +
+          SEC("Post-operative monitoring chart", "शस्त्रक्रियेनंतरचा देखरेख तक्ता", "ऑपरेशन पश्चात निगरानी चार्ट") +
+          "<table class='thd-grid'>" + TH_([["Time", "वेळ", "समय"], ["Pulse", "नाडी", "नाड़ी"], "BP", "RR", "SpO2", ["Temp", "तापमान", "तापमान"], ["Pain (0-10)", "वेदना (०-१०)", "दर्द (0-10)"], ["Drain", "ड्रेन", "ड्रेन"], ["Urine", "लघवी", "मूत्र"], ["Sign", "सही", "हस्ताक्षर"]]) + rows(12, 10) + "</table>";
+      } },
+
+    recovery: { cat: "S", code: "THD-SUR-14", name: ["Post-Anaesthesia Recovery Record (Aldrete Score)", "भूल नंतर रिकव्हरी नोंद (अल्ड्रेट स्कोअर)", "एनेस्थीसिया पश्चात रिकवरी रिकॉर्ड (एल्ड्रेट स्कोर)"],
+      fn: function (c) {
+        var cr = [
+          ["Activity", "2 = moves 4 limbs, 1 = moves 2 limbs, 0 = none"],
+          ["Respiration", "2 = deep breath & cough, 1 = dyspnoea / limited, 0 = apnoea"],
+          ["Circulation", "2 = BP within 20% of pre-op, 1 = 20–50%, 0 = more than 50%"],
+          ["Consciousness", "2 = fully awake, 1 = arousable on call, 0 = not responding"],
+          ["SpO2", "2 = above 92% on room air, 1 = needs O2 for above 90%, 0 = below 90% with O2"]
+        ];
+        var hd = TH_([["Criteria", "निकष", "मानदंड"], ["Score", "गुण", "स्कोर"], ["On arrival", "आल्यावर", "आने पर"], "15 min", "30 min", "45 min", "60 min", ["At discharge", "बाहेर पाठवताना", "भेजते समय"]]);
+        return pinfo(c) +
+          "<table><tr><td>" + L("Procedure", "प्रक्रिया", "प्रक्रिया") + "</td><td></td><td>" + L("Time in recovery", "रिकव्हरीत आल्याची वेळ", "रिकवरी में आने का समय") + "</td><td></td></tr></table>" +
+          "<table class='thd-grid'>" + hd + cr.map(function (r) { return "<tr><td><b>" + r[0] + "</b></td><td style='font-size:9.5px'>" + r[1] + "</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>"; }).join("") +
+          "<tr><td colspan='2'><b>" + L("Total score", "एकूण गुण", "कुल स्कोर") + "</b></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>" +
+          "<tr><td colspan='2'>" + L("Pain score (0-10)", "वेदना गुण (०-१०)", "दर्द स्कोर (0-10)") + "</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>" +
+          "<tr><td colspan='2'>" + L("Nausea / vomiting", "मळमळ / उलटी", "जी मिचलाना / उल्टी") + "</td><td></td><td></td><td></td><td></td><td></td><td></td></tr></table>" +
+          '<div class="thd-note">' + L("A total score of 9 or more is required to shift the patient out of recovery.", "रिकव्हरीतून बाहेर हलवण्यासाठी एकूण गुण ९ किंवा जास्त असणे आवश्यक आहे.", "रिकवरी से बाहर शिफ्ट करने हेतु कुल स्कोर 9 या अधिक होना आवश्यक है।") + "</div>" +
+          '<div class="thd-f"><b>' + L("Shifted to", "कोठे हलवले", "कहां शिफ्ट किया") + ":</b> " + cb("Ward", "वॉर्ड", "वार्ड") + cb("ICU", "आयसीयू", "आईसीयू") + " &nbsp; " + L("Time", "वेळ", "समय") + ": " + blank(80) + "</div>" +
+          sigs([SG.anaes, ["Recovery nurse", "रिकव्हरी परिचारिका", "रिकवरी नर्स"], ["Receiving nurse (ward / ICU)", "स्वीकारणारी परिचारिका (वॉर्ड / आयसीयू)", "प्राप्त करने वाली नर्स (वार्ड / आईसीयू)"]]);
+      } },
+
+    drug_chart: { cat: "I", code: "THD-IPD-01", name: ["Drug Chart (Medication Administration Record)", "औषध तक्ता (औषध देण्याची नोंद)", "दवा चार्ट (दवा देने का रिकॉर्ड)"],
+      fn: function (c) {
+        return pinfo(c) +
+          '<div class="thd-f"><b>' + L("Known drug allergy", "ज्ञात औषध अॅलर्जी", "ज्ञात दवा एलर्जी") + ":</b> " + cb("No", "नाही", "नहीं") + cb("Yes", "होय", "हाँ") + blank(220) +
+          " &nbsp; <b>" + L("Weight", "वजन", "वजन") + ":</b> " + blank(60) + "</div>" +
+          "<table class='thd-grid' style='font-size:10px'>" + TH_([["Date", "दिनांक", "दिनांक"], ["Drug name (CAPITALS)", "औषधाचे नाव (कॅपिटल)", "दवा का नाम (कैपिटल)"], ["Dose", "मात्रा", "खुराक"], ["Route", "मार्ग", "मार्ग"], ["Freq.", "वारंवारता", "आवृत्ति"],
+            ["Time / sign", "वेळ / सही", "समय / हस्ताक्षर"], ["Time / sign", "वेळ / सही", "समय / हस्ताक्षर"], ["Time / sign", "वेळ / सही", "समय / हस्ताक्षर"], ["Time / sign", "वेळ / सही", "समय / हस्ताक्षर"],
+            ["Dr. sign", "डॉ. सही", "डॉ. हस्ताक्षर"], ["Stop date", "बंद दिनांक", "बंद दिनांक"]]) + rows(14, 11) + "</table>" +
+          SEC("SOS / STAT orders", "SOS / तातडीचे आदेश", "SOS / तत्काल आदेश") +
+          "<table class='thd-grid'>" + TH_([["Date / Time", "दिनांक / वेळ", "दिनांक / समय"], ["Drug", "औषध", "दवा"], ["Dose", "मात्रा", "खुराक"], ["Route", "मार्ग", "मार्ग"], ["Ordered by", "आदेश देणारे", "आदेश देने वाले"], ["Given by / time", "देणारे / वेळ", "देने वाले / समय"]]) + rows(5, 6) + "</table>" +
+          '<div class="thd-note">' + L("Write drug names in CAPITAL letters. Verbal orders must be signed by the doctor within 24 hours.", "औषधांची नावे कॅपिटल अक्षरांत लिहा. तोंडी आदेशावर डॉक्टरांनी २४ तासांत सही करावी.", "दवाओं के नाम कैपिटल अक्षरों में लिखें। मौखिक आदेश पर डॉक्टर 24 घंटे में हस्ताक्षर करें।") + "</div>";
+      } },
+
+    consent_general: { cat: "I", code: "THD-IPD-02", name: ["General Consent for Admission & Treatment", "दाखल व उपचारासाठी सर्वसाधारण संमतीपत्र", "भर्ती एवं उपचार हेतु सामान्य सहमति पत्र"],
+      fn: function (c) {
+        return pinfo(c) + ol([
+          P("I voluntarily consent to my / the patient’s admission to this hospital and to routine examination, nursing care, investigations, medicines and treatment considered necessary by the treating doctors.",
+            "मी स्वेच्छेने माझ्या / रुग्णाच्या या रुग्णालयात दाखल होण्यास तसेच उपचार करणाऱ्या डॉक्टरांनी आवश्यक मानलेल्या नियमित तपासणी, परिचर्या, चाचण्या, औषधे व उपचारांना संमती देत आहे.",
+            "मैं स्वेच्छा से अपने / मरीज़ के इस अस्पताल में भर्ती होने तथा उपचार करने वाले डॉक्टरों द्वारा आवश्यक समझी गई नियमित जांच, नर्सिंग देखभाल, परीक्षण, दवाओं एवं उपचार हेतु सहमति देता / देती हूँ।"),
+          P("I understand that a separate written consent will be taken for any surgery, anaesthesia, blood transfusion, high-risk procedure or special investigation.",
+            "कोणतीही शस्त्रक्रिया, भूल, रक्त देणे, अतिजोखमीची प्रक्रिया किंवा विशेष तपासणीसाठी स्वतंत्र लेखी संमती घेतली जाईल हे मला समजले आहे.",
+            "मैं समझता / समझती हूँ कि किसी भी सर्जरी, एनेस्थीसिया, रक्त चढ़ाने, उच्च जोखिम प्रक्रिया या विशेष जांच हेतु अलग लिखित सहमति ली जाएगी।"),
+          P("My rights and responsibilities as a patient, the hospital rules and the estimated cost of treatment have been explained to me. I agree to pay the hospital charges as per the hospital tariff / applicable scheme.",
+            "रुग्ण म्हणून माझे हक्क व जबाबदाऱ्या, रुग्णालयाचे नियम आणि उपचाराचा अंदाजे खर्च मला समजावून सांगितला आहे. रुग्णालयाच्या दरपत्रकानुसार / लागू योजनेनुसार शुल्क भरण्यास मी तयार आहे.",
+            "मरीज़ के रूप में मेरे अधिकार व जिम्मेदारियां, अस्पताल के नियम तथा उपचार का अनुमानित खर्च मुझे समझाया गया है। मैं अस्पताल शुल्क सूची / लागू योजना अनुसार शुल्क देने हेतु सहमत हूँ।"),
+          P("I authorise the hospital to share my medical information with the insurance company / TPA / government health scheme (such as AB-PMJAY / MJPJAY) for processing of my claim, and with authorities as required by law.",
+            "माझ्या दाव्याच्या प्रक्रियेसाठी विमा कंपनी / टीपीए / शासकीय आरोग्य योजना (उदा. AB-PMJAY / MJPJAY) यांना तसेच कायद्याने आवश्यक असल्यास संबंधित प्राधिकरणांना माझी वैद्यकीय माहिती देण्यास मी रुग्णालयाला परवानगी देत आहे.",
+            "मैं अपने दावे की प्रक्रिया हेतु बीमा कंपनी / टीपीए / सरकारी स्वास्थ्य योजना (जैसे AB-PMJAY / MJPJAY) तथा कानून द्वारा आवश्यक होने पर संबंधित प्राधिकरणों के साथ अपनी चिकित्सा जानकारी साझा करने की अनुमति अस्पताल को देता / देती हूँ।"),
+          P("The hospital is not responsible for the loss of any valuables kept with the patient. I agree to follow the hospital rules regarding visitors, smoking and safety.",
+            "रुग्णाजवळ ठेवलेल्या मौल्यवान वस्तू हरवल्यास रुग्णालय जबाबदार राहणार नाही. भेटायला येणारे, धूम्रपान व सुरक्षिततेबाबतचे रुग्णालयाचे नियम पाळण्यास मी तयार आहे.",
+            "मरीज़ के पास रखे कीमती सामान के खोने पर अस्पताल जिम्मेदार नहीं होगा। मैं मुलाकातियों, धूम्रपान एवं सुरक्षा संबंधी अस्पताल नियमों का पालन करने हेतु सहमत हूँ।"),
+          consentEnd()
+        ]) + unable() + sigs([SG.patient, SG.relative, SG.witness, ["Admitting doctor / staff", "दाखल करणारे डॉक्टर / कर्मचारी", "भर्ती करने वाले डॉक्टर / कर्मचारी"]]);
+      } }
+  };
+  var DOC_KEYS = Object.keys(DOCS);
+
+  /* ---- default OT notes library (edit / add more in settings) ---- */
+  var DEF_LIB = [
+    { name: "LSCS (Lower Segment Caesarean Section)", anaesthesia: "Spinal anaesthesia", position: "Supine with left lateral tilt", incision: "Pfannenstiel incision",
+      findings: "Single live intrauterine fetus in cephalic presentation. Liquor clear. Placenta ______, delivered completely. Baby: Male / Female, cried immediately after birth, weight ____ kg, APGAR ___ / ___.",
+      steps: "Patient in supine position with left lateral tilt. Painting and draping done. Foley's catheter in situ. Pfannenstiel incision taken, abdomen opened in layers. Uterovesical fold of peritoneum opened and bladder pushed down. Transverse incision taken on lower uterine segment and extended. Baby delivered by ______ and handed over to paediatrician. Oxytocin 10 IU given. Placenta and membranes delivered completely. Uterine cavity cleaned. Uterus closed in two layers with Vicryl 1-0. Haemostasis achieved. Both tubes and ovaries normal. Mop and instrument count correct.",
+      closure: "Rectus sheath closed with Vicryl 1-0 / Loop PDS. Subcutaneous tissue closed with Vicryl 2-0. Skin closed with ______ (subcuticular / staples).",
+      drain: "None", specimen: "Nil", ebl: "About 500 ml",
+      postop: "Vitals every 15 min for 1 hour, then hourly. Watch for PV bleeding and uterine tone. IV fluids, antibiotics and analgesics as per chart. Catheter for 24 hours. Early breastfeeding. Sips of water after 6 hours." },
+    { name: "Laparoscopic Cholecystectomy", anaesthesia: "General anaesthesia", position: "Supine, reverse Trendelenburg with left tilt", incision: "4 ports: 10 mm umbilical, 10 mm epigastric, two 5 mm right subcostal",
+      findings: "Gall bladder distended / contracted with multiple calculi. Adhesions ______. CBD normal.",
+      steps: "Pneumoperitoneum created by Veress needle / open technique, pressure 12-14 mmHg. Ports placed under vision. Fundus of gall bladder retracted. Calot's triangle dissected and critical view of safety achieved. Cystic duct and cystic artery clipped and divided. Gall bladder dissected from liver bed with cautery. Haemostasis checked, irrigation done. Gall bladder retrieved through epigastric port in endobag. Ports removed under vision and pneumoperitoneum released.",
+      closure: "Umbilical port sheath closed with Vicryl / Prolene 1-0. Skin closed with ______.",
+      drain: "None / sub-hepatic drain", specimen: "Gall bladder sent for HPE", ebl: "Minimal",
+      postop: "Nil by mouth for 6 hours, then sips of water. Analgesics, antiemetics and antibiotics as per chart. Early ambulation. Watch drain output, abdominal distension and fever." },
+    { name: "Open Appendicectomy", anaesthesia: "General / Spinal anaesthesia", position: "Supine", incision: "Grid-iron / Lanz incision in right iliac fossa",
+      findings: "Appendix inflamed / gangrenous / perforated, retrocaecal / pelvic, about ___ cm long. Pus ______.",
+      steps: "Painting and draping done. Grid-iron incision taken over McBurney's point. External oblique split; internal oblique and transversus split along fibres. Peritoneum opened. Appendix delivered, mesoappendix ligated and divided. Base crushed, ligated with Vicryl 2-0 and appendix excised. Stump buried / cauterised. Peritoneal toilet done. Haemostasis achieved.",
+      closure: "Peritoneum closed with Vicryl 2-0, muscles approximated, external oblique closed with Vicryl 1-0, skin closed with Ethilon 3-0.",
+      drain: "None", specimen: "Appendix sent for HPE", ebl: "Minimal",
+      postop: "Nil by mouth till bowel sounds return, then liquids. IV antibiotics and analgesics. Early ambulation." },
+    { name: "Inguinal Hernia Mesh Repair (Lichtenstein)", anaesthesia: "Spinal anaesthesia", position: "Supine", incision: "Inguinal incision on ______ side",
+      findings: "Indirect / direct inguinal hernia on ______ side. Sac contents ______.",
+      steps: "Incision parallel to inguinal ligament. External oblique aponeurosis opened, ilioinguinal nerve preserved. Cord structures isolated. Sac identified, dissected up to deep ring, contents reduced; sac transfixed and excised / inverted. Polypropylene mesh ___ x ___ cm placed and fixed with Prolene 2-0 to pubic tubercle, inguinal ligament and conjoint tendon, with slit around the cord. Haemostasis achieved.",
+      closure: "External oblique closed with Vicryl 2-0, subcutaneous tissue with Vicryl 3-0, skin with ______.",
+      drain: "None", specimen: "Nil", ebl: "Minimal",
+      postop: "Scrotal support. Analgesics and antibiotics. Avoid heavy lifting for 6 weeks." },
+    { name: "Total Abdominal Hysterectomy (± BSO)", anaesthesia: "Spinal / General anaesthesia", position: "Supine", incision: "Pfannenstiel / midline incision",
+      findings: "Uterus bulky, about ___ weeks size. Fibroid ______. Ovaries ______.",
+      steps: "Abdomen opened in layers. Round ligaments clamped, cut and ligated. Uterovesical fold opened and bladder pushed down. Infundibulopelvic / ovarian ligaments clamped, cut and ligated (BSO as indicated). Uterine vessels clamped, cut and double ligated. Cardinal and uterosacral ligaments clamped, cut and ligated. Uterus removed. Vault closed with Vicryl 1-0. Haemostasis achieved. Both ureters safe.",
+      closure: "Rectus sheath closed with Vicryl 1 / Loop PDS, skin closed with ______.",
+      drain: "None / pelvic drain", specimen: "Uterus ± adnexa sent for HPE", ebl: "About 300 ml",
+      postop: "Catheter for 24 hours. Watch PV bleeding and urine output. IV fluids, antibiotics and analgesics as per chart." },
+    { name: "Excision of Swelling / Lipoma", anaesthesia: "Local / General anaesthesia", position: "As per site", incision: "Elliptical incision over the swelling",
+      findings: "Well-encapsulated swelling of about ___ x ___ cm at ______.",
+      steps: "Under aseptic precautions, local infiltration with Lignocaine 2%. Incision over the swelling. Swelling dissected all around and excised in toto. Haemostasis achieved.",
+      closure: "Skin closed with Ethilon 3-0 interrupted sutures.", drain: "Nil", specimen: "Swelling sent for HPE", ebl: "Minimal",
+      postop: "Dressing check after 48 hours. Suture removal on day 7-10." },
+    { name: "Incision & Drainage of Abscess", anaesthesia: "General / Local anaesthesia", position: "As per site", incision: "Incision over the point of maximum fluctuation",
+      findings: "About ___ ml of pus drained. Loculi present / absent.",
+      steps: "Painting and draping done. Incision over the most fluctuant point. Pus drained and sent for culture and sensitivity. Loculi broken with finger. Cavity irrigated with normal saline / hydrogen peroxide / povidone iodine. Cavity packed with povidone-iodine gauze.",
+      closure: "Wound left open for healing by secondary intention.", drain: "Gauze pack", specimen: "Pus sent for culture and sensitivity", ebl: "Minimal",
+      postop: "Daily dressing. Antibiotics as per culture report. Analgesics." },
+    { name: "Haemorrhoidectomy (Milligan-Morgan)", anaesthesia: "Spinal (saddle block) anaesthesia", position: "Lithotomy", incision: "V-shaped skin incisions at the base of piles",
+      findings: "Grade ___ haemorrhoids at ___, ___ and ___ o'clock positions.",
+      steps: "Anal dilatation done. Each pile held with artery forceps, V-shaped skin incision made, pile dissected off the sphincter, pedicle transfixed with Vicryl 2-0 and pile excised. Skin bridges preserved between pedicles. Haemostasis achieved. Anal pack placed.",
+      closure: "Wounds left open.", drain: "Anal pack", specimen: "Piles sent for HPE", ebl: "Minimal",
+      postop: "Remove pack after 6-12 hours. Sitz bath from next day. Stool softeners, high-fibre diet and analgesics." },
+    { name: "ORIF (Plate / Nail Fixation)", anaesthesia: "Spinal / General anaesthesia", position: "As per fracture", incision: "______ approach",
+      findings: "Fracture of ______ (type ______), comminution ______.",
+      steps: "Under C-arm guidance, fracture site exposed through ______ approach. Fracture ends cleared of haematoma, reduced and held with reduction clamps. Fixed with ______ plate / nail and ___ screws. Position confirmed on C-arm. Wound washed with saline. Haemostasis achieved.",
+      closure: "Closed in layers, skin with staples / Ethilon.", drain: "Suction drain", specimen: "Nil", ebl: "About 200 ml",
+      postop: "Limb elevation. Watch distal neurovascular status and drain output. Antibiotics and analgesics. Check X-ray. Physiotherapy as advised." },
+    { name: "Circumcision", anaesthesia: "Local / General anaesthesia", position: "Supine", incision: "Circumferential incision at coronal level",
+      findings: "Phimosis / redundant prepuce.",
+      steps: "Dorsal penile block given. Prepuce retracted / dorsal slit given and adhesions separated. Foreskin excised at coronal level. Frenular artery ligated. Haemostasis achieved.",
+      closure: "Mucosa and skin approximated with Vicryl Rapide 4-0.", drain: "Nil", specimen: "Nil", ebl: "Minimal",
+      postop: "Dressing, analgesics, keep the area clean and dry." }
+  ];
+
+  /* =====================================================================
+     5. RENDER + PRINT
+     ===================================================================== */
+  function render(key, p, A, opt) {
+    var D = DOCS[key];
+    if (!D) return "";
+    var note = null;
+    if (key === "ot_notes") {
+      var list = (A && SD().notes[String(A.id)]) || [];
+      note = (opt && opt.noteId) ? list.filter(function (n) { return n.id === opt.noteId; })[0] : list[list.length - 1];
+    }
+    var c = { p: p || {}, A: A || {}, v: pv(p, A), note: note };
+    return '<div class="thd">' + TITLE(D.name[0], D.name[1], D.name[2]) + D.fn(c) +
+      '<div class="thd-foot"><span>' + D.code + " | Rev. 01</span><span>" + L("Page", "पान", "पृष्ठ") + " ____</span></div></div>";
+  }
+  function allAdms() { return Array.isArray(db.admissions) ? db.admissions : []; }
+  function findA(id) {
+    var a = allAdms().filter(function (x) { return String(x.id) === String(id); })[0];
+    if (!a) { try { a = getA(id); } catch (e) {} }
+    return a || null;
+  }
+  function findP(A) { var p = null; try { p = getP(A.uhid); } catch (e) {} return p || A.patient || {}; }
+  function isDis(A) { return !!(A.discharged || A.dod || A.dischargeDate || A.disDate || /disch/i.test(V(A.status))); }
+
+  function printDocs(keys, admId, noteId) {
+    var A = findA(admId);
+    if (!A) { toast("Please select a patient first"); return; }
+    var p = findP(A), head = "";
+    try { head = printHead() || ""; } catch (e) {}
+    var html = keys.map(function (k) { return '<div class="thd-page">' + head + render(k, p, A, { noteId: noteId }) + "</div>"; }).join("");
+    var pa = document.getElementById("printArea");
+    if (!pa) { pa = document.createElement("div"); pa.id = "printArea"; document.body.appendChild(pa); }
+    pa.innerHTML = html;
+    try { audit("Printed surgery / IPD documents", pv(p, A).name + " - " + keys.length + " document(s)"); } catch (e) {}
+    window.print();
+  }
+
+  /* ---- register in the software's forms library (IPD file) ---- */
+  DOC_KEYS.forEach(function (k) {
+    var D = DOCS[k];
+    try {
+      TH.placeholder("th_doc_" + k, function (patient, visit, admission) {
+        var A = admission;
+        if (!A && patient) { try { var l = pAdms(patient.uhid) || []; A = l[l.length - 1]; } catch (e) {} }
+        return render(k, patient, A || {});
+      });
+      TH.template({ id: "thd_" + k, name: D.name[0], category: D.cat === "S" ? "Surgery / OT" : "IPD", html: "{{th_doc_" + k + "}}" });
+    } catch (e) {}
+  });
+
+  /* =====================================================================
+     6. SCREEN: IPD MASTER > Surgery & OT Documents
+     ===================================================================== */
+  var ST = window.__thSD = window.__thSD || { adm: "", showAll: false, edit: null };
+  function opt(v, t, sel) { return '<option value="' + E(v) + '"' + (sel ? " selected" : "") + ">" + E(t) + "</option>"; }
+
+  TH.addMenuItem("ipd", "thSurgDocs", "Surgery & OT Documents");
+  TH.page("thSurgDocs", function () {
+    var adms = allAdms().slice().reverse().filter(function (A) { return ST.showAll || !isDis(A) || String(A.id) === String(ST.adm); });
+    var sel = '<select id="thsd_adm" onchange="thSD.pick(this.value)" style="min-width:420px">' + opt("", "— Select admitted patient —", !ST.adm) +
+      adms.map(function (A) {
+        var v = pv(findP(A), A);
+        return opt(A.id, v.name + "  |  UHID " + v.uhid + "  |  IPD " + v.ipd + "  |  " + v.doa + (isDis(A) ? "  (discharged)" : ""), String(A.id) === String(ST.adm));
+      }).join("") + "</select>";
+    var h = '<div class="sdx">' + '<div class="sdx-hero"><div><h2>🏥 Surgery &amp; OT Documents</h2><p>NABH surgical file — consents, pre-op, intra-op, post-op and OT notes, auto-filled for the selected patient.</p></div>' +
+      '<div class="sdx-lang">🌐 ' + E(langName()) + '<br><a href="#" onclick="go(\'thDocLang\');return false">change language</a></div></div>' +
+      '<div class="card sdx-pick"><label class="sdx-lbl">Patient (admitted)</label>' + sel +
+      '<label class="sdx-tg"><input type="checkbox" ' + (ST.showAll ? "checked" : "") + ' onchange="thSD.all(this.checked)"><span>Show discharged patients</span></label>';
+    var A = ST.adm ? findA(ST.adm) : null;
+    if (!A) return h + '<p class="sdx-empty">Select a patient to open his / her surgery and IPD documents.</p></div></div>';
+    var v = pv(findP(A), A);
+    function chip(l, x) { return x ? '<div><small>' + l + "</small><b>" + E(x) + "</b></div>" : ""; }
+    h += '<div class="sdx-pt"><div class="sdx-av">' + E((v.name || "?").charAt(0).toUpperCase()) + "</div>" +
+      chip("Patient", v.name) + chip("UHID", v.uhid) + chip("Age / Sex", [v.age, v.sex].filter(Boolean).join(" / ")) + chip("IPD No.", v.ipd) +
+      chip("Ward / Bed", [v.ward, v.bed].filter(Boolean).join(" / ")) + chip("Consultant", v.doctor) + chip("Diagnosis", v.diag) + "</div></div>";
+
+    function docRow(k, checked) {
+      return '<div class="sdx-doc"><label><input type="checkbox" class="thsd-ck" value="' + k + '"' + (checked ? " checked" : "") + '><span><b>' + DOCS[k].name[0] +
+        "</b><small>" + DOCS[k].code + '</small></span></label><button class="sdx-pb" type="button" title="Print" onclick="thSD.print(\'' + k + "')\">🖨 Print</button></div>";
+    }
+    var GROUPS = [["sdx-g1", "① Consents", ["consent_surgery", "consent_anaesthesia", "consent_blood", "consent_highrisk"]],
+      ["sdx-g2", "② Pre-operative", ["pac", "preop_checklist", "site_marking"]],
+      ["sdx-g3", "③ In the OT", ["who_checklist", "anaesthesia_record", "ot_notes", "count_sheet", "implant_record"]],
+      ["sdx-g4", "④ Post-operative", ["recovery", "postop_orders"]]];
+    h += '<div class="card"><div class="sdx-head"><h3>Surgery / OT file</h3><span>' + DOC_KEYS.filter(function (k) { return DOCS[k].cat === "S"; }).length + " NABH documents</span>" +
+      '<button class="btn sm sec" type="button" onclick="thSD.tick(true)">Tick all</button><button class="btn sm sec" type="button" onclick="thSD.tick(false)">Clear</button>' +
+      '<button class="btn sm sec" type="button" onclick="thSD.printSel()">🖨 Print selected</button><button class="btn sm" type="button" onclick="thSD.printAll(\'S\')">🖨 Print complete OT file</button></div>' +
+      '<div class="sdx-groups">' + GROUPS.map(function (g) { return '<div class="sdx-grp ' + g[0] + '"><h4>' + g[1] + "</h4>" + g[2].filter(function (k) { return DOCS[k]; }).map(function (k) { return docRow(k, true); }).join("") + "</div>"; }).join("") + "</div></div>";
+    h += '<div class="card"><div class="sdx-head"><h3>Common IPD documents</h3><span>surgical &amp; non-surgical patients</span></div><div class="sdx-common">' +
+      DOC_KEYS.filter(function (k) { return DOCS[k].cat === "I"; }).map(function (k) { return docRow(k, false); }).join("") + "</div></div>";
+
+    // OT notes
+    var notes = SD().notes[String(A.id)] || [];
+    h += '<div class="card"><div style="display:flex;align-items:center;gap:10px"><h3 style="margin:0;flex:1">OT Notes (Operation Notes)</h3>' +
+      '<button class="btn" type="button" onclick="thSD.newNote()">+ New OT note</button></div>';
+    if (notes.length) {
+      h += '<table class="table" style="margin-top:8px"><tr><th>Date</th><th>Procedure</th><th>Surgeon</th><th></th></tr>' +
+        notes.map(function (n) {
+          return "<tr><td>" + E(fd(n.date)) + "</td><td>" + E(n.procedure) + "</td><td>" + E(n.surgeon) + '</td><td style="white-space:nowrap">' +
+            '<button class="btn sm sec" type="button" onclick="thSD.edit(\'' + n.id + "')\">Edit</button> " +
+            '<button class="btn sm" type="button" onclick="thSD.printNote(\'' + n.id + "')\">Print</button> " +
+            '<button class="btn sm sec" type="button" onclick="thSD.del(\'' + n.id + "')\">Delete</button></td></tr>";
+        }).join("") + "</table>";
+    } else if (!ST.edit) h += '<p style="color:#64748b">No OT note yet. Click “+ New OT note”, choose the procedure and press “Load default notes”.</p>';
+    if (ST.edit) h += noteForm(A);
+    return h + "</div></div>";
+  });
+
+  function noteForm(A) {
+    var n = ST.edit, lib = SD().lib;
+    var docs = (db.doctors || []).map(function (d) { return '<option value="' + E(d.name) + '">'; }).join("");
+    var h = '<div style="border-top:1px solid #e2e8f0;margin-top:10px;padding-top:10px">' +
+      '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;background:#f0f9ff;border:1px solid #bae6fd;border-radius:8px;padding:8px 10px;margin-bottom:10px">' +
+      "<b>One-click default notes:</b> <select id=\"thot_tpl\" style=\"min-width:300px\">" + opt("", "— choose procedure template —") +
+      lib.map(function (t, i) { return opt(i, t.name); }).join("") + "</select>" +
+      '<button class="btn sm" type="button" onclick="thSD.load()">Load default notes</button>' +
+      '<span style="font-size:12px;color:#475569">Then change anything at the time of OT and Save.</span></div>' +
+      '<datalist id="thot_docs">' + docs + '</datalist><div class="thsd-form">';
+    NOTE_FIELDS.forEach(function (f) {
+      var id = "thot_" + f[0], val = n[f[0]] || "", lbl = "<label>" + f[1][0] + "</label>";
+      if (f[2] === "area") h += '<div class="full">' + lbl + '<textarea id="' + id + '">' + E(val) + "</textarea></div>";
+      else if (f[2] === "doc") h += "<div>" + lbl + '<input id="' + id + '" list="thot_docs" value="' + E(val) + '"></div>';
+      else h += "<div>" + lbl + '<input id="' + id + '" type="' + (f[2] === "date" ? "date" : f[2] === "time" ? "time" : "text") + '" value="' + E(val) + '"></div>';
+    });
+    return h + '</div><div style="display:flex;gap:8px;margin-top:10px">' +
+      '<button class="btn" type="button" onclick="thSD.save(false)">Save OT note</button>' +
+      '<button class="btn sec" type="button" onclick="thSD.save(true)">Save &amp; Print</button>' +
+      '<button class="btn sec" type="button" onclick="thSD.saveTpl()">Save as new template</button>' +
+      '<button class="btn sec" type="button" onclick="thSD.cancel()">Cancel</button></div></div>';
+  }
+  function readNote() {
+    var n = Object.assign({}, ST.edit || {});
+    NOTE_FIELDS.forEach(function (f) { var el = document.getElementById("thot_" + f[0]); if (el) n[f[0]] = el.value; });
+    return n;
+  }
+  function today_() { try { return today(); } catch (e) { return new Date().toISOString().slice(0, 10); } }
+  function refresh() { try { go("thSurgDocs"); } catch (e) {} }
+
+  window.thSD = {
+    pick: function (v) { ST.adm = v; ST.edit = null; refresh(); },
+    all: function (b) { ST.showAll = b; refresh(); },
+    print: function (k) { printDocs([k], ST.adm); },
+    printSel: function () {
+      var ks = Array.prototype.map.call(document.querySelectorAll(".thsd-ck:checked"), function (x) { return x.value; });
+      if (!ks.length) return toast("Tick at least one document");
+      printDocs(ks, ST.adm);
+    },
+    tick: function (on) { Array.prototype.forEach.call(document.querySelectorAll(".sdx-groups .thsd-ck"), function (c) { c.checked = on; }); },
+    printAll: function (cat) { printDocs(DOC_KEYS.filter(function (k) { return DOCS[k].cat === cat; }), ST.adm); },
+    printNote: function (id) { printDocs(["ot_notes"], ST.adm, id); },
+    newNote: function () {
+      var A = findA(ST.adm), v = pv(findP(A), A);
+      ST.edit = { id: "", date: today_(), preDx: v.diag, surgeon: v.doctor };
+      refresh();
+    },
+    edit: function (id) {
+      var n = (SD().notes[String(ST.adm)] || []).filter(function (x) { return x.id === id; })[0];
+      if (n) { ST.edit = Object.assign({}, n); refresh(); }
+    },
+    del: function (id) {
+      if (!confirm("Delete this OT note?")) return;
+      var k = String(ST.adm), d = SD();
+      d.notes[k] = (d.notes[k] || []).filter(function (x) { return x.id !== id; });
+      save();
+      try { audit("OT note deleted", id); } catch (e) {}
+      refresh();
+    },
+    load: function () {
+      var i = document.getElementById("thot_tpl").value;
+      if (i === "") return toast("Choose a procedure template first");
+      var t = SD().lib[+i];
+      if (!t) return;
+      var cur = readNote();
+      LIB_FIELDS.forEach(function (k) { cur[k] = t[k] || ""; });
+      cur.procedure = t.name;
+      ST.edit = cur;
+      refresh();
+      toast("Default notes loaded — edit as needed and Save");
+    },
+    save: function (andPrint) {
+      var n = readNote();
+      if (!n.procedure) return toast("Please enter the procedure performed");
+      var k = String(ST.adm), d = SD();
+      d.notes[k] = d.notes[k] || [];
+      if (!n.id) { n.id = "OT" + Date.now(); n.created = new Date().toISOString(); d.notes[k].push(n); }
+      else d.notes[k] = d.notes[k].map(function (x) { return x.id === n.id ? n : x; });
+      save();
+      try { audit("OT note saved", n.procedure); } catch (e) {}
+      toast("OT note saved");
+      ST.edit = null;
+      refresh();
+      if (andPrint) printDocs(["ot_notes"], ST.adm, n.id);
+    },
+    saveTpl: function () {
+      var n = readNote(), name = prompt("Template name:", n.procedure || "");
+      if (!name) return;
+      var t = { name: name };
+      LIB_FIELDS.forEach(function (k) { t[k] = n[k] || ""; });
+      SD().lib.push(t);
+      save();
+      toast("Saved as template: " + name);
+      ST.edit = n;
+      refresh();
+    },
+    cancel: function () { ST.edit = null; refresh(); }
+  };
+
+  /* =====================================================================
+     7. SETTINGS: SETTING MENU > Document Language & OT Templates
+     ===================================================================== */
+  var LANGS = { en: "English only", mr: "English + मराठी (Marathi)", hi: "English + हिंदी (Hindi)" };
+  Object.keys(LANG_LIST).forEach(function (c) { LANGS[c] = "English + " + LANG_LIST[c].nat + " (" + LANG_LIST[c].en + ")"; });
+  LANGS.custom = "English + any other language (type it yourself)";
+  function hasPack(m) { return m === "mr" || m === "hi" || !!packMap(m); }
+  function langName() { var s = S(); return s.mode === "custom" ? "English + " + (s.customName || "custom language") : LANGS[s.mode] || s.mode; }
+  var LT = window.__thLT = window.__thLT || { i: 0, q: "" };
+
+  function primeUsed() { DOC_KEYS.forEach(function (k) { try { render(k, {}, {}); } catch (e) {} }); }
+
+  TH.addMenuItem("set", "thDocLang", "Document Language & OT Templates");
+  TH.page("thDocLang", function () {
+    primeUsed();
+    var s = S(), m = s.mode;
+    var h = "<h2>Document Language &amp; OT Templates</h2>" +
+      '<div class="card"><h3 style="margin-top:0">1. Language of all printed documents</h3>' +
+      '<div class="grid" style="display:grid;grid-template-columns:1fr 1fr;gap:10px;max-width:760px">' +
+      '<div><label>Print documents in</label><select id="thl_mode" onchange="document.getElementById(\'thl_cbox\').style.display=this.value===\'custom\'?\'\':\'none\'">' +
+      Object.keys(LANGS).map(function (k) { return opt(k, LANGS[k] + (k === "en" || k === "custom" ? "" : hasPack(k) ? "  ✔ ready" : "  (pack not installed)"), k === m); }).join("") + "</select></div>" +
+      '<div id="thl_cbox"' + (m === "custom" ? "" : ' style="display:none"') + '><label>Language name</label><input id="thl_cname" value="' + E(s.customName) + '"></div></div>' +
+      (m !== "en" && m !== "custom" && !hasPack(m) ? '<div style="margin-top:8px;padding:8px 10px;border-radius:8px;background:#fffbeb;border:1px solid #fde68a;font-size:13px">The ' + E(LANG_LIST[m] ? LANG_LIST[m].en : m) + ' language pack is not installed yet. Install <b>TrueHope_Update_LangPack_' + E(LANG_LIST[m] ? LANG_LIST[m].en : m) + '.thupdate</b> from Software Updates — then every document translates automatically. Until then you can type translations in the table below.</div>' : "") +
+      (m !== "en" && hasPack(m) ? '<div style="margin-top:8px;padding:8px 10px;border-radius:8px;background:#ecfdf5;border:1px solid #bbf7d0;font-size:13px">✔ ' + E(langName()) + ' is fully built in — all documents translate automatically. Use the table below only if you want to change a word.</div>' : "") +
+      '<label style="display:block;margin-top:8px"><input type="checkbox" id="thl_all" ' + (s.applyAll ? "checked" : "") + "> Also add the translation to ALL existing documents of the software (OPD form, receipts, bills, discharge summary, admission record, registers…)</label>" +
+      '<div style="margin-top:10px"><button class="btn" type="button" onclick="thLS.saveLang()">Save language</button></div>' +
+      '<p style="font-size:12px;color:#64748b;margin-bottom:0">Built in: Marathi, Hindi, Gujarati (all consent paragraphs included). Other languages: install their language pack, or choose the last option and type the translations once.</p></div>';
+
+    if (m !== "en") {
+      var keys = {};
+      Object.keys(DICT).forEach(function (k) { keys[k] = 1; });
+      Object.keys(USED).forEach(function (k) { keys[k] = 1; });
+      Object.keys(s.extra[m] || {}).forEach(function (k) { keys[k] = 1; });
+      var list = Object.keys(keys).sort(function (a, b) { return a.length - b.length || a.localeCompare(b); });
+      h += '<div class="card"><h3 style="margin-top:0">2. Translation table — ' + E(langName()) + "</h3>" +
+        '<div style="display:flex;gap:8px;margin-bottom:8px;flex-wrap:wrap"><input id="thl_q" placeholder="Search a word…" oninput="thLS.filter(this.value)" style="flex:1;min-width:200px">' +
+        '<button class="btn" type="button" onclick="thLS.saveDict()">Save translations</button></div>' +
+        '<div class="thls-dict"><table class="table"><tr><th style="width:45%">English</th><th>' + E(m === "custom" ? (s.customName || "Translation") : LANGS[m]) + "</th></tr>" +
+        list.map(function (k) {
+          var en = USED[k] ? USED[k].en : k.replace(/\b\w/g, function (x) { return x.toUpperCase(); });
+          var bi = builtin(k, m), val = (s.extra[m] || {})[k] || bi, long = en.length > 60;
+          return '<tr class="thls-row" data-s="' + E((en + " " + val).toLowerCase()) + '"><td>' + E(en) + "</td><td>" +
+            (long ? '<textarea rows="3" data-k="' + E(k) + '" data-b="' + E(bi) + '">' + E(val) + "</textarea>" : '<input data-k="' + E(k) + '" data-b="' + E(bi) + '" value="' + E(val) + '">') + "</td></tr>";
+        }).join("") + "</table></div>" +
+        '<div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap"><input id="thl_newen" placeholder="Add new English word / heading (as printed)" style="flex:1;min-width:220px">' +
+        '<input id="thl_newtr" placeholder="Translation" style="flex:1;min-width:180px"><button class="btn sec" type="button" onclick="thLS.addWord()">Add word</button></div></div>';
+    }
+
+    // OT templates
+    var lib = SD().lib, t = lib[LT.i] || {};
+    h += '<div class="card"><h3 style="margin-top:0">3. OT note templates (default notes, one-click in OT)</h3>' +
+      '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><select id="thlt_sel" onchange="thLS.pickTpl(this.value)" style="min-width:320px">' +
+      lib.map(function (x, i) { return opt(i, x.name, i === LT.i); }).join("") + "</select>" +
+      '<button class="btn sm sec" type="button" onclick="thLS.newTpl()">+ New template</button>' +
+      '<button class="btn sm sec" type="button" onclick="thLS.delTpl()">Delete template</button>' +
+      '<button class="btn sm sec" type="button" onclick="thLS.restore()">Restore default templates</button></div>' +
+      '<div class="thsd-form" style="margin-top:10px"><div class="full"><label>Template / procedure name</label><input id="thlt_name" value="' + E(t.name || "") + '"></div>';
+    LIB_FIELDS.forEach(function (k) {
+      var f = NOTE_FIELDS.filter(function (x) { return x[0] === k; })[0];
+      var area = f[2] === "area";
+      h += (area ? '<div class="full">' : "<div>") + "<label>" + f[1][0] + "</label>" +
+        (area ? '<textarea id="thlt_' + k + '">' + E(t[k] || "") + "</textarea>" : '<input id="thlt_' + k + '" value="' + E(t[k] || "") + '">') + "</div>";
+    });
+    h += '</div><div style="margin-top:10px"><button class="btn" type="button" onclick="thLS.saveTpl()">Save template</button></div></div>';
+    return h;
+  });
+  function builtin(k, m) {
+    if (m === "mr") return (USED[k] && USED[k].mr) || dictL(k, 0) || "";
+    if (m === "hi") return (USED[k] && USED[k].hi) || dictL(k, 1) || "";
+    return packWord(m, k);
+  }
+  function refreshS() { try { go("thDocLang"); } catch (e) {} }
+
+  window.thLS = {
+    saveLang: function () {
+      var s = S();
+      s.mode = document.getElementById("thl_mode").value;
+      s.customName = document.getElementById("thl_cname").value.trim();
+      s.extra[s.mode] = s.extra[s.mode] || {};
+      s.applyAll = document.getElementById("thl_all").checked;
+      save();
+      try { audit("Document language changed", langName()); } catch (e) {}
+      toast("Documents will now print in: " + langName());
+      refreshS();
+    },
+    filter: function (q) {
+      q = (q || "").toLowerCase();
+      Array.prototype.forEach.call(document.querySelectorAll(".thls-row"), function (r) { r.style.display = !q || r.getAttribute("data-s").indexOf(q) >= 0 ? "" : "none"; });
+    },
+    saveDict: function () {
+      var s = S(), m = s.mode, ex = s.extra[m] = s.extra[m] || {}, n = 0;
+      Array.prototype.forEach.call(document.querySelectorAll(".thls-dict [data-k]"), function (el) {
+        var k = el.getAttribute("data-k"), b = el.getAttribute("data-b") || "", v = el.value.trim();
+        if (v && v !== b) { ex[k] = v; n++; } else delete ex[k];
+      });
+      save();
+      toast("Translations saved (" + n + " custom)");
+    },
+    addWord: function () {
+      var en = document.getElementById("thl_newen").value.trim(), tr = document.getElementById("thl_newtr").value.trim();
+      if (!en || !tr) return toast("Type the English word and its translation");
+      var s = S();
+      s.extra[s.mode] = s.extra[s.mode] || {};
+      s.extra[s.mode][norm(en)] = tr;
+      save();
+      toast("Word added");
+      refreshS();
+    },
+    pickTpl: function (i) { LT.i = +i; refreshS(); },
+    newTpl: function () {
+      var name = prompt("New template (procedure) name:");
+      if (!name) return;
+      var lib = SD().lib, t = { name: name };
+      LIB_FIELDS.forEach(function (k) { t[k] = ""; });
+      lib.push(t);
+      LT.i = lib.length - 1;
+      save();
+      refreshS();
+    },
+    saveTpl: function () {
+      var lib = SD().lib, t = lib[LT.i];
+      if (!t) return;
+      t.name = document.getElementById("thlt_name").value.trim() || t.name;
+      LIB_FIELDS.forEach(function (k) { var el = document.getElementById("thlt_" + k); if (el) t[k] = el.value; });
+      save();
+      try { audit("OT template saved", t.name); } catch (e) {}
+      toast("Template saved: " + t.name);
+      refreshS();
+    },
+    delTpl: function () {
+      var lib = SD().lib, t = lib[LT.i];
+      if (!t || !confirm("Delete template “" + t.name + "”? (Saved OT notes of patients are NOT affected)")) return;
+      lib.splice(LT.i, 1);
+      LT.i = 0;
+      save();
+      refreshS();
+    },
+    restore: function () {
+      var lib = SD().lib, have = {}, n = 0;
+      lib.forEach(function (t) { have[t.name] = 1; });
+      DEF_LIB.forEach(function (t) { if (!have[t.name]) { lib.push(Object.assign({}, t)); n++; } });
+      save();
+      toast(n ? n + " default template(s) restored" : "All default templates are already present");
+      refreshS();
+    }
+  };
+
+  /* =====================================================================
+     8. START
+     ===================================================================== */
+  hookPrints();
+  setTimeout(hookPrints, 1500);
+  setTimeout(hookPrints, 5000);
+})();
+/*TH-SIGN:8b40fbd4547aa424cd45170dbde2cee4*/

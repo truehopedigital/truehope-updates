@@ -1,0 +1,1143 @@
+/*TRUEHOPE-UPDATE {"id":"th-facility-mgmt-20261120","name":"Facility Management & Safety (FMS)","version":"1.1","date":"2026-11-20","description":"25 facility modules with configurable checklist engine (daily-annual, C/NC/NA, remarks, photos, assignee, reviewer & approval, auto next date, pending/overdue alerts, audit trail, auto CAPA), CAPA workflow with verification, medical equipment register (AMC, PM, calibration, breakdown, downtime, service reports), contracts & AMC, HIRA risk register, drills, training, dashboard with trends, role-based access, PDF (print) and Excel (.xlsx) reports. Standards references are configurable by accreditation edition — this module supports compliance work; it does not certify compliance."} */
+(function () {
+  if (window.__thFMS) return;
+  window.__thFMS = true;
+
+  /* =========================================================================
+     helpers
+     ========================================================================= */
+  function E(s) { return String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;"); }
+  function V(v) { return v == null ? "" : String(v); }
+  function pad(n) { return ("0" + n).slice(-2); }
+  function iso(d) { d = d || new Date(); return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()); }
+  function today() { return iso(new Date()); }
+  function nowTime() { var d = new Date(); return pad(d.getHours()) + ":" + pad(d.getMinutes()); }
+  function show(s) { if (!s) return ""; var p = String(s).slice(0, 10).split("-"); return p.length === 3 ? p[2] + "-" + p[1] + "-" + p[0] : s; }
+  function addDays(s, n) { var d = new Date(s + "T00:00:00"); d.setDate(d.getDate() + n); return iso(d); }
+  function addMonths(s, n) { var d = new Date(s + "T00:00:00"), day = d.getDate(); d.setDate(1); d.setMonth(d.getMonth() + n); var last = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate(); d.setDate(Math.min(day, last)); return iso(d); }
+  function daysBetween(a, b) { return Math.round((new Date(b + "T00:00:00") - new Date(a + "T00:00:00")) / 864e5); }
+  function uid(p) { return (p || "f") + Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
+  function g(id) { var el = document.getElementById(id); if (!el) return ""; if (el.type === "checkbox") return el.checked; return String(el.value).trim(); }
+  function money(n) { n = +n || 0; return "₹ " + n.toLocaleString("en-IN", { maximumFractionDigits: 2 }); }
+  function refresh(p) { try { go(p); } catch (e) { console.warn(e); } }
+  function toast2(m) { try { toast(m); } catch (e) {} }
+  function opts(list, sel, blank) {
+    return (blank != null ? '<option value="">' + E(blank) + "</option>" : "") + list.map(function (o) {
+      var v = typeof o === "object" ? o.v : o, t = typeof o === "object" ? o.t : o;
+      return '<option value="' + E(v) + '"' + (String(v) === String(sel) ? " selected" : "") + ">" + E(t) + "</option>";
+    }).join("");
+  }
+  function inp(id, label, val, type, cls, extra) { return '<div class="' + (cls || "") + '"><label>' + label + '</label><input id="' + id + '"' + (type ? ' type="' + type + '"' : "") + ' value="' + E(val) + '"' + (extra || "") + "></div>"; }
+  function sel(id, label, list, val, cls, blank) { return '<div class="' + (cls || "") + '"><label>' + label + '</label><select id="' + id + '">' + opts(list, val, blank) + "</select></div>"; }
+  function ta(id, label, val, cls) { return '<div class="' + (cls || "w4") + '"><label>' + label + '</label><textarea id="' + id + '">' + E(val) + "</textarea></div>"; }
+  function badge(t, c) { return '<span class="fm-b ' + (c || "") + '">' + E(t) + "</span>"; }
+
+  /* current user & role */
+  function appCur() { try { if (typeof cur !== "undefined" && cur) return cur; } catch (e) {} return window.curUser || null; }
+  function who() {
+    try {
+      var cu = appCur(); if (cu && (cu.name || cu.u)) return String(cu.name || cu.u);
+      var h = document.querySelector("header"); if (!h) return "";
+      var lines = (h.innerText || "").split(/\n/).map(function (l) { return l.trim(); }).filter(function (l) { return /•/.test(l) && !/version|auto-save|backup|storage/i.test(l); });
+      var m = lines.length ? lines[lines.length - 1].match(/^(.+?)\s*•\s*(.+)$/) : null;
+      return m ? m[1].trim() : "";
+    } catch (e) { return ""; }
+  }
+  function appRole() {
+    try {
+      try { if (typeof isM === "function" && isM()) return "Master"; } catch (e) {}
+      var cu = appCur(); if (cu && (cu.role || cu.r)) return String(cu.role || cu.r);
+      var h = document.querySelector("header"); var t = h ? h.innerText : "";
+      var m = t.match(/•\s*([A-Za-z ]+?)\s*(\n|Change password|Log out|$)/g);
+      return m ? m[m.length - 1].replace(/^•\s*/, "").replace(/\s*(Change password|Log out)\s*$/, "").trim() : "";
+    } catch (e) { return ""; }
+  }
+
+  /* =========================================================================
+     data (new keys only: db.thFMS, db.settings.thFMS)
+     ========================================================================= */
+  var MODULES = [
+    ["bld", "Building & Infrastructure", "🏗", "FMS"], ["fire", "Fire & Life Safety", "🧯", "FMS"], ["elec", "Electrical Safety", "⚡", "FMS"],
+    ["water", "Water Management", "💧", "FMS / HIC"], ["bmw", "Biomedical Waste Management", "♻", "HIC / FMS"], ["hk", "Housekeeping & Sanitation", "🧹", "HIC"],
+    ["equip", "Medical Equipment Management", "🩺", "FMS"], ["gas", "Medical Gas & Oxygen", "🫁", "FMS"], ["hvac", "HVAC & Air Quality", "🌬", "FMS / HIC"],
+    ["lift", "Lift & Transportation Safety", "🛗", "FMS"], ["kitchen", "Kitchen & Food Safety", "🍲", "HIC / FMS"], ["laundry", "Laundry Management", "🧺", "HIC"],
+    ["stp", "STP / ETP Management", "🚰", "FMS"], ["sec", "Security & CCTV", "📹", "FMS"], ["disaster", "Disaster Management", "🌪", "FMS"],
+    ["rad", "Radiation Safety / AERB", "☢", "FMS"], ["risk", "Facility Risk Assessment", "📊", "FMS"], ["pm", "Preventive Maintenance", "🛠", "FMS"],
+    ["bd", "Breakdown Maintenance", "🔧", "FMS"], ["amc", "Contractor & AMC Management", "📑", "FMS"], ["train", "Facility Staff Training", "🎓", "FMS / HRM"],
+    ["pest", "Pest Control", "🐜", "HIC / FMS"], ["emer", "Emergency Preparedness", "🚨", "FMS"], ["hira", "Hazard Identification & Risk Assessment", "⚠", "FMS"],
+    ["capa", "CAPA Management", "✅", "PSQ"]
+  ].map(function (m) { return { k: m[0], n: m[1], i: m[2], ch: m[3] }; });
+  function modOf(k) { return MODULES.filter(function (m) { return m.k === k; })[0] || { k: k, n: k, i: "•", ch: "" }; }
+
+  var FREQ = ["Daily", "Weekly", "Monthly", "Quarterly", "Half-yearly", "Annual"];
+  function nextFrom(freq, d) {
+    return freq === "Daily" ? addDays(d, 1) : freq === "Weekly" ? addDays(d, 7) : freq === "Monthly" ? addMonths(d, 1) :
+      freq === "Quarterly" ? addMonths(d, 3) : freq === "Half-yearly" ? addMonths(d, 6) : freq === "Annual" ? addMonths(d, 12) : addDays(d, 30);
+  }
+
+  /* default checklists — every item and standard reference can be edited in the software */
+  var DEF = {
+    bld: [["Building & infrastructure round", "Monthly", ["Walls, ceilings and floors free of cracks, seepage and damp patches", "Doors, windows, handles and locks working", "Ramps with handrails and anti-skid surface available", "Signages (directional, statutory, bilingual) displayed and legible", "Toilets for patients / staff functional and clean", "Roof and terrace drains clear, no water logging", "No unauthorised storage in corridors, staircases or under stairs", "Building / occupancy / structural stability certificates valid"]]],
+    fire: [["Fire safety daily walk-round", "Daily", ["Exit routes and staircases free of obstruction", "Fire exit signs illuminated", "Fire doors closed and not wedged open", "Fire alarm panel normal (no fault / isolate)", "No smoking rule followed, no naked flame in clinical areas"]],
+      ["Fire extinguisher & hydrant monthly check", "Monthly", ["All extinguishers present at marked locations", "Pressure gauge in green zone", "Seal, pin and tamper tag intact", "Refill / hydro-test due dates within validity", "Hose reel and hydrant valves accessible and leak-free", "Fire pump tested (jockey / main / diesel)", "Smoke detectors / sprinklers unobstructed", "Fire NOC valid and displayed"]]],
+    elec: [["Electrical safety check", "Monthly", ["Panels / DBs closed, labelled, rubber mat in front", "No loose wiring, temporary joints or overloaded sockets", "Earthing pits tested and values recorded", "ELCB / RCCB trip test done", "DG set: fuel level, battery and weekly run log", "UPS / inverter for critical areas tested", "Emergency lighting working", "Electrical safety audit / licence valid"]]],
+    water: [["Water quality & storage check", "Monthly", ["Overhead / underground tanks cleaned as per schedule", "Tank lids closed and locked", "Residual chlorine checked and recorded", "Microbiological water test done (NABL lab)", "RO / drinking water units serviced", "Dialysis water (if applicable) tested as per policy", "No leakages in plumbing", "Water consumption recorded"]]],
+    bmw: [["Biomedical waste daily check", "Daily", ["Colour-coded bins with liners at every generation point", "Segregation correct (no mixing)", "Bins not filled more than 3/4", "Sharps in puncture-proof containers", "Bags labelled / bar-coded", "Waste collected and weighed, register updated", "Storage area locked, signage displayed", "Handed over to CBWTF within 48 hours"]],
+      ["BMW monthly compliance", "Monthly", ["BMW authorisation valid", "Monthly / annual report submitted", "Staff PPE and immunisation (Hep B) status", "Spill kit available and staff trained", "Needle-stick injuries reported and followed up"]]],
+    hk: [["Housekeeping & sanitation round", "Daily", ["Floors cleaned as per schedule (log signed)", "High-touch surfaces disinfected", "Toilets clean, odour-free, supplies available", "Correct disinfectant dilution used", "Mops / cleaning equipment colour-coded", "Patient units clean and dust-free", "Spill management kit available"]]],
+    equip: [["Equipment safety round", "Monthly", ["All equipment tagged with ID and PM / calibration status", "PM schedule followed for critical equipment", "Calibration certificates available and valid", "Breakdown register updated", "User training records available", "Condemned equipment removed from use", "Emergency equipment (defibrillator, suction) tested daily"]]],
+    gas: [["Medical gas & oxygen check", "Daily", ["Oxygen manifold pressure normal", "Cylinders stored upright, chained, labelled (full / empty)", "Stock of full cylinders adequate", "Alarm panel for gas pressure working", "No oil / grease near oxygen points", "Outlets in wards and ICU functional", "Valid PESO licence / supplier certificates"]]],
+    hvac: [["HVAC & air quality check", "Monthly", ["AC filters cleaned / replaced as per schedule", "OT / ICU air changes and pressure verified", "HEPA filter status (OT) recorded", "Temperature and humidity within range", "Condensate drains clear", "Air sampling / particle count (OT) done as per policy"]]],
+    lift: [["Lift safety check", "Monthly", ["Lift licence / inspection certificate valid", "AMC service done this month", "Alarm bell and intercom working", "Emergency light and ARD working", "Rescue key available, staff trained", "Stretcher lift dimensions adequate, door sensors working"]]],
+    kitchen: [["Kitchen & food safety check", "Daily", ["FSSAI licence valid and displayed", "Food handlers medical fitness and hygiene", "Raw and cooked food stored separately", "Refrigerator temperature recorded", "Pest-free, clean preparation area", "Diet as per doctor's prescription delivered", "Food samples retained for 24 hours"]]],
+    laundry: [["Laundry check", "Weekly", ["Soiled and clean linen handled separately", "Infected linen in labelled bags", "Wash temperature / chemicals as per policy", "Clean linen stored covered", "Linen stock adequate", "Outsourced laundry contract and quality checks"]]],
+    stp: [["STP / ETP check", "Monthly", ["STP / ETP running, log maintained", "Treated water tested (BOD, COD, TSS, pH)", "Consent to operate (Pollution Control Board) valid", "Sludge disposal recorded", "Operator trained"]]],
+    sec: [["Security & CCTV check", "Daily", ["CCTV cameras working, recording available", "Security staff on duty at all posts", "Visitor management followed", "Infant / child security (where applicable)", "Restricted areas access-controlled", "Code Pink / Code Grey awareness"]]],
+    disaster: [["Disaster preparedness review", "Quarterly", ["Disaster management plan updated", "Emergency contact list displayed", "Triage area identified", "Buffer stock of medicines and consumables", "Mock drill conducted this quarter", "Staff aware of their roles"]]],
+    rad: [["Radiation safety (AERB) check", "Quarterly", ["AERB licence for each X-ray / CT valid", "Radiation Safety Officer designated", "TLD badges worn and reports reviewed", "Lead aprons checked (no cracks)", "Radiation warning signs / lights working", "Pregnancy warning displayed", "QA test of equipment done"]]],
+    risk: [["Facility risk assessment review", "Annual", ["Facility risk assessment done for all areas", "High risks have control measures", "Risk register reviewed by committee", "Residual risks accepted / escalated"]]],
+    pm: [["Preventive maintenance compliance", "Monthly", ["PM calendar for all equipment available", "PM done as per schedule this month", "PM reports filed", "Pending PM escalated"]]],
+    bd: [["Breakdown maintenance review", "Monthly", ["All breakdowns logged with date / time", "Response time within target", "Downtime calculated and reviewed", "Repeat breakdowns analysed"]]],
+    amc: [["Contracts & AMC review", "Quarterly", ["All AMC / CMC contracts valid", "Renewals initiated before expiry", "Service visit reports received", "Vendor performance evaluated"]]],
+    train: [["Facility training compliance", "Quarterly", ["Fire safety training for all staff", "BMW training done", "Equipment user training records", "Code drills participation recorded"]]],
+    pest: [["Pest control check", "Monthly", ["Pest control done as per schedule", "Service report signed", "No sighting of rodents / insects", "Chemicals used are approved and safe"]]],
+    emer: [["Emergency codes readiness", "Monthly", ["Emergency codes displayed (Code Red, Blue, Pink, etc.)", "Crash cart checked and sealed", "Emergency numbers displayed", "Evacuation plan displayed on every floor"]]],
+    hira: [["HIRA review", "Annual", ["Hazards identified for every department", "Risk scored (likelihood × severity)", "Control measures implemented", "HIRA reviewed after any incident"]]],
+    capa: [["CAPA effectiveness review", "Monthly", ["All CAPA have responsibility and target date", "Overdue CAPA escalated", "Closed CAPA verified for effectiveness", "Trends discussed in quality committee"]]]
+  };
+
+  var ROLES = ["Administrator", "Facility Manager", "Quality Manager", "Department HOD", "Facility Staff"];
+  var PERM = {
+    "Administrator": { all: 1 },
+    "Facility Manager": { viewAll: 1, config: 1, inspect: 1, review: 1, approve: 1, equip: 1, registers: 1, capaUpdate: 1, capaVerify: 1, reports: 1, del: 1 },
+    "Quality Manager": { viewAll: 1, inspect: 1, review: 1, approve: 1, capaUpdate: 1, capaVerify: 1, reports: 1, registers: 1 },
+    "Department HOD": { inspect: 1, review: 1, capaUpdate: 1, registers: 1, reports: 1, ownDept: 1 },
+    "Facility Staff": { inspect: 1, capaUpdate: 1, registers: 1, ownDept: 1 }
+  };
+
+  function F() {
+    var f = db.thFMS;
+    if (!f || typeof f !== "object") f = db.thFMS = {};
+    ["checklists", "inspections", "capa", "equipment", "contracts", "risks", "drills", "trainings", "breakdowns", "trail"].forEach(function (k) { if (!Array.isArray(f[k])) f[k] = []; });
+    if (!f.photos || typeof f.photos !== "object") f.photos = {};
+    if (!f.seeded) seed(f);
+    return f;
+  }
+  function C() {
+    db.settings = db.settings || {};
+    var c = db.settings.thFMS;
+    if (!c || typeof c !== "object") c = db.settings.thFMS = {};
+    if (!Array.isArray(c.editions) || !c.editions.length) c.editions = ["NABH Hospital Standards – 5th Edition", "Hospital internal policy"];
+    if (!c.edition) c.edition = c.editions[0];
+    if (!c.userRoles || typeof c.userRoles !== "object") c.userRoles = {};
+    if (!c.userDept || typeof c.userDept !== "object") c.userDept = {};
+    if (!(+c.remindDays >= 0)) c.remindDays = 3;
+    if (!(+c.capaDays > 0)) c.capaDays = 7;
+    if (!Array.isArray(c.areas)) c.areas = ["Whole hospital", "OPD", "IPD wards", "ICU", "OT", "Emergency", "Laboratory", "Radiology", "Pharmacy", "Kitchen", "Laundry", "BMW storage", "Engineering / Maintenance", "Administration"];
+    return c;
+  }
+  function seed(f) {
+    var ed = C().edition, t = today();
+    MODULES.forEach(function (m) {
+      (DEF[m.k] || []).forEach(function (cl) {
+        f.checklists.push({ id: uid("cl"), module: m.k, name: cl[0], freq: cl[1], dept: "Whole hospital", assignee: "", reviewer: "", edition: ed, applicable: true, active: true,
+          items: cl[2].map(function (x) { return { t: x, std: m.ch }; }), start: t, nextDue: t, lastDone: "", created: new Date().toISOString(), createdBy: "system" });
+      });
+    });
+    f.seeded = true;
+  }
+  function trail(action, ref) {
+    var f = F(); f.trail.push({ at: new Date().toISOString(), user: who(), role: myRole(), action: action, ref: ref || "" });
+    if (f.trail.length > 5000) f.trail.splice(0, f.trail.length - 5000);
+    try { audit("FMS: " + action, ref || ""); } catch (e) {}
+  }
+  function saveAll() { try { save(); } catch (e) { console.warn("save failed", e); } }
+
+  /* roles / permissions */
+  function myRole() {
+    var c = C(), n = who();
+    try { if (typeof mMode !== "undefined" && Date.now() < mMode) return "Administrator"; } catch (e) {}
+    if (n && c.userRoles[n]) return c.userRoles[n];
+    if (/master|admin|owner|director/i.test(appRole())) return "Administrator";
+    if (!n) return "Administrator";        // single-user / no login information
+    return "Facility Staff";
+  }
+  function myDept() { return C().userDept[who()] || ""; }
+  function can(p) { var r = PERM[myRole()] || {}; return !!(r.all || r[p]); }
+  function seesDept(d) { return can("viewAll") || !d || d === "Whole hospital" || d === myDept(); }
+  function deny(what) { return '<div class="card fm-deny">🔒 <b>Not allowed.</b> Your facility role (' + E(myRole()) + ") cannot " + E(what) + ". Ask the Administrator to change your role in FMS Settings.</div>"; }
+
+  function people() {
+    var s = {}, out = [];
+    function add(n) { n = V(n).trim(); if (n && !s[n.toLowerCase()]) { s[n.toLowerCase()] = 1; out.push(n); } }
+    (Array.isArray(db.users) ? db.users : []).forEach(function (u) { add(u && (u.name || u.fullName || u.username || u.user || u.u)); });
+    (Array.isArray(db.hrStaff) ? db.hrStaff : []).forEach(function (u) { add(u && (u.name || u.fullName || u.staffName)); });
+    (Array.isArray(db.doctors) ? db.doctors : []).forEach(function (u) { add(u && u.name); });
+    add(who());
+    return out.sort();
+  }
+  function depts() {
+    var s = {}, out = [];
+    function add(n) { n = V(n).trim(); if (n && !s[n.toLowerCase()]) { s[n.toLowerCase()] = 1; out.push(n); } }
+    C().areas.forEach(add);
+    (Array.isArray(db.departments) ? db.departments : []).forEach(function (d) { add(typeof d === "string" ? d : d && (d.name || d.dept || d.title)); });
+    return out;
+  }
+
+  /* due status of a checklist */
+  function dueState(cl) {
+    if (!cl.active || cl.applicable === false) return "inactive";
+    var t = today(), d = cl.nextDue || t;
+    if (d < t) return "overdue";
+    if (daysBetween(t, d) <= (+C().remindDays || 0)) return "due";
+    return "ok";
+  }
+  function dueBadge(cl) {
+    var s = dueState(cl);
+    return s === "overdue" ? badge("Overdue " + daysBetween(cl.nextDue, today()) + " d", "r") : s === "due" ? badge(cl.nextDue === today() ? "Due today" : "Due " + show(cl.nextDue), "a") : s === "inactive" ? badge("Inactive", "") : badge("Next " + show(cl.nextDue), "g");
+  }
+  function inspScore(ins) {
+    var c = 0, n = 0, na = 0;
+    (ins.res || []).forEach(function (r) { if (r.s === "C") c++; else if (r.s === "NC") n++; else if (r.s === "NA") na++; });
+    return { c: c, nc: n, na: na, pct: c + n ? Math.round(c / (c + n) * 1000) / 10 : null };
+  }
+  function visibleCL() { return F().checklists.filter(function (c) { return !c.deleted && seesDept(c.dept) && (can("viewAll") || !c.assignee || c.assignee === who() || can("ownDept")); }); }
+  function visibleInsp() { return F().inspections.filter(function (i) { return !i.deleted && (can("viewAll") || seesDept(i.dept) || i.inspector === who()); }); }
+  function visibleCAPA() { return F().capa.filter(function (c) { return !c.deleted && (can("viewAll") || seesDept(c.dept) || c.responsible === who()); }); }
+
+  /* photos: compress to JPEG (max 1280 px) and store */
+  function readPhotos(input, cb) {
+    var files = Array.prototype.slice.call(input.files || []), out = [], left = files.length;
+    if (!left) return cb([]);
+    files.forEach(function (file) {
+      var fr = new FileReader();
+      fr.onload = function () {
+        var img = new Image();
+        img.onload = function () {
+          var mx = 1280, w = img.width, h = img.height, k = Math.min(1, mx / Math.max(w, h));
+          var cv = document.createElement("canvas"); cv.width = Math.round(w * k); cv.height = Math.round(h * k);
+          cv.getContext("2d").drawImage(img, 0, 0, cv.width, cv.height);
+          var id = uid("ph"); F().photos[id] = cv.toDataURL("image/jpeg", 0.72); out.push(id);
+          if (--left === 0) cb(out);
+        };
+        img.onerror = function () { if (--left === 0) cb(out); };
+        img.src = fr.result;
+      };
+      fr.onerror = function () { if (--left === 0) cb(out); };
+      fr.readAsDataURL(file);
+    });
+  }
+  function thumbs(ids, delFn) {
+    return (ids || []).map(function (id) {
+      var src = F().photos[id]; if (!src) return "";
+      return '<span class="fm-ph"><img src="' + src + '" onclick="thFMS.photo(\'' + id + '\')">' + (delFn ? '<i onclick="' + delFn + "'" + id + "')\">✕</i>" : "") + "</span>";
+    }).join("");
+  }
+
+  /* =========================================================================
+     style
+     ========================================================================= */
+  TH.css([
+    ".fm input[type=checkbox],.fm input[type=radio]{width:auto !important;height:auto !important;margin:0 !important;accent-color:#0f766e}",
+    ".fm-hero{background:linear-gradient(135deg,#134e4a,#0f766e 55%,#2dd4bf);color:#fff;border-radius:16px;padding:16px 20px;margin-bottom:12px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;box-shadow:0 6px 18px rgba(15,118,110,.25)}",
+    ".fm-hero h2{margin:0;color:#fff;font-size:21px;flex:1}.fm-hero small{display:block;opacity:.9;font-size:12.5px;font-weight:400}",
+    ".fm-hero .btn{background:#fff !important;color:#0f766e !important;border-color:#fff !important;font-weight:700}",
+    ".fm-k{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:12px}",
+    ".fm-kpi{background:#fff;border:1px solid #d1e7e4;border-radius:12px;padding:10px 14px;border-left:5px solid #0f766e;cursor:pointer}",
+    ".fm-kpi small{display:block;color:#64748b;font-size:12px}.fm-kpi b{font-size:22px;color:#0b2545}",
+    ".fm-kpi.r{border-left-color:#dc2626}.fm-kpi.a{border-left-color:#f59e0b}.fm-kpi.g{border-left-color:#16a34a}.fm-kpi.b{border-left-color:#2563eb}",
+    ".fm-b{display:inline-block;font-size:11px;font-weight:700;border-radius:20px;padding:2px 9px;background:#e2e8f0;color:#334155;white-space:nowrap}",
+    ".fm-b.g{background:#dcfce7;color:#166534}.fm-b.r{background:#fee2e2;color:#991b1b}.fm-b.a{background:#fef3c7;color:#92400e}.fm-b.b{background:#dbeafe;color:#1e40af}",
+    ".fm-form{display:grid;grid-template-columns:repeat(4,1fr);gap:8px 12px}",
+    ".fm-form label{display:block;font-size:12px;color:#475569;margin-bottom:2px}.fm-form .w2{grid-column:span 2}.fm-form .w4{grid-column:1/-1}",
+    ".fm-form input,.fm-form select,.fm-form textarea{width:100%;box-sizing:border-box}.fm-form textarea{min-height:56px}",
+    ".fm-t td,.fm-t th{font-size:13px;vertical-align:top}.fm-t .r{text-align:right}",
+    ".fm-mods{display:grid;grid-template-columns:repeat(auto-fill,minmax(205px,1fr));gap:10px}",
+    ".fm-mod{background:#fff;border:1px solid #d1e7e4;border-radius:14px;padding:12px;cursor:pointer;transition:transform .1s}",
+    ".fm-mod:hover{transform:translateY(-2px);box-shadow:0 6px 16px rgba(15,118,110,.15)}",
+    ".fm-mod .i{font-size:26px}.fm-mod b{display:block;font-size:14px;color:#0b2545;margin:4px 0}.fm-mod small{color:#64748b;font-size:11.5px}",
+    ".fm-item{border:1px solid #e2e8f0;border-radius:12px;padding:10px 12px;margin-bottom:8px;background:#fff}",
+    ".fm-item.C{border-left:5px solid #16a34a}.fm-item.NC{border-left:5px solid #dc2626;background:#fff7f7}.fm-item.NA{border-left:5px solid #94a3b8}",
+    ".fm-item .q{font-weight:600;color:#0b2545;font-size:14px}.fm-item .std{font-size:11px;color:#64748b}",
+    ".fm-seg{display:inline-flex;border:1px solid #cbd5e1;border-radius:10px;overflow:hidden;margin:6px 0}",
+    ".fm-seg button{border:0;background:#fff;padding:7px 14px;font-weight:700;cursor:pointer;color:#334155;border-right:1px solid #e2e8f0}",
+    ".fm-seg button:last-child{border-right:0}.fm-seg button.on.C{background:#16a34a;color:#fff}.fm-seg button.on.NC{background:#dc2626;color:#fff}.fm-seg button.on.NA{background:#64748b;color:#fff}",
+    ".fm-ph{position:relative;display:inline-block;margin:4px 6px 0 0}.fm-ph img{width:64px;height:64px;object-fit:cover;border-radius:8px;border:1px solid #cbd5e1;cursor:zoom-in}",
+    ".fm-ph i{position:absolute;top:-6px;right:-6px;background:#dc2626;color:#fff;border-radius:50%;width:18px;height:18px;font-size:11px;font-style:normal;text-align:center;line-height:18px;cursor:pointer}",
+    ".fm-bars{display:flex;align-items:flex-end;gap:6px;height:130px;border-bottom:1px solid #cbd5e1;padding-top:6px}",
+    ".fm-bars div{flex:1;background:linear-gradient(180deg,#2dd4bf,#0f766e);border-radius:5px 5px 0 0;position:relative;min-height:2px}",
+    ".fm-bars div span{position:absolute;top:-16px;left:0;right:0;text-align:center;font-size:10.5px;color:#0b2545;font-weight:700}",
+    ".fm-lbl{display:flex;gap:6px}.fm-lbl div{flex:1;text-align:center;font-size:10.5px;color:#64748b}",
+    ".fm-hb{display:flex;align-items:center;gap:8px;margin:4px 0;font-size:12.5px}.fm-hb .bar{flex:1;height:12px;background:#f1f5f9;border-radius:6px;overflow:hidden}.fm-hb .bar div{height:100%;background:#0f766e}",
+    ".fm-deny{border-left:5px solid #dc2626}",
+    ".fm-tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px}.fm-tabs button{border:1px solid #cbd5e1;background:#fff;border-radius:20px;padding:6px 14px;cursor:pointer;font-size:13px}.fm-tabs button.on{background:#0f766e;color:#fff;border-color:#0f766e;font-weight:700}",
+    ".fm-zoom{position:fixed;inset:0;background:rgba(0,0,0,.8);z-index:2147482700;display:flex;align-items:center;justify-content:center;cursor:zoom-out}.fm-zoom img{max-width:92vw;max-height:92vh;border-radius:8px}",
+    ".fm-menu-badge{background:#dc2626;color:#fff;border-radius:10px;font-size:10.5px;padding:0 6px;margin-left:6px;font-weight:800}",
+    ".fm-pr table{width:100%;border-collapse:collapse;margin:6px 0}.fm-pr td,.fm-pr th{border:1px solid #333;padding:3px 5px;font-size:11px;vertical-align:top;text-align:left}",
+    ".fm-pr th{background:#eef2f7}.fm-pr h3{text-align:center;margin:4px 0 6px;font-size:15px}.fm-pr .sig{display:flex;justify-content:space-between;margin-top:34px;font-size:11.5px}",
+    ".fm-pr img{width:90px;height:68px;object-fit:cover;margin:2px;border:1px solid #999}",
+    "@media(max-width:900px){.fm-form{grid-template-columns:1fr 1fr}}"
+  ].join(""));
+
+  /* =========================================================================
+     menu  (one module, linked from Quality and Reports)
+     ========================================================================= */
+  try { TH.addMenu("fms", "FACILITY MANAGEMENT", "🏢"); } catch (e) {}
+  [["thFMSDash", "FMS Dashboard"], ["thFMSDue", "Inspections Due / Overdue"], ["thFMSMods", "25 Facility Modules"], ["thFMSCL", "Checklist Library"], ["thFMSInsps", "Inspection Register"],
+   ["thFMSCapa", "CAPA (all sources)"], ["thFMSEq", "Medical Equipment Register"], ["thFMSPM", "Preventive Maintenance & Calibration"], ["thFMSBd", "Breakdown Maintenance"],
+   ["thFMSAmc", "Contractors & AMC"], ["thFMSRisk", "HIRA / Risk Register"], ["thFMSDrill", "Mock Drills & Emergency"], ["thFMSTrain", "Facility Staff Training"],
+   ["thFMSRep", "FMS Reports (PDF / Excel)"], ["thFMSSet", "FMS Settings & Roles"]].forEach(function (x) { try { TH.addMenuItem("fms", x[0], x[1]); } catch (e) {} });
+  /* Layout Designer keeps its own saved menu order; place FMS once just above SETTING MENU (user can still drag it anywhere) */
+  try {
+    var LY = db.settings && db.settings.thLayout, cfg = C();
+    if (LY && Array.isArray(LY.top) && !cfg.layoutPlaced) {
+      if (!LY.top.some(function (t) { return t && t.id === "facility management"; })) {
+        var at = LY.top.map(function (t) { return t && t.id; }).indexOf("setting menu"); if (at < 0) at = LY.top.map(function (t) { return t && t.id; }).indexOf("log out"); if (at < 0) at = LY.top.length;
+        LY.top.splice(at, 0, { id: "facility management", name: "", hidden: false, subs: [] });
+      }
+      cfg.layoutPlaced = true; try { save(true); } catch (e) {}
+    }
+  } catch (e) {}
+  try { TH.addMenuItem("qms", "thFMSCapa", "Facility CAPA (FMS)"); TH.addMenuItem("rep", "thFMSRep", "Facility Management Reports"); } catch (e) {}
+
+  var ST = window.__fmS = window.__fmS || { mod: "", cl: "", insp: "", capa: "", eq: "", eqTab: "info", from: addMonths(today(), -1), to: today(), q: "", fmod: "", fst: "", edit: null };
+
+  /* =========================================================================
+     DASHBOARD
+     ========================================================================= */
+  function stats(from, to) {
+    var CL = visibleCL().filter(function (c) { return c.active && c.applicable !== false; });
+    var IN = visibleInsp().filter(function (i) { return i.date >= from && i.date <= to && i.status !== "Draft" && i.status !== "Returned"; });
+    var CA = visibleCAPA();
+    var c = 0, nc = 0;
+    IN.forEach(function (i) { var s = inspScore(i); c += s.c; nc += s.nc; });
+    var pmUp = 0, t = today(), lim = addDays(t, 30);
+    F().equipment.forEach(function (e) { if (e.deleted || e.status === "Condemned") return; [e.pmNext, e.calNext].forEach(function (d) { if (d && d <= lim) pmUp++; }); });
+    return {
+      total: CL.length, done: IN.length, pending: CL.filter(function (x) { return dueState(x) === "due"; }).length, overdue: CL.filter(function (x) { return dueState(x) === "overdue"; }).length,
+      pct: c + nc ? Math.round(c / (c + nc) * 1000) / 10 : null, open: CA.filter(function (x) { return x.status !== "Closed"; }).length, closed: CA.filter(function (x) { return x.status === "Closed"; }).length,
+      pmUp: pmUp, IN: IN
+    };
+  }
+  TH.page("thFMSDash", function () {
+    var S = stats(ST.from, ST.to);
+    var byDept = {};
+    S.IN.forEach(function (i) { var s = inspScore(i), d = i.dept || "—"; var o = byDept[d] = byDept[d] || { c: 0, nc: 0, n: 0 }; o.c += s.c; o.nc += s.nc; o.n++; });
+    var months = [], t = today();
+    for (var k = 11; k >= 0; k--) { var m = addMonths(t.slice(0, 8) + "01", -k).slice(0, 7); months.push(m); }
+    var trend = months.map(function (m) {
+      var c = 0, n = 0;
+      visibleInsp().forEach(function (i) { if (i.status !== "Draft" && i.status !== "Returned" && (i.date || "").slice(0, 7) === m) { var s = inspScore(i); c += s.c; n += s.nc; } });
+      return c + n ? Math.round(c / (c + n) * 100) : null;
+    });
+    var over = visibleCL().filter(function (x) { return dueState(x) === "overdue"; }).sort(function (a, b) { return a.nextDue < b.nextDue ? -1 : 1; });
+    var due = visibleCL().filter(function (x) { return dueState(x) === "due"; });
+    var upPM = [];
+    F().equipment.forEach(function (e) { if (e.deleted || e.status === "Condemned") return; if (e.pmNext && e.pmNext <= addDays(t, 30)) upPM.push([e, "PM", e.pmNext]); if (e.calNext && e.calNext <= addDays(t, 30)) upPM.push([e, "Calibration", e.calNext]); });
+    upPM.sort(function (a, b) { return a[2] < b[2] ? -1 : 1; });
+    var capaOver = visibleCAPA().filter(function (c) { return c.status !== "Closed" && c.target && c.target < t; });
+    var h = '<div class="fm"><div class="fm-hero"><h2>🏢 Facility Management & Safety<small>' + E(C().edition) + " · role: " + E(myRole()) + (myDept() ? " · " + E(myDept()) : "") + "</small></h2>" +
+      '<button class="btn" type="button" onclick="go(\'thFMSDue\')">Inspections due</button><button class="btn" type="button" onclick="go(\'thFMSMods\')">25 modules</button><button class="btn" type="button" onclick="go(\'thFMSRep\')">Reports</button></div>' +
+      '<div class="card" style="display:flex;gap:10px;align-items:end;flex-wrap:wrap"><div><label style="font-size:12px">From</label><input type="date" id="fmd_f" value="' + ST.from + '"></div><div><label style="font-size:12px">To</label><input type="date" id="fmd_t" value="' + ST.to + '"></div><button class="btn" type="button" onclick="thFMS.period(\'thFMSDash\')">Apply</button>' +
+      '<span style="font-size:12px;color:#64748b">Compliance % = Compliant ÷ (Compliant + Non-compliant) of submitted inspections in the period. NA items are excluded.</span></div>' +
+      '<div class="fm-k">' +
+      '<div class="fm-kpi" onclick="go(\'thFMSCL\')"><small>Total checklists (active)</small><b>' + S.total + "</b></div>" +
+      '<div class="fm-kpi g" onclick="go(\'thFMSInsps\')"><small>Completed inspections</small><b>' + S.done + "</b></div>" +
+      '<div class="fm-kpi a" onclick="go(\'thFMSDue\')"><small>Pending (due soon)</small><b>' + S.pending + "</b></div>" +
+      '<div class="fm-kpi r" onclick="go(\'thFMSDue\')"><small>Overdue inspections</small><b>' + S.overdue + "</b></div>" +
+      '<div class="fm-kpi b"><small>Compliance</small><b>' + (S.pct == null ? "—" : S.pct + "%") + "</b></div>" +
+      '<div class="fm-kpi r" onclick="go(\'thFMSCapa\')"><small>Open CAPA</small><b>' + S.open + "</b></div>" +
+      '<div class="fm-kpi g" onclick="go(\'thFMSCapa\')"><small>Closed CAPA</small><b>' + S.closed + "</b></div>" +
+      '<div class="fm-kpi a" onclick="go(\'thFMSPM\')"><small>Upcoming PM / calibration (30 d)</small><b>' + S.pmUp + "</b></div></div>";
+    h += '<div style="display:grid;grid-template-columns:1.3fr 1fr;gap:12px"><div class="card"><h3 style="margin-top:0">Monthly compliance trend (12 months)</h3><div class="fm-bars">' +
+      trend.map(function (v) { return '<div style="height:' + (v == null ? 1 : Math.max(2, v)) + '%;' + (v == null ? "background:#e2e8f0" : "") + '">' + (v == null ? "" : "<span>" + v + "%</span>") + "</div>"; }).join("") +
+      '</div><div class="fm-lbl">' + months.map(function (m) { return "<div>" + ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][+m.slice(5) - 1] + "</div>"; }).join("") + "</div></div>" +
+      '<div class="card"><h3 style="margin-top:0">Department-wise compliance</h3>' + (Object.keys(byDept).length ? Object.keys(byDept).sort().map(function (d) {
+        var o = byDept[d], p = o.c + o.nc ? Math.round(o.c / (o.c + o.nc) * 100) : 0;
+        return '<div class="fm-hb"><span style="width:130px">' + E(d) + '</span><div class="bar"><div style="width:' + p + "%;background:" + (p >= 90 ? "#16a34a" : p >= 75 ? "#f59e0b" : "#dc2626") + '"></div></div><b>' + p + "%</b><small>(" + o.n + ")</small></div>";
+      }).join("") : '<p style="color:#64748b">No inspection in this period.</p>') + "</div></div>";
+    h += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px"><div class="card"><h3 style="margin-top:0">⚠ Overdue inspections ' + badge(over.length, over.length ? "r" : "g") + "</h3>" + clTable(over.slice(0, 12)) + "</div>" +
+      '<div class="card"><h3 style="margin-top:0">⏳ Due soon ' + badge(due.length, due.length ? "a" : "g") + "</h3>" + clTable(due.slice(0, 12)) + "</div></div>" +
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px"><div class="card"><h3 style="margin-top:0">🛠 Upcoming PM & calibration (30 days)</h3>' + (upPM.length ? '<table class="table fm-t"><tr><th>Equipment</th><th>Dept</th><th>Type</th><th>Due</th></tr>' + upPM.slice(0, 12).map(function (x) { return "<tr><td>" + E(x[0].eqId + " " + x[0].name) + "</td><td>" + E(x[0].dept) + "</td><td>" + x[1] + "</td><td>" + (x[2] < t ? badge(show(x[2]), "r") : show(x[2])) + "</td></tr>"; }).join("") + "</table>" : '<p style="color:#64748b">Nothing due.</p>') + "</div>" +
+      '<div class="card"><h3 style="margin-top:0">CAPA past target date ' + badge(capaOver.length, capaOver.length ? "r" : "g") + "</h3>" + (capaOver.length ? '<table class="table fm-t"><tr><th>CAPA</th><th>Issue</th><th>Responsible</th><th>Target</th></tr>' + capaOver.slice(0, 12).map(function (c) { return '<tr><td><a href="#" onclick="thFMS.openCapa(\'' + c.id + '\');return false">' + E(c.no) + "</a></td><td>" + E(c.issue).slice(0, 70) + "</td><td>" + E(c.responsible) + "</td><td>" + badge(show(c.target), "r") + "</td></tr>"; }).join("") + "</table>" : '<p style="color:#15803d">No overdue CAPA ✔</p>') + "</div></div>" +
+      '<p style="font-size:11.5px;color:#64748b">This module helps the hospital plan, record and review facility & safety work against the standards it selects (' + E(C().edition) + "). It does not certify NABH or any statutory compliance — assessment is done by the accrediting body.</p></div>";
+    return h;
+  });
+  function clTable(list) {
+    if (!list.length) return '<p style="color:#15803d;margin:0">Nothing here ✔</p>';
+    return '<table class="table fm-t"><tr><th>Module</th><th>Checklist</th><th>Dept</th><th>Freq.</th><th>Status</th><th></th></tr>' + list.map(function (c) {
+      return "<tr><td>" + modOf(c.module).i + " " + E(modOf(c.module).n) + "</td><td>" + E(c.name) + "</td><td>" + E(c.dept) + "</td><td>" + E(c.freq) + "</td><td>" + dueBadge(c) + '</td><td><button class="btn sm" type="button" onclick="thFMS.start(\'' + c.id + "')\">Inspect</button></td></tr>";
+    }).join("") + "</table>";
+  }
+
+  /* =========================================================================
+     25 MODULES  + module detail
+     ========================================================================= */
+  TH.page("thFMSMods", function () {
+    var CL = visibleCL(), CA = visibleCAPA();
+    return '<div class="fm"><div class="fm-hero"><h2>🏢 25 Facility Modules<small>Click a module to see its checklists, inspections and CAPA</small></h2><button class="btn" type="button" onclick="go(\'thFMSDash\')">Dashboard</button></div><div class="fm-mods">' +
+      MODULES.map(function (m) {
+        var cl = CL.filter(function (c) { return c.module === m.k && c.active && c.applicable !== false; });
+        var ov = cl.filter(function (c) { return dueState(c) === "overdue"; }).length, du = cl.filter(function (c) { return dueState(c) === "due"; }).length;
+        var oc = CA.filter(function (c) { return c.module === m.k && c.status !== "Closed"; }).length;
+        return '<div class="fm-mod" onclick="thFMS.mod(\'' + m.k + '\')"><div class="i">' + m.i + "</div><b>" + E(m.n) + "</b><small>" + cl.length + " checklist(s) · " + E(m.ch) + "</small><div style=\"margin-top:6px\">" +
+          (ov ? badge(ov + " overdue", "r") + " " : "") + (du ? badge(du + " due", "a") + " " : "") + (oc ? badge(oc + " CAPA", "b") : "") + (!ov && !du && !oc ? badge("Up to date", "g") : "") + "</div></div>";
+      }).join("") + "</div></div>";
+  });
+  TH.page("thFMSMod", function () {
+    var m = modOf(ST.mod);
+    var cl = visibleCL().filter(function (c) { return c.module === m.k; });
+    var ins = visibleInsp().filter(function (i) { return i.module === m.k; }).sort(function (a, b) { return (b.date + b.time) < (a.date + a.time) ? -1 : 1; }).slice(0, 15);
+    var ca = visibleCAPA().filter(function (c) { return c.module === m.k; });
+    var extra = { equip: ["thFMSEq", "Equipment register"], pm: ["thFMSPM", "PM & calibration schedule"], bd: ["thFMSBd", "Breakdown log"], amc: ["thFMSAmc", "Contracts & AMC"], risk: ["thFMSRisk", "Risk register"], hira: ["thFMSRisk", "HIRA register"], emer: ["thFMSDrill", "Mock drills"], disaster: ["thFMSDrill", "Mock drills"], fire: ["thFMSDrill", "Fire drills"], train: ["thFMSTrain", "Training records"], capa: ["thFMSCapa", "CAPA register"] }[m.k];
+    return '<div class="fm"><div class="fm-hero"><h2>' + m.i + " " + E(m.n) + "<small>Standards chapter: " + E(m.ch) + " (editable per checklist item)</small></h2>" +
+      (extra ? '<button class="btn" type="button" onclick="go(\'' + extra[0] + "')\">" + extra[1] + "</button>" : "") +
+      (can("config") ? '<button class="btn" type="button" onclick="thFMS.newCL(\'' + m.k + "')\">+ New checklist</button>" : "") +
+      '<button class="btn" type="button" onclick="go(\'thFMSMods\')">◀ Modules</button></div>' +
+      '<div class="card"><h3 style="margin-top:0">Checklists</h3>' + (cl.length ? '<table class="table fm-t"><tr><th>Checklist</th><th>Dept / area</th><th>Freq.</th><th>Items</th><th>Assigned to</th><th>Last done</th><th>Status</th><th></th></tr>' + cl.map(function (c) {
+        return "<tr><td><b>" + E(c.name) + "</b>" + (c.applicable === false ? " " + badge("Not applicable", "") : "") + "<br><small>" + E(c.edition) + "</small></td><td>" + E(c.dept) + "</td><td>" + E(c.freq) + "</td><td>" + c.items.length + "</td><td>" + E(c.assignee || "—") + "</td><td>" + show(c.lastDone) + "</td><td>" + dueBadge(c) +
+          '</td><td style="white-space:nowrap">' + (c.active && c.applicable !== false && can("inspect") ? '<button class="btn sm" type="button" onclick="thFMS.start(\'' + c.id + "')\">Inspect</button> " : "") + (can("config") ? '<button class="btn sm sec" type="button" onclick="thFMS.editCL(\'' + c.id + "')\">Edit</button> " : "") + '<button class="btn sm sec" type="button" onclick="thFMS.printBlank(\'' + c.id + "')\">🖨 Blank</button></td></tr>";
+      }).join("") + "</table>" : '<p style="color:#64748b">No checklist in this module.</p>') + "</div>" +
+      '<div class="card"><h3 style="margin-top:0">Recent inspections</h3>' + inspTable(ins) + "</div>" +
+      '<div class="card"><h3 style="margin-top:0">CAPA</h3>' + capaTable(ca) + "</div></div>";
+  });
+
+  /* =========================================================================
+     CHECKLIST LIBRARY + editor
+     ========================================================================= */
+  TH.page("thFMSCL", function () {
+    var c = C(), list = visibleCL().filter(function (x) { return (!ST.fmod || x.module === ST.fmod) && (!ST.fst || dueState(x) === ST.fst); });
+    return '<div class="fm"><div class="fm-hero"><h2>📋 Checklist Library<small>' + list.length + " checklist(s) · frequencies: " + FREQ.join(", ") + "</small></h2>" + (can("config") ? '<button class="btn" type="button" onclick="thFMS.newCL(\'\')">+ New checklist</button>' : "") + "</div>" +
+      '<div class="card" style="display:flex;gap:10px;flex-wrap:wrap;align-items:end"><div><label style="font-size:12px">Module</label><select id="fmc_m">' + opts(MODULES.map(function (m) { return { v: m.k, t: m.i + " " + m.n }; }), ST.fmod, "All modules") + '</select></div>' +
+      '<div><label style="font-size:12px">Status</label><select id="fmc_s">' + opts([{ v: "overdue", t: "Overdue" }, { v: "due", t: "Due soon" }, { v: "ok", t: "Up to date" }, { v: "inactive", t: "Inactive / NA" }], ST.fst, "All") + '</select></div><button class="btn" type="button" onclick="thFMS.clFilter()">Show</button></div>' +
+      '<div class="card"><table class="table fm-t"><tr><th>Module</th><th>Checklist</th><th>Edition</th><th>Dept</th><th>Freq.</th><th>Items</th><th>Assignee / reviewer</th><th>Next due</th><th></th></tr>' + list.map(function (x) {
+        return "<tr><td>" + modOf(x.module).i + " " + E(modOf(x.module).n) + "</td><td><b>" + E(x.name) + "</b></td><td><small>" + E(x.edition) + "</small></td><td>" + E(x.dept) + "</td><td>" + E(x.freq) + "</td><td>" + x.items.length + "</td><td>" + E(x.assignee || "—") + "<br><small>" + E(x.reviewer || "") + "</small></td><td>" + dueBadge(x) +
+          '</td><td style="white-space:nowrap">' + (x.active && x.applicable !== false && can("inspect") ? '<button class="btn sm" type="button" onclick="thFMS.start(\'' + x.id + "')\">Inspect</button> " : "") + (can("config") ? '<button class="btn sm sec" type="button" onclick="thFMS.editCL(\'' + x.id + "')\">Edit</button>" : "") + "</td></tr>";
+      }).join("") + "</table></div></div>";
+  });
+  TH.page("thFMSCLEdit", function () {
+    if (!can("config")) return deny("create or edit checklists");
+    var x = ST.edit || {}, c = C();
+    return '<div class="fm"><div class="fm-hero"><h2>' + (x.id ? "Edit checklist" : "New checklist") + "</h2><button class=\"btn\" type=\"button\" onclick=\"go('thFMSCL')\">◀ Library</button></div>" +
+      '<div class="card"><div class="fm-form">' +
+      sel("fe_mod", "Module", MODULES.map(function (m) { return { v: m.k, t: m.i + " " + m.n }; }), x.module || ST.mod || "bld", "w2") + inp("fe_name", "Checklist name", x.name, "", "w2") +
+      sel("fe_freq", "Frequency", FREQ, x.freq || "Monthly") + sel("fe_dept", "Department / area", depts(), x.dept || "Whole hospital") +
+      sel("fe_ass", "Responsible staff (inspector)", people(), x.assignee, "", "— anyone —") + sel("fe_rev", "Reviewer", people(), x.reviewer, "", "— Facility / Quality manager —") +
+      sel("fe_ed", "Accreditation edition / standard set", c.editions, x.edition || c.edition, "w2") + inp("fe_start", "Next inspection date", x.nextDue || today(), "date") +
+      '<div><label>Status</label><label style="display:flex;gap:6px;align-items:center;font-size:13px"><input type="checkbox" id="fe_act"' + (x.active !== false ? " checked" : "") + '> Active</label><label style="display:flex;gap:6px;align-items:center;font-size:13px"><input type="checkbox" id="fe_app"' + (x.applicable !== false ? " checked" : "") + "> Applicable to this hospital</label></div>" +
+      ta("fe_items", "Checklist items — one per line.  Format:  item text | standard reference (optional)", (x.items || []).map(function (i) { return i.t + (i.std ? " | " + i.std : ""); }).join("\n")) +
+      '</div><div style="display:flex;gap:8px;margin-top:10px"><button class="btn" type="button" onclick="thFMS.saveCL()">Save checklist</button>' + (x.id && can("del") ? '<button class="btn sec" type="button" onclick="thFMS.delCL()">Delete</button>' : "") + "</div></div></div>";
+  });
+
+  /* =========================================================================
+     INSPECTIONS: due list, perform, view, register
+     ========================================================================= */
+  TH.page("thFMSDue", function () {
+    var L = visibleCL().filter(function (c) { return c.active && c.applicable !== false; });
+    var ov = L.filter(function (c) { return dueState(c) === "overdue"; }), du = L.filter(function (c) { return dueState(c) === "due"; });
+    var up = L.filter(function (c) { return dueState(c) === "ok" && daysBetween(today(), c.nextDue) <= 14; });
+    var drafts = visibleInsp().filter(function (i) { return i.status === "Draft" || i.status === "Returned"; });
+    var rev = visibleInsp().filter(function (i) { return (i.status === "Submitted" && can("review")) || (i.status === "Reviewed" && can("approve")); });
+    return '<div class="fm"><div class="fm-hero"><h2>⏰ Inspections Due<small>Reminder window: ' + C().remindDays + " day(s) before due date</small></h2></div>" +
+      (drafts.length ? '<div class="card"><h3 style="margin-top:0">📝 Drafts / returned to inspector ' + badge(drafts.length, "a") + "</h3>" + inspTable(drafts) + "</div>" : "") +
+      (rev.length ? '<div class="card"><h3 style="margin-top:0">✍ Waiting for your review / approval ' + badge(rev.length, "b") + "</h3>" + inspTable(rev) + "</div>" : "") +
+      '<div class="card"><h3 style="margin-top:0">⚠ Overdue ' + badge(ov.length, ov.length ? "r" : "g") + "</h3>" + clTable(ov) + "</div>" +
+      '<div class="card"><h3 style="margin-top:0">⏳ Due now / within ' + C().remindDays + " days " + badge(du.length, du.length ? "a" : "g") + "</h3>" + clTable(du) + "</div>" +
+      '<div class="card"><h3 style="margin-top:0">📅 Coming in 14 days</h3>' + clTable(up) + "</div></div>";
+  });
+  function stBadge(s) { return badge(s, s === "Approved" ? "g" : s === "Returned" ? "r" : s === "Draft" ? "" : s === "Reviewed" ? "b" : "a"); }
+  function inspTable(list) {
+    if (!list.length) return '<p style="color:#64748b;margin:0">No inspection.</p>';
+    return '<table class="table fm-t"><tr><th>No.</th><th>Date</th><th>Module / checklist</th><th>Dept</th><th>Inspector</th><th>C / NC / NA</th><th>Score</th><th>Status</th><th></th></tr>' + list.map(function (i) {
+      var s = inspScore(i);
+      return "<tr><td><b>" + E(i.no) + "</b></td><td>" + show(i.date) + " " + E(i.time) + "</td><td>" + modOf(i.module).i + " " + E(i.clName) + "</td><td>" + E(i.dept) + "</td><td>" + E(i.inspector) + "</td><td>" + s.c + " / <b style='color:#b91c1c'>" + s.nc + "</b> / " + s.na +
+        "</td><td>" + (s.pct == null ? "—" : s.pct + "%") + "</td><td>" + stBadge(i.status) + '</td><td><button class="btn sm" type="button" onclick="thFMS.openInsp(\'' + i.id + "')\">Open</button></td></tr>";
+    }).join("") + "</table>";
+  }
+  TH.page("thFMSInspect", function () {
+    var i = byId("inspections", ST.insp);
+    if (!i) return '<div class="card">Inspection not found.</div>';
+    if (!(i.status === "Draft" || i.status === "Returned")) { ST.insp = i.id; return pageView(i); }
+    if (!can("inspect")) return deny("perform inspections");
+    var s = inspScore(i), total = i.res.length, answered = i.res.filter(function (r) { return r.s; }).length;
+    var h = '<div class="fm"><div class="fm-hero"><h2>' + modOf(i.module).i + " " + E(i.clName) + "<small>" + E(i.no) + " · " + E(modOf(i.module).n) + " · " + E(i.freq) + " · " + E(i.edition) + "</small></h2>" + stBadge(i.status) +
+      '<button class="btn" type="button" onclick="thFMS.markAll(\'C\')">All compliant</button><button class="btn" type="button" onclick="go(\'thFMSDue\')">◀ Back</button></div>' +
+      (i.status === "Returned" ? '<div class="card" style="border-left:5px solid #dc2626"><b>Returned by ' + E(i.returnedBy) + ":</b> " + E(i.returnNote) + "</div>" : "") +
+      '<div class="card"><div class="fm-form">' + inp("fi_date", "Inspection date", i.date, "date") + inp("fi_time", "Time", i.time, "time") +
+      sel("fi_dept", "Department / area", depts(), i.dept) + inp("fi_loc", "Exact location", i.location, "", "", ' placeholder="e.g. 2nd floor, ICU"') +
+      sel("fi_by", "Inspected by", people(), i.inspector, "", "— select —") + inp("fi_with", "Accompanied by", i.accompanied) + '<div class="w2"><label>Progress</label><b>' + answered + " / " + total + " answered</b> · " + s.c + " C · " + s.nc + " NC · " + s.na + " NA</div></div></div>";
+    h += i.res.map(function (r, k) {
+      return '<div class="fm-item ' + (r.s || "") + '"><div class="q">' + (k + 1) + ". " + E(r.t) + '</div><div class="std">Standard ref: ' + E(r.std || "—") + "</div>" +
+        '<div class="fm-seg">' + ["C", "NC", "NA"].map(function (o) { return '<button type="button" class="' + o + (r.s === o ? " on" : "") + '" onclick="thFMS.ans(' + k + ",'" + o + "')\">" + (o === "C" ? "✔ Compliant" : o === "NC" ? "✖ Non-compliant" : "NA") + "</button>"; }).join("") + "</div>" +
+        '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><input id="fi_rm' + k + '" placeholder="Remarks' + (r.s === "NC" ? " (required for non-compliant)" : "") + '" value="' + E(r.rm) + '" style="flex:1;min-width:260px" onchange="thFMS.rm(' + k + ',this.value)">' +
+        '<label class="btn sm sec" style="cursor:pointer">📷 Photo<input type="file" accept="image/*" multiple style="display:none" onchange="thFMS.addPh(' + k + ',this)"></label></div>' +
+        '<div>' + thumbs(r.ph, "thFMS.delPh(" + k + ",") + "</div></div>";
+    }).join("");
+    h += '<div class="card" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"><textarea id="fi_sum" placeholder="Overall observation / summary" style="flex:1;min-width:300px;min-height:50px">' + E(i.summary) + '</textarea>' +
+      '<button class="btn sec" type="button" onclick="thFMS.saveDraft()">💾 Save draft</button><button class="btn" type="button" onclick="thFMS.submit()">✔ Submit inspection</button></div></div>';
+    return h;
+  });
+  function pageView(i) {
+    var s = inspScore(i), caps = F().capa.filter(function (c) { return c.inspId === i.id && !c.deleted; });
+    var canRev = i.status === "Submitted" && can("review") && i.inspector !== who();
+    var canApp = (i.status === "Reviewed" || (i.status === "Submitted" && can("approve"))) && can("approve");
+    var h = '<div class="fm"><div class="fm-hero"><h2>' + E(i.no) + " — " + E(i.clName) + "<small>" + E(modOf(i.module).n) + " · " + show(i.date) + " " + E(i.time) + " · " + E(i.dept) + (i.location ? " / " + E(i.location) : "") + "</small></h2>" + stBadge(i.status) +
+      '<button class="btn" type="button" onclick="thFMS.printInsp(\'' + i.id + '\')">🖨 Report / PDF</button><button class="btn" type="button" onclick="go(\'thFMSInsps\')">◀ Register</button></div>' +
+      '<div class="fm-k"><div class="fm-kpi g"><small>Compliant</small><b>' + s.c + '</b></div><div class="fm-kpi r"><small>Non-compliant</small><b>' + s.nc + '</b></div><div class="fm-kpi"><small>Not applicable</small><b>' + s.na + '</b></div><div class="fm-kpi b"><small>Score</small><b>' + (s.pct == null ? "—" : s.pct + "%") + '</b></div><div class="fm-kpi a"><small>CAPA raised</small><b>' + caps.length + "</b></div></div>" +
+      '<div class="card"><table class="table fm-t"><tr><th>#</th><th>Item</th><th>Std</th><th>Result</th><th>Remarks</th><th>Photos</th></tr>' + i.res.map(function (r, k) {
+        return "<tr><td>" + (k + 1) + "</td><td>" + E(r.t) + "</td><td><small>" + E(r.std) + "</small></td><td>" + (r.s === "C" ? badge("C", "g") : r.s === "NC" ? badge("NC", "r") : badge(r.s || "—", "")) + "</td><td>" + E(r.rm) + "</td><td>" + thumbs(r.ph) + "</td></tr>";
+      }).join("") + "</table>" + (i.summary ? "<p><b>Summary:</b> " + E(i.summary) + "</p>" : "") + "</div>" +
+      '<div class="card"><h3 style="margin-top:0">Workflow</h3><table class="table fm-t"><tr><td>Inspected by</td><td><b>' + E(i.inspector) + "</b> " + E(i.submittedAt ? new Date(i.submittedAt).toLocaleString("en-IN") : "") + "</td></tr>" +
+      "<tr><td>Reviewed by</td><td>" + E(i.reviewedBy || "—") + " " + E(i.reviewedAt ? new Date(i.reviewedAt).toLocaleString("en-IN") : "") + (i.reviewNote ? " — " + E(i.reviewNote) : "") + "</td></tr>" +
+      "<tr><td>Approved by</td><td>" + E(i.approvedBy || "—") + " " + E(i.approvedAt ? new Date(i.approvedAt).toLocaleString("en-IN") : "") + "</td></tr></table>" +
+      ((canRev || canApp) ? '<textarea id="fv_note" placeholder="Review comment (required when returning)" style="width:100%;min-height:46px;margin-top:8px"></textarea><div style="display:flex;gap:8px;margin-top:6px">' +
+        (canRev ? '<button class="btn" type="button" onclick="thFMS.review(\'' + i.id + "')\">✔ Mark reviewed</button>" : "") + (canApp ? '<button class="btn" type="button" onclick="thFMS.approve(\'' + i.id + "')\">✅ Approve</button>" : "") +
+        '<button class="btn sec" type="button" onclick="thFMS.ret(\'' + i.id + "')\">↩ Return to inspector</button></div>" : (i.status === "Submitted" && i.inspector === who() && !can("approve") ? '<p style="color:#64748b">Waiting for review by another person.</p>' : "")) + "</div>" +
+      '<div class="card"><h3 style="margin-top:0">CAPA from this inspection</h3>' + capaTable(caps) + "</div>" +
+      '<div class="card"><h3 style="margin-top:0">Audit trail</h3><table class="table fm-t">' + (i.log || []).slice().reverse().map(function (l) { return "<tr><td style='white-space:nowrap'>" + E(new Date(l.at).toLocaleString("en-IN")) + "</td><td>" + E(l.by) + " <small>(" + E(l.role) + ")</small></td><td>" + E(l.what) + "</td></tr>"; }).join("") + "</table></div></div>";
+    return h;
+  }
+  TH.page("thFMSInsp", function () { var i = byId("inspections", ST.insp); return i ? pageView(i) : '<div class="card">Inspection not found.</div>'; });
+  TH.page("thFMSInsps", function () {
+    var L = visibleInsp().filter(function (i) { return i.date >= ST.from && i.date <= ST.to && (!ST.fmod || i.module === ST.fmod); }).sort(function (a, b) { return (b.date + b.time) < (a.date + a.time) ? -1 : 1; });
+    return '<div class="fm"><div class="fm-hero"><h2>🗂 Inspection Register<small>' + show(ST.from) + " to " + show(ST.to) + " · " + L.length + " inspection(s)</small></h2>" +
+      '<button class="btn" type="button" onclick="thFMS.rep(\'insp\',\'pdf\')">🖨 PDF</button><button class="btn" type="button" onclick="thFMS.rep(\'insp\',\'xlsx\')">⬇ Excel</button></div>' +
+      '<div class="card" style="display:flex;gap:10px;align-items:end;flex-wrap:wrap"><div><label style="font-size:12px">From</label><input type="date" id="fmd_f" value="' + ST.from + '"></div><div><label style="font-size:12px">To</label><input type="date" id="fmd_t" value="' + ST.to + '"></div>' +
+      '<div><label style="font-size:12px">Module</label><select id="fmc_m">' + opts(MODULES.map(function (m) { return { v: m.k, t: m.i + " " + m.n }; }), ST.fmod, "All") + '</select></div><button class="btn" type="button" onclick="thFMS.period(\'thFMSInsps\')">Show</button></div>' +
+      '<div class="card">' + inspTable(L) + "</div></div>";
+  });
+  function byId(coll, id) { return F()[coll].filter(function (x) { return String(x.id) === String(id); })[0] || null; }
+
+  /* =========================================================================
+     CAPA (facility CAPA + read-only view of incident CAPA from Quality module)
+     ========================================================================= */
+  function capaState(c) { return c.status === "Closed" ? "g" : c.target && c.target < today() ? "r" : c.status === "Action taken" ? "b" : "a"; }
+  function capaTable(list) {
+    if (!list.length) return '<p style="color:#64748b;margin:0">No CAPA.</p>';
+    return '<table class="table fm-t"><tr><th>CAPA</th><th>Source</th><th>Module</th><th>Issue</th><th>Responsible</th><th>Target</th><th>Status</th><th></th></tr>' + list.map(function (c) {
+      return "<tr><td><b>" + E(c.no) + "</b></td><td>" + E(c.source) + (c.ref ? "<br><small>" + E(c.ref) + "</small>" : "") + "</td><td>" + E(modOf(c.module).n) + "</td><td>" + E(c.issue).slice(0, 110) + "</td><td>" + E(c.responsible || "—") + "<br><small>" + E(c.dept) + "</small></td><td>" + show(c.target) +
+        "</td><td>" + badge(c.status + (c.status !== "Closed" && c.target && c.target < today() ? " · overdue" : ""), capaState(c)) + '</td><td><button class="btn sm" type="button" onclick="thFMS.openCapa(\'' + c.id + "')\">Open</button></td></tr>";
+    }).join("") + "</table>";
+  }
+  function nextNo(coll, pre) {
+    var y = new Date().getFullYear(), mx = 0, re = new RegExp("^" + pre + "/" + y + "/(\\d+)$");
+    F()[coll].forEach(function (x) { var m = re.exec(x.no || ""); if (m) mx = Math.max(mx, +m[1]); });
+    return pre + "/" + y + "/" + ("000" + (mx + 1)).slice(-4);
+  }
+  function newCapa(o) {
+    var c = Object.assign({ id: uid("ca"), no: nextNo("capa", "CAPA"), source: "Ad hoc", module: "capa", dept: "Whole hospital", issue: "", ref: "", rootCause: "", correction: "", corrective: "", preventive: "",
+      responsible: "", target: addDays(today(), +C().capaDays || 7), status: "Open", photos: [], evidence: [], created: new Date().toISOString(), createdBy: who(), log: [] }, o || {});
+    c.log.push({ at: new Date().toISOString(), by: who(), role: myRole(), what: "CAPA raised (" + c.source + ")" });
+    F().capa.push(c);
+    return c;
+  }
+  TH.page("thFMSCapa", function () {
+    var L = visibleCAPA().filter(function (c) { return (!ST.fmod || c.module === ST.fmod) && (!ST.fst || (ST.fst === "overdue" ? c.status !== "Closed" && c.target < today() : c.status === ST.fst)); })
+      .sort(function (a, b) { return (a.status === "Closed") - (b.status === "Closed") || (a.target < b.target ? -1 : 1); });
+    var inc = (Array.isArray(db.thEvents) ? db.thEvents : []).filter(function (e) { return !e.deleted && (e.corrective || e.preventive || e.responsible); });
+    return '<div class="fm"><div class="fm-hero"><h2>✅ CAPA Management<small>Facility CAPA (editable here) + incident CAPA from Quality & Events (shown read-only, one register for the hospital)</small></h2>' +
+      (can("capaUpdate") ? '<button class="btn" type="button" onclick="thFMS.newCapa()">+ New CAPA</button>' : "") + '<button class="btn" type="button" onclick="thFMS.rep(\'capa\',\'pdf\')">🖨 PDF</button><button class="btn" type="button" onclick="thFMS.rep(\'capa\',\'xlsx\')">⬇ Excel</button></div>' +
+      '<div class="card" style="display:flex;gap:10px;flex-wrap:wrap;align-items:end"><div><label style="font-size:12px">Module</label><select id="fmc_m">' + opts(MODULES.map(function (m) { return { v: m.k, t: m.i + " " + m.n }; }), ST.fmod, "All") + '</select></div>' +
+      '<div><label style="font-size:12px">Status</label><select id="fmc_s">' + opts(["Open", "Action taken", "Closed", "Reopened", { v: "overdue", t: "Overdue" }], ST.fst, "All") + '</select></div><button class="btn" type="button" onclick="thFMS.clFilter(\'thFMSCapa\')">Show</button></div>' +
+      '<div class="card">' + capaTable(L) + "</div>" +
+      (inc.length ? '<div class="card"><h3 style="margin-top:0">Incident / event CAPA (Quality & Events module)</h3><table class="table fm-t"><tr><th>No.</th><th>Event</th><th>Corrective / preventive</th><th>Responsible</th><th>Target</th><th>Status</th></tr>' + inc.map(function (e) {
+        return "<tr><td>" + E(e.no) + "</td><td>" + E(e.type) + "</td><td>" + E(e.corrective || "") + (e.preventive ? "<br><small>" + E(e.preventive) + "</small>" : "") + "</td><td>" + E(e.responsible || "") + "</td><td>" + show(e.target) + "</td><td>" + badge(e.status || "Open", e.status === "Closed" ? "g" : "a") + "</td></tr>";
+      }).join("") + "</table></div>" : "") + "</div>";
+  });
+  TH.page("thFMSCapaEdit", function () {
+    var c = byId("capa", ST.capa);
+    if (!c) return '<div class="card">CAPA not found.</div>';
+    var mine = c.responsible === who() || seesDept(c.dept);
+    var edit = can("capaUpdate") && (can("viewAll") || mine) && c.status !== "Closed";
+    var ver = can("capaVerify") && c.status === "Action taken";
+    return '<div class="fm"><div class="fm-hero"><h2>' + E(c.no) + " — CAPA<small>" + E(c.source) + (c.ref ? " · " + E(c.ref) : "") + " · " + E(modOf(c.module).n) + "</small></h2>" + badge(c.status, capaState(c)) +
+      '<button class="btn" type="button" onclick="thFMS.printCapa(\'' + c.id + '\')">🖨 PDF</button><button class="btn" type="button" onclick="go(\'thFMSCapa\')">◀ CAPA list</button></div>' +
+      '<div class="card"><div class="fm-form">' +
+      sel("fc_mod", "Module", MODULES.map(function (m) { return { v: m.k, t: m.i + " " + m.n }; }), c.module) + sel("fc_dept", "Department", depts(), c.dept) +
+      sel("fc_resp", "Responsible person", people(), c.responsible, "", "— select —") + inp("fc_target", "Target date", c.target, "date") +
+      ta("fc_issue", "Non-conformity / issue", c.issue) + ta("fc_root", "Root cause", c.rootCause, "w2") + ta("fc_corr", "Immediate correction", c.correction, "w2") +
+      ta("fc_ca", "Corrective action", c.corrective, "w2") + ta("fc_pa", "Preventive action", c.preventive, "w2") + "</div>" +
+      '<div style="margin-top:8px"><b>Evidence photos</b> ' + (edit ? '<label class="btn sm sec" style="cursor:pointer">📷 Add<input type="file" accept="image/*" multiple style="display:none" onchange="thFMS.capaPh(this)"></label>' : "") +
+      "<div>" + thumbs((c.photos || []).concat(c.evidence || []), edit ? "thFMS.capaDelPh(" : "") + "</div></div>" +
+      '<div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">' + (edit ? '<button class="btn sec" type="button" onclick="thFMS.saveCapa(false)">💾 Save</button><button class="btn" type="button" onclick="thFMS.saveCapa(true)">✔ Action completed — send for verification</button>' : "") + "</div></div>" +
+      '<div class="card"><h3 style="margin-top:0">Closure verification</h3>' + (c.verifiedBy ? "<p>Verified by <b>" + E(c.verifiedBy) + "</b> on " + E(new Date(c.verifiedAt).toLocaleString("en-IN")) + " — effective: <b>" + E(c.effective) + "</b>" + (c.verifyNote ? " — " + E(c.verifyNote) : "") + "</p>" : "") +
+      (ver ? '<div class="fm-form">' + sel("fc_eff", "Was the action effective?", ["Yes", "No"], "Yes") + inp("fc_vnote", "Verification note", "", "", "w2") + '</div><div style="display:flex;gap:8px;margin-top:8px"><button class="btn" type="button" onclick="thFMS.verify(true)">✅ Verify & close</button><button class="btn sec" type="button" onclick="thFMS.verify(false)">↩ Reopen</button></div>'
+        : '<p style="color:#64748b;margin:0">' + (c.status === "Closed" ? "Closed." : c.status === "Action taken" ? "Waiting for verification by Quality / Facility manager." : "Responsible person completes the action, then it is verified and closed.") + "</p>") + "</div>" +
+      '<div class="card"><h3 style="margin-top:0">Audit trail</h3><table class="table fm-t">' + (c.log || []).slice().reverse().map(function (l) { return "<tr><td style='white-space:nowrap'>" + E(new Date(l.at).toLocaleString("en-IN")) + "</td><td>" + E(l.by) + " <small>(" + E(l.role) + ")</small></td><td>" + E(l.what) + "</td></tr>"; }).join("") + "</table></div></div>";
+  });
+
+  /* =========================================================================
+     MEDICAL EQUIPMENT
+     ========================================================================= */
+  var EQ_ST = ["Working", "Under maintenance", "Breakdown", "Standby", "Condemned"];
+  function eqDown(e) { return F().breakdowns.filter(function (b) { return !b.deleted && b.eqRef === e.id; }); }
+  function hours(b) { if (!b.downAt) return 0; var a = new Date(b.downAt), z = b.upAt ? new Date(b.upAt) : new Date(); return Math.max(0, Math.round((z - a) / 36e5 * 10) / 10); }
+  TH.page("thFMSEq", function () {
+    var t = today();
+    var L = F().equipment.filter(function (e) { return !e.deleted && seesDept(e.dept) && (!ST.q || JSON.stringify([e.eqId, e.name, e.dept, e.serial, e.make]).toLowerCase().indexOf(ST.q.toLowerCase()) >= 0); });
+    return '<div class="fm"><div class="fm-hero"><h2>🩺 Medical Equipment Register<small>' + L.length + " equipment</small></h2>" + (can("equip") ? '<button class="btn" type="button" onclick="thFMS.newEq()">+ Add equipment</button>' : "") +
+      '<button class="btn" type="button" onclick="thFMS.rep(\'equip\',\'pdf\')">🖨 PDF</button><button class="btn" type="button" onclick="thFMS.rep(\'equip\',\'xlsx\')">⬇ Excel</button></div>' +
+      '<div class="card"><input id="fmq" placeholder="Search ID, name, department, serial no…" value="' + E(ST.q) + '" onchange="thFMS.search(this.value,\'thFMSEq\')" style="max-width:420px"></div>' +
+      '<div class="card">' + (L.length ? '<table class="table fm-t"><tr><th>ID</th><th>Equipment</th><th>Dept</th><th>Make / model / serial</th><th>Warranty / AMC</th><th>Next PM</th><th>Next calibration</th><th>Downtime</th><th>Status</th><th></th></tr>' + L.map(function (e) {
+        var dt = eqDown(e).reduce(function (s, b) { return s + hours(b); }, 0);
+        return "<tr><td><b>" + E(e.eqId) + "</b></td><td>" + E(e.name) + "</td><td>" + E(e.dept) + "</td><td>" + E([e.make, e.model].filter(Boolean).join(" / ")) + "<br><small>SN " + E(e.serial) + "</small></td><td>" + (e.warrantyTo ? "W: " + (e.warrantyTo < t ? badge(show(e.warrantyTo), "r") : show(e.warrantyTo)) + "<br>" : "") + (e.amcTo ? E(e.amcType || "AMC") + ": " + (e.amcTo < t ? badge(show(e.amcTo), "r") : show(e.amcTo)) : "") +
+          "</td><td>" + (e.pmNext ? (e.pmNext < t ? badge(show(e.pmNext), "r") : show(e.pmNext)) : "—") + "</td><td>" + (e.calNext ? (e.calNext < t ? badge(show(e.calNext), "r") : show(e.calNext)) : "—") + "</td><td>" + dt + " h</td><td>" + badge(e.status, e.status === "Working" ? "g" : e.status === "Breakdown" ? "r" : e.status === "Condemned" ? "" : "a") +
+          '</td><td><button class="btn sm" type="button" onclick="thFMS.openEq(\'' + e.id + "')\">Open</button></td></tr>";
+      }).join("") + "</table>" : '<p style="color:#64748b">No equipment yet.</p>') + "</div></div>";
+  });
+  TH.page("thFMSEqEdit", function () {
+    var e = byId("equipment", ST.eq) || ST.edit || {};
+    var ed = can("equip"), tab = ST.eqTab || "info";
+    var h = '<div class="fm"><div class="fm-hero"><h2>' + (e.id ? E(e.eqId + " — " + e.name) : "New equipment") + "<small>" + E(e.dept || "") + "</small></h2>" + (e.id ? badge(e.status, e.status === "Working" ? "g" : "r") + '<button class="btn" type="button" onclick="thFMS.printEq(\'' + e.id + "')\">🖨 History card</button>" : "") + '<button class="btn" type="button" onclick="go(\'thFMSEq\')">◀ Register</button></div>';
+    if (e.id) h += '<div class="fm-tabs">' + [["info", "Details"], ["pm", "PM & calibration"], ["bd", "Breakdown history"], ["svc", "Service reports"]].map(function (x) { return '<button type="button" class="' + (tab === x[0] ? "on" : "") + '" onclick="thFMS.eqTab(\'' + x[0] + "')\">" + x[1] + "</button>"; }).join("") + "</div>";
+    if (!e.id || tab === "info") {
+      h += '<div class="card"><div class="fm-form">' + inp("fq_id", "Equipment ID", e.eqId || nextEqId()) + inp("fq_name", "Equipment name", e.name, "", "w2") + sel("fq_dept", "Department", depts(), e.dept) +
+        inp("fq_make", "Manufacturer", e.make) + inp("fq_model", "Model number", e.model) + inp("fq_serial", "Serial number", e.serial) + sel("fq_crit", "Criticality", ["High (life support)", "Medium", "Low"], e.crit || "Medium") +
+        inp("fq_inst", "Installation date", e.installed, "date") + inp("fq_cost", "Purchase cost (₹)", e.cost, "number") + inp("fq_supp", "Supplier", e.supplier) + inp("fq_wto", "Warranty up to", e.warrantyTo, "date") +
+        sel("fq_amct", "AMC / CMC", ["", "AMC", "CMC", "Warranty", "None"], e.amcType) + inp("fq_amcv", "AMC vendor", e.amcVendor) + inp("fq_amcf", "AMC from", e.amcFrom, "date") + inp("fq_amcto", "AMC to", e.amcTo, "date") +
+        inp("fq_amcno", "Contract no.", e.amcNo) + inp("fq_amcc", "AMC cost (₹)", e.amcCost, "number") + inp("fq_amcp", "Service contact / phone", e.amcPhone, "", "w2") +
+        sel("fq_pmf", "PM frequency", FREQ, e.pmFreq || "Quarterly") + inp("fq_pml", "Last PM", e.pmLast, "date") + inp("fq_pmn", "Next PM", e.pmNext, "date") + sel("fq_calf", "Calibration frequency", ["", "Half-yearly", "Annual", "Quarterly"], e.calFreq || "Annual") +
+        inp("fq_call", "Last calibration", e.calLast, "date") + inp("fq_caln", "Next calibration", e.calNext, "date") + inp("fq_cala", "Calibration agency (NABL)", e.calAgency, "", "w2") +
+        sel("fq_st", "Status", EQ_ST, e.status || "Working") + inp("fq_user", "User trained / custodian", e.custodian) + ta("fq_rem", "Remarks", e.remarks) + "</div>" +
+        (ed ? '<div style="display:flex;gap:8px;margin-top:10px"><button class="btn" type="button" onclick="thFMS.saveEq()">💾 Save equipment</button>' + (e.id && can("del") ? '<button class="btn sec" type="button" onclick="thFMS.delEq()">Delete</button>' : "") + "</div>" : "") + "</div>";
+    } else if (tab === "pm") {
+      var svc = (e.service || []).filter(function (s) { return s.type === "PM" || s.type === "Calibration"; });
+      h += '<div class="card"><p>PM: every <b>' + E(e.pmFreq || "—") + "</b> · last " + show(e.pmLast) + " · next <b>" + show(e.pmNext) + "</b> &nbsp;|&nbsp; Calibration: <b>" + E(e.calFreq || "—") + "</b> · last " + show(e.calLast) + " · next <b>" + show(e.calNext) + "</b></p>" +
+        (can("registers") ? svcForm() + '<div style="display:flex;gap:8px;margin-top:8px"><button class="btn" type="button" onclick="thFMS.svcAdd(\'PM\')">✔ Record PM done</button><button class="btn" type="button" onclick="thFMS.svcAdd(\'Calibration\')">✔ Record calibration done</button></div>' : "") + "</div>" +
+        '<div class="card">' + svcTable(svc) + "</div>";
+    } else if (tab === "bd") {
+      var bd = eqDown(e);
+      h += '<div class="card"><p>Total breakdowns: <b>' + bd.length + "</b> · total downtime: <b>" + bd.reduce(function (s, b) { return s + hours(b); }, 0) + " hours</b></p>" + (can("registers") ? '<button class="btn" type="button" onclick="thFMS.regNew(\'breakdowns\',\'' + e.id + "')\">+ Report breakdown</button>" : "") + "</div>" +
+        '<div class="card">' + regTable("breakdowns", bd) + "</div>";
+    } else {
+      var sv = (e.service || []).filter(function (s) { return s.type === "Service" || s.type === "Repair" || s.type === "Installation"; });
+      h += '<div class="card">' + (can("registers") ? svcForm() + '<div style="margin-top:8px"><button class="btn" type="button" onclick="thFMS.svcAdd(\'Service\')">+ Add service report</button></div>' : "") + "</div><div class=\"card\">" + svcTable(sv) + "</div>";
+    }
+    return h + "</div>";
+  });
+  function svcForm() {
+    return '<div class="fm-form">' + inp("fs_date", "Date", today(), "date") + inp("fs_by", "Done by (engineer / vendor)", "") + inp("fs_no", "Report / certificate no.", "") + sel("fs_res", "Result", ["Satisfactory", "Needs repair", "Failed / out of tolerance"], "Satisfactory") +
+      inp("fs_note", "Notes", "", "", "w2") + inp("fs_cost", "Cost (₹)", "", "number") + '<div><label>Report photo</label><input type="file" id="fs_ph" accept="image/*" multiple></div></div>';
+  }
+  function svcTable(l) {
+    if (!l.length) return '<p style="color:#64748b;margin:0">No record yet.</p>';
+    return '<table class="table fm-t"><tr><th>Date</th><th>Type</th><th>Done by</th><th>Report no.</th><th>Result</th><th>Notes</th><th>Cost</th><th>Photo</th></tr>' + l.slice().reverse().map(function (s) {
+      return "<tr><td>" + show(s.date) + "</td><td>" + E(s.type) + "</td><td>" + E(s.by) + "</td><td>" + E(s.no) + "</td><td>" + badge(s.result, /Satis/.test(s.result) ? "g" : "r") + "</td><td>" + E(s.note) + "</td><td>" + (s.cost ? money(s.cost) : "") + "</td><td>" + thumbs(s.photos) + "</td></tr>";
+    }).join("") + "</table>";
+  }
+  function nextEqId() { var mx = 0; F().equipment.forEach(function (e) { var m = /^EQ-(\d+)$/.exec(e.eqId || ""); if (m) mx = Math.max(mx, +m[1]); }); return "EQ-" + ("000" + (mx + 1)).slice(-4); }
+  TH.page("thFMSPM", function () {
+    var t = today(), rows = [];
+    F().equipment.forEach(function (e) {
+      if (e.deleted || e.status === "Condemned" || !seesDept(e.dept)) return;
+      if (e.pmNext) rows.push([e, "PM", e.pmNext, e.pmFreq]); if (e.calNext) rows.push([e, "Calibration", e.calNext, e.calFreq]);
+    });
+    rows.sort(function (a, b) { return a[2] < b[2] ? -1 : 1; });
+    return '<div class="fm"><div class="fm-hero"><h2>🛠 Preventive Maintenance & Calibration<small>' + rows.filter(function (r) { return r[2] < t; }).length + " overdue · " + rows.filter(function (r) { return r[2] >= t && r[2] <= addDays(t, 30); }).length + " due in 30 days</small></h2>" +
+      '<button class="btn" type="button" onclick="thFMS.rep(\'pm\',\'pdf\')">🖨 PDF</button><button class="btn" type="button" onclick="thFMS.rep(\'pm\',\'xlsx\')">⬇ Excel</button></div>' +
+      '<div class="card">' + (rows.length ? '<table class="table fm-t"><tr><th>Due</th><th>Type</th><th>Equipment</th><th>Dept</th><th>Frequency</th><th>Vendor / agency</th><th></th></tr>' + rows.map(function (r) {
+        var e = r[0];
+        return "<tr><td>" + (r[2] < t ? badge(show(r[2]) + " overdue", "r") : r[2] <= addDays(t, 30) ? badge(show(r[2]), "a") : show(r[2])) + "</td><td>" + r[1] + "</td><td><b>" + E(e.eqId) + "</b> " + E(e.name) + "</td><td>" + E(e.dept) + "</td><td>" + E(r[3]) + "</td><td>" + E(r[1] === "PM" ? e.amcVendor : e.calAgency) +
+          '</td><td><button class="btn sm" type="button" onclick="thFMS.openEq(\'' + e.id + "','pm')\">Record</button></td></tr>";
+      }).join("") + "</table>" : '<p style="color:#64748b">Add PM / calibration dates in the equipment register.</p>') + "</div></div>";
+  });
+
+  /* =========================================================================
+     GENERIC REGISTERS: breakdowns, contracts, risks (HIRA), drills, trainings
+     ========================================================================= */
+  var DRILLS = ["Code Red (fire)", "Code Blue (cardiac arrest)", "Code Pink (infant / child abduction)", "Code Yellow (disaster / mass casualty)", "Code Grey (violence)", "Code Black (bomb threat)", "Code Orange (chemical / hazmat spill)", "Evacuation drill", "Medical gas failure drill", "Power failure drill"];
+  var REG = {
+    breakdowns: { t: "Breakdown Maintenance", i: "🔧", page: "thFMSBd", pre: "BD", perm: "registers", mod: "bd", f: [
+      ["eqRef", "Equipment (if medical equipment)", "eq", "w2"], ["item", "Item / system (if not in register, e.g. lift, DG, AC)", "text", "w2"], ["dept", "Department", "dept"], ["module", "Module", "module"],
+      ["downAt", "Breakdown date & time", "datetime-local"], ["reportedBy", "Reported by", "people"], ["problem", "Problem", "textarea"], ["attendedBy", "Attended by (engineer / vendor)", "text", "w2"],
+      ["upAt", "Restored date & time", "datetime-local"], ["action", "Action taken / parts replaced", "text", "w2"], ["cost", "Cost (₹)", "number"], ["status", "Status", ["Open", "Restored", "Condemned"]]],
+      cols: [["no", "No."], ["downAt", "Down at"], ["item", "Item"], ["dept", "Dept"], ["problem", "Problem"], ["upAt", "Restored"], ["_hrs", "Downtime"], ["status", "Status"]] },
+    contracts: { t: "Contractors & AMC", i: "📑", page: "thFMSAmc", pre: "CON", perm: "equip", mod: "amc", f: [
+      ["vendor", "Contractor / vendor", "text", "w2"], ["type", "Type", ["AMC", "CMC", "Warranty", "Outsourced service", "Statutory inspection", "Other"]], ["module", "Module", "module"],
+      ["scope", "Scope / equipment covered", "textarea"], ["contractNo", "Contract no.", "text"], ["from", "Valid from", "date"], ["to", "Valid to", "date"], ["value", "Contract value (₹)", "number"],
+      ["visits", "Visits per year", "number"], ["contact", "Contact person & phone", "text", "w2"], ["rating", "Vendor performance", ["", "Good", "Satisfactory", "Poor"]], ["remarks", "Remarks", "textarea"]],
+      cols: [["no", "No."], ["vendor", "Vendor"], ["type", "Type"], ["scope", "Scope"], ["from", "From"], ["to", "To"], ["value", "Value"], ["_exp", "Status"]] },
+    risks: { t: "HIRA / Facility Risk Register", i: "⚠", page: "thFMSRisk", pre: "RSK", perm: "registers", mod: "hira", f: [
+      ["dept", "Department / area", "dept"], ["module", "Module", "module"], ["activity", "Activity / process", "text", "w2"], ["hazard", "Hazard", "text", "w2"], ["consequence", "Risk / consequence", "text", "w2"],
+      ["L", "Likelihood (1-5)", ["1", "2", "3", "4", "5"]], ["S", "Severity (1-5)", ["1", "2", "3", "4", "5"]], ["controls", "Existing controls", "textarea"], ["actions", "Additional control measures", "textarea"],
+      ["owner", "Risk owner", "people"], ["rL", "Residual likelihood", ["", "1", "2", "3", "4", "5"]], ["rS", "Residual severity", ["", "1", "2", "3", "4", "5"]], ["review", "Next review date", "date"]],
+      cols: [["no", "No."], ["dept", "Area"], ["hazard", "Hazard"], ["_score", "Risk"], ["controls", "Controls"], ["owner", "Owner"], ["_res", "Residual"], ["review", "Review"]] },
+    drills: { t: "Mock Drills & Emergency Preparedness", i: "🚨", page: "thFMSDrill", pre: "DRL", perm: "registers", mod: "emer", f: [
+      ["type", "Drill / code", DRILLS, "w2"], ["date", "Date", "date"], ["time", "Time", "time"], ["dept", "Area", "dept"], ["module", "Module", "module"], ["announced", "Announced?", ["Unannounced", "Announced"]],
+      ["participants", "No. of participants", "number"], ["response", "Response time (minutes)", "number"], ["observer", "Observer", "people"], ["observations", "Observations", "textarea"], ["gaps", "Gaps found (each line can become a CAPA)", "textarea"]],
+      cols: [["no", "No."], ["date", "Date"], ["type", "Drill"], ["dept", "Area"], ["participants", "People"], ["response", "Resp. (min)"], ["gaps", "Gaps"]] },
+    trainings: { t: "Facility Staff Training", i: "🎓", page: "thFMSTrain", pre: "TRN", perm: "registers", mod: "train", f: [
+      ["topic", "Topic", ["Fire safety & extinguisher use", "Evacuation", "Biomedical waste management", "Hand hygiene / infection control", "Electrical safety", "Medical gas safety", "Radiation safety", "Equipment user training", "Spill management", "Emergency codes", "Other"], "w2"],
+      ["other", "Topic (if other)", "text", "w2"], ["date", "Date", "date"], ["hours", "Duration (hours)", "number"], ["module", "Module", "module"], ["trainer", "Trainer", "text"], ["dept", "Department", "dept"],
+      ["attendees", "Attendees (one name per line)", "textarea"], ["evaluation", "Evaluation / post-test result", "text", "w2"], ["refresher", "Refresher due", "date"]],
+      cols: [["no", "No."], ["date", "Date"], ["topic", "Topic"], ["dept", "Dept"], ["trainer", "Trainer"], ["_att", "Attendees"], ["hours", "Hours"], ["refresher", "Refresher"]] }
+  };
+  function cell(key, r, c) {
+    var t = today();
+    if (c === "_hrs") return hours(r) + " h";
+    if (c === "_exp") return !r.to ? "" : r.to < t ? badge("Expired", "r") : daysBetween(t, r.to) <= 30 ? badge("Expires " + show(r.to), "a") : badge("Active", "g");
+    if (c === "_score") { var s = (+r.L || 0) * (+r.S || 0); return badge(s + " " + rating(s), s >= 15 ? "r" : s >= 10 ? "a" : s >= 5 ? "b" : "g"); }
+    if (c === "_res") { var s2 = (+r.rL || 0) * (+r.rS || 0); return s2 ? badge(s2 + " " + rating(s2), s2 >= 15 ? "r" : s2 >= 10 ? "a" : "g") : "—"; }
+    if (c === "_att") return String(r.attendees || "").split(/\n/).filter(function (x) { return x.trim(); }).length;
+    if (c === "item" && r.eqRef) { var e = byId("equipment", r.eqRef); return E(e ? e.eqId + " " + e.name : r.item); }
+    var v = r[c];
+    if (/At$/.test(c) && v) return E(String(v).replace("T", " "));
+    if (/^(from|to|date|review|refresher)$/.test(c)) return show(v);
+    if (c === "value" && v) return money(v);
+    return E(String(v == null ? "" : v)).slice(0, 120);
+  }
+  function rating(s) { return s >= 15 ? "Extreme" : s >= 10 ? "High" : s >= 5 ? "Medium" : "Low"; }
+  function regTable(key, list) {
+    var R = REG[key];
+    if (!list.length) return '<p style="color:#64748b;margin:0">No record yet.</p>';
+    return '<table class="table fm-t"><tr>' + R.cols.map(function (c) { return "<th>" + c[1] + "</th>"; }).join("") + "<th></th></tr>" + list.map(function (r) {
+      return "<tr>" + R.cols.map(function (c) { return "<td>" + cell(key, r, c[0]) + "</td>"; }).join("") + '<td><button class="btn sm" type="button" onclick="thFMS.regOpen(\'' + key + "','" + r.id + "')\">Open</button></td></tr>";
+    }).join("") + "</table>";
+  }
+  Object.keys(REG).forEach(function (key) {
+    var R = REG[key];
+    TH.page(R.page, function () {
+      var L = F()[key].filter(function (r) { return !r.deleted && seesDept(r.dept); }).slice().reverse();
+      return '<div class="fm"><div class="fm-hero"><h2>' + R.i + " " + R.t + "<small>" + L.length + " record(s)</small></h2>" + (can(R.perm) ? '<button class="btn" type="button" onclick="thFMS.regNew(\'' + key + "')\">+ New</button>" : "") +
+        '<button class="btn" type="button" onclick="thFMS.rep(\'' + key + "','pdf')\">🖨 PDF</button><button class=\"btn\" type=\"button\" onclick=\"thFMS.rep('" + key + "','xlsx')\">⬇ Excel</button></div>" +
+        '<div class="card">' + regTable(key, L) + "</div></div>";
+    });
+  });
+  TH.page("thFMSReg", function () {
+    var key = ST.reg, R = REG[key]; if (!R) return '<div class="card">Choose a register from the FACILITY MANAGEMENT menu.</div>';
+    var r = byId(key, ST.regId) || ST.edit || {}, ed = can(R.perm);
+    var h = '<div class="fm"><div class="fm-hero"><h2>' + R.i + " " + (r.no ? E(r.no) : "New") + " — " + R.t + '</h2><button class="btn" type="button" onclick="go(\'' + R.page + "')\">◀ Back</button></div><div class=\"card\"><div class=\"fm-form\">" +
+      R.f.map(function (f) {
+        var id = "fr_" + f[0], v = r[f[0]] != null ? r[f[0]] : (f[0] === "module" ? R.mod : f[0] === "date" ? today() : f[0] === "dept" ? "Whole hospital" : "");
+        if (Array.isArray(f[2])) return sel(id, f[1], f[2], v, f[3]);
+        if (f[2] === "textarea") return ta(id, f[1], v);
+        if (f[2] === "people") return sel(id, f[1], people(), v, f[3], "— select —");
+        if (f[2] === "dept") return sel(id, f[1], depts(), v, f[3]);
+        if (f[2] === "module") return sel(id, f[1], MODULES.map(function (m) { return { v: m.k, t: m.n }; }), v, f[3]);
+        if (f[2] === "eq") return sel(id, f[1], F().equipment.filter(function (e) { return !e.deleted; }).map(function (e) { return { v: e.id, t: e.eqId + " " + e.name + " (" + e.dept + ")" }; }), v, f[3], "— not in register —");
+        return inp(id, f[1], v, f[2] === "text" ? "" : f[2], f[3]);
+      }).join("") + '<div class="w4"><label>Photos / documents</label>' + (ed ? '<input type="file" id="fr_ph" accept="image/*" multiple>' : "") + "<div>" + thumbs(r.photos, ed ? "thFMS.regDelPh(" : "") + "</div></div></div>" +
+      (ed ? '<div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap"><button class="btn" type="button" onclick="thFMS.regSave()">💾 Save</button>' + (key === "drills" || key === "risks" || key === "breakdowns" ? '<button class="btn sec" type="button" onclick="thFMS.regCapa()">⚠ Raise CAPA</button>' : "") + (r.id && can("del") ? '<button class="btn sec" type="button" onclick="thFMS.regDel()">Delete</button>' : "") + "</div>" : "") + "</div></div>";
+    return h;
+  });
+
+  /* =========================================================================
+     SETTINGS & ROLES
+     ========================================================================= */
+  TH.page("thFMSSet", function () {
+    var c = C();
+    if (!can("config")) return deny("change FMS settings");
+    var ppl = people();
+    return '<div class="fm"><div class="fm-hero"><h2>⚙ FMS Settings & Roles</h2></div>' +
+      '<div class="card"><h3 style="margin-top:0">Accreditation editions / standard sets</h3><div class="fm-form">' + ta("fs_eds", "Editions (one per line). Each checklist is tagged with one; item references are editable.", c.editions.join("\n"), "w2") +
+      sel("fs_ed", "Default edition for new checklists", c.editions, c.edition, "w2") + inp("fs_rem", "Remind before due (days)", c.remindDays, "number") + inp("fs_cd", "Default CAPA target (days)", c.capaDays, "number") +
+      ta("fs_areas", "Departments / areas used by FMS (hospital departments are added automatically)", c.areas.join("\n"), "w2") + "</div>" +
+      '<div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap"><button class="btn" type="button" onclick="thFMS.saveSet()">💾 Save settings</button><button class="btn sec" type="button" onclick="thFMS.seedMissing()">Add missing default checklists</button>' +
+      '<button class="btn sec" type="button" onclick="thFMS.retag()">Tag all checklists with default edition</button></div></div>' +
+      '<div class="card"><h3 style="margin-top:0">User roles (access control)</h3>' + (can("all") || myRole() === "Administrator" ? '<table class="table fm-t"><tr><th>User / staff</th><th>FMS role</th><th>Department (for HOD / staff)</th></tr>' + ppl.map(function (n, i) {
+        return "<tr><td>" + E(n) + '</td><td><select id="fr_r' + i + '" data-n="' + E(n) + '">' + opts(ROLES, c.userRoles[n] || "", "— default —") + '</select></td><td><select id="fr_d' + i + '">' + opts(depts(), c.userDept[n] || "", "—") + "</select></td></tr>";
+      }).join("") + '</table><label style="display:flex;gap:6px;align-items:center;font-size:12.5px;margin:6px 0"><input type="checkbox" id="fr_menu" checked style="width:auto"> Also tick the FMS menus for these logins in Users &amp; Rights (only adds rights, never removes)</label><button class="btn" type="button" onclick="thFMS.saveRoles(' + ppl.length + ')">💾 Save roles</button><p style="font-size:12px;color:#64748b">Default: software Master / Admin users = Administrator, others = Facility Staff.</p>' : '<p>Only the Administrator can assign roles.</p>') + "</div>" +
+      '<div class="card"><h3 style="margin-top:0">Permissions</h3><table class="table fm-t"><tr><th>Role</th><th>See all depts</th><th>Configure checklists</th><th>Inspect</th><th>Review</th><th>Approve</th><th>Equipment</th><th>Registers</th><th>CAPA action</th><th>CAPA verify</th><th>Delete</th></tr>' +
+      ROLES.map(function (r) { var p = PERM[r]; function y(k) { return p.all || p[k] ? "✔" : "—"; } return "<tr><td><b>" + r + "</b></td><td>" + y("viewAll") + "</td><td>" + y("config") + "</td><td>" + y("inspect") + "</td><td>" + y("review") + "</td><td>" + y("approve") + "</td><td>" + y("equip") + "</td><td>" + y("registers") + "</td><td>" + y("capaUpdate") + "</td><td>" + y("capaVerify") + "</td><td>" + y("del") + "</td></tr>"; }).join("") + "</table></div></div>";
+  });
+
+  /* =========================================================================
+     REPORTS: PDF (print / Save as PDF) and Excel (.xlsx)
+     ========================================================================= */
+  var REPS = [["dash", "Dashboard summary"], ["insp", "Inspection register"], ["nc", "Non-compliance findings"], ["capa", "CAPA register"], ["equip", "Equipment register"], ["pm", "PM & calibration schedule"],
+    ["breakdowns", "Breakdown & downtime"], ["contracts", "Contracts & AMC"], ["risks", "HIRA / risk register"], ["drills", "Mock drills"], ["trainings", "Training records"], ["trail", "Audit trail"]];
+  TH.page("thFMSRep", function () {
+    return '<div class="fm"><div class="fm-hero"><h2>📑 FMS Reports<small>PDF: choose "Microsoft Print to PDF" as printer in Print Preview · Excel: real .xlsx file</small></h2></div>' +
+      '<div class="card" style="display:flex;gap:10px;align-items:end;flex-wrap:wrap"><div><label style="font-size:12px">From</label><input type="date" id="fmd_f" value="' + ST.from + '"></div><div><label style="font-size:12px">To</label><input type="date" id="fmd_t" value="' + ST.to + '"></div>' +
+      '<div><label style="font-size:12px">Module</label><select id="fmc_m">' + opts(MODULES.map(function (m) { return { v: m.k, t: m.i + " " + m.n }; }), ST.fmod, "All") + '</select></div><button class="btn sec" type="button" onclick="thFMS.period(\'thFMSRep\')">Set period</button></div>' +
+      '<div class="card"><table class="table fm-t"><tr><th>Report</th><th></th></tr>' + REPS.map(function (r) {
+        return "<tr><td>" + r[1] + '</td><td style="white-space:nowrap"><button class="btn sm" type="button" onclick="thFMS.rep(\'' + r[0] + "','pdf')\">🖨 PDF</button> <button class=\"btn sm sec\" type=\"button\" onclick=\"thFMS.rep('" + r[0] + "','xlsx')\">⬇ Excel</button></td></tr>";
+      }).join("") + '<tr><td><b>Complete FMS workbook</b> (all registers in one Excel file, one sheet each)</td><td><button class="btn sm" type="button" onclick="thFMS.rep(\'all\',\'xlsx\')">⬇ Excel</button></td></tr></table></div></div>';
+  });
+  function repData(kind) {
+    var a = ST.from, z = ST.to, mf = ST.fmod, t = today();
+    function inP(d) { d = String(d || "").slice(0, 10); return !d || (d >= a && d <= z); }
+    function mOk(m) { return !mf || m === mf; }
+    if (kind === "insp") return { title: "Inspection register", head: ["No.", "Date", "Time", "Module", "Checklist", "Dept", "Location", "Inspector", "Compliant", "Non-compliant", "NA", "Score %", "Status", "Reviewed by", "Approved by"],
+      rows: visibleInsp().filter(function (i) { return inP(i.date) && mOk(i.module) && i.status !== "Draft"; }).map(function (i) { var s = inspScore(i); return [i.no, show(i.date), i.time, modOf(i.module).n, i.clName, i.dept, i.location, i.inspector, s.c, s.nc, s.na, s.pct == null ? "" : s.pct, i.status, i.reviewedBy || "", i.approvedBy || ""]; }) };
+    if (kind === "nc") { var rows = []; visibleInsp().forEach(function (i) { if (!inP(i.date) || !mOk(i.module) || i.status === "Draft") return; i.res.forEach(function (r) { if (r.s === "NC") rows.push([i.no, show(i.date), modOf(i.module).n, i.clName, i.dept, r.t, r.std, r.rm, (r.ph || []).length]); }); });
+      return { title: "Non-compliance findings", head: ["Inspection", "Date", "Module", "Checklist", "Dept", "Item", "Std ref", "Remarks", "Photos"], rows: rows }; }
+    if (kind === "capa") return { title: "CAPA register", head: ["CAPA no.", "Source", "Ref", "Module", "Dept", "Issue", "Root cause", "Correction", "Corrective action", "Preventive action", "Responsible", "Target", "Status", "Overdue", "Verified by", "Effective"],
+      rows: visibleCAPA().filter(function (c) { return mOk(c.module); }).map(function (c) { return [c.no, c.source, c.ref, modOf(c.module).n, c.dept, c.issue, c.rootCause, c.correction, c.corrective, c.preventive, c.responsible, show(c.target), c.status, c.status !== "Closed" && c.target < t ? "Yes" : "", c.verifiedBy || "", c.effective || ""]; }) };
+    if (kind === "equip") return { title: "Medical equipment register", head: ["ID", "Name", "Department", "Manufacturer", "Model", "Serial", "Criticality", "Installed", "Warranty to", "AMC type", "AMC vendor", "AMC to", "PM freq", "Next PM", "Calibration freq", "Next calibration", "Breakdowns", "Downtime h", "Status"],
+      rows: F().equipment.filter(function (e) { return !e.deleted && seesDept(e.dept); }).map(function (e) { var b = eqDown(e); return [e.eqId, e.name, e.dept, e.make, e.model, e.serial, e.crit, show(e.installed), show(e.warrantyTo), e.amcType, e.amcVendor, show(e.amcTo), e.pmFreq, show(e.pmNext), e.calFreq, show(e.calNext), b.length, b.reduce(function (s, x) { return s + hours(x); }, 0), e.status]; }) };
+    if (kind === "pm") { var r2 = []; F().equipment.forEach(function (e) { if (e.deleted || !seesDept(e.dept)) return; if (e.pmNext) r2.push([e.eqId, e.name, e.dept, "PM", e.pmFreq, show(e.pmLast), show(e.pmNext), e.pmNext < t ? "Overdue" : "", e.amcVendor]); if (e.calNext) r2.push([e.eqId, e.name, e.dept, "Calibration", e.calFreq, show(e.calLast), show(e.calNext), e.calNext < t ? "Overdue" : "", e.calAgency]); });
+      return { title: "PM & calibration schedule", head: ["ID", "Equipment", "Dept", "Type", "Frequency", "Last", "Next", "Overdue", "Vendor / agency"], rows: r2 }; }
+    if (kind === "trail") return { title: "FMS audit trail", head: ["Date & time", "User", "Role", "Action", "Reference"], rows: F().trail.filter(function (x) { return inP(x.at); }).slice().reverse().map(function (x) { return [new Date(x.at).toLocaleString("en-IN"), x.user, x.role, x.action, x.ref]; }) };
+    if (kind === "dash") {
+      var S = stats(a, z);
+      var rowsD = [["Total checklists (active)", S.total], ["Completed inspections", S.done], ["Pending inspections", S.pending], ["Overdue inspections", S.overdue], ["Compliance %", S.pct == null ? "—" : S.pct], ["Open CAPA", S.open], ["Closed CAPA", S.closed], ["Upcoming PM / calibration (30 d)", S.pmUp]];
+      MODULES.forEach(function (m) { var c = 0, n = 0; S.IN.forEach(function (i) { if (i.module === m.k) { var s = inspScore(i); c += s.c; n += s.nc; } }); if (c + n) rowsD.push(["Compliance – " + m.n, Math.round(c / (c + n) * 1000) / 10]); });
+      return { title: "FMS dashboard summary", head: ["Indicator", "Value"], rows: rowsD };
+    }
+    var R = REG[kind];
+    if (R) {
+      var keys = R.f.map(function (f) { return f[0]; });
+      return { title: R.t, head: ["No."].concat(R.f.map(function (f) { return f[1]; })).concat(kind === "breakdowns" ? ["Downtime (h)"] : kind === "risks" ? ["Risk score", "Rating"] : []),
+        rows: F()[kind].filter(function (r) { return !r.deleted && seesDept(r.dept) && mOk(r.module) && inP(r.date || r.downAt || r.from || r.created); }).map(function (r) {
+          var row = [r.no].concat(keys.map(function (k) { var v = r[k]; if (k === "eqRef") { var e = byId("equipment", v); return e ? e.eqId + " " + e.name : ""; } if (k === "module") return modOf(v).n; return v == null ? "" : v; }));
+          if (kind === "breakdowns") row.push(hours(r)); if (kind === "risks") { var sc = (+r.L || 0) * (+r.S || 0); row.push(sc, rating(sc)); }
+          return row;
+        }) };
+    }
+    return { title: kind, head: [], rows: [] };
+  }
+  function hdr() {
+    var raw = ""; try { raw = printHead() || ""; } catch (e) {}
+    var p = (db.settings && db.settings.thPaper) || {};
+    if (p.mode === "letterhead") return '<div style="height:' + (+p.top || 40) + 'mm"></div>';
+    return raw;
+  }
+  function printHTML(body) {
+    var pa = document.getElementById("printArea");
+    if (!pa) { pa = document.createElement("div"); pa.id = "printArea"; document.body.appendChild(pa); }
+    pa.innerHTML = '<div class="fm-pr">' + hdr() + body + "</div>";
+    window.print();
+  }
+  function pdfTable(d) {
+    return "<h3>" + E(d.title).toUpperCase() + "</h3><p style='text-align:center;font-size:11px;margin:0 0 4px'>Period " + show(ST.from) + " to " + show(ST.to) + (ST.fmod ? " · " + E(modOf(ST.fmod).n) : "") + " · printed " + new Date().toLocaleString("en-IN") + " by " + E(who()) + "</p>" +
+      "<table><tr>" + d.head.map(function (h) { return "<th>" + E(h) + "</th>"; }).join("") + "</tr>" + (d.rows.length ? d.rows.map(function (r) { return "<tr>" + r.map(function (c) { return "<td>" + E(c) + "</td>"; }).join("") + "</tr>"; }).join("") : '<tr><td colspan="' + d.head.length + '">No records.</td></tr>') + "</table>" +
+      '<div class="sig"><span>Prepared by</span><span>Facility Manager</span><span>Quality Manager</span></div>';
+  }
+
+  /* --- minimal .xlsx writer (no library): stored zip + inline strings --- */
+  var CRC = (function () { var t = []; for (var n = 0; n < 256; n++) { var c = n; for (var k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
+  function crc32(b) { var c = 0xFFFFFFFF; for (var i = 0; i < b.length; i++) c = CRC[(c ^ b[i]) & 255] ^ (c >>> 8); return (c ^ 0xFFFFFFFF) >>> 0; }
+  function zip(files) {
+    var enc = new TextEncoder(), parts = [], central = [], off = 0;
+    function u16(v) { return [v & 255, (v >>> 8) & 255]; } function u32(v) { return [v & 255, (v >>> 8) & 255, (v >>> 16) & 255, (v >>> 24) & 255]; }
+    files.forEach(function (f) {
+      var name = enc.encode(f.name), data = enc.encode(f.data), crc = crc32(data);
+      var lh = [].concat([0x50, 0x4b, 0x03, 0x04], u16(20), u16(0x0800), u16(0), u16(0), u16(0x21), u32(crc), u32(data.length), u32(data.length), u16(name.length), u16(0));
+      parts.push(new Uint8Array(lh), name, data);
+      central.push(new Uint8Array([].concat([0x50, 0x4b, 0x01, 0x02], u16(20), u16(20), u16(0x0800), u16(0), u16(0), u16(0x21), u32(crc), u32(data.length), u32(data.length), u16(name.length), u16(0), u16(0), u16(0), u16(0), u32(0), u32(off))), name);
+      off += lh.length + name.length + data.length;
+    });
+    var csize = central.reduce(function (s, x) { return s + x.length; }, 0);
+    var end = new Uint8Array([].concat([0x50, 0x4b, 0x05, 0x06], u16(0), u16(0), u16(files.length), u16(files.length), u32(csize), u32(off), u16(0)));
+    return new Blob(parts.concat(central).concat([end]), { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+  }
+  function xesc(s) { return String(s == null ? "" : s).replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;"); }
+  function colName(i) { var s = ""; i++; while (i) { var m = (i - 1) % 26; s = String.fromCharCode(65 + m) + s; i = Math.floor((i - 1) / 26); } return s; }
+  function sheetXml(d) {
+    var all = [d.head].concat(d.rows), x = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews><cols>' +
+      d.head.map(function (h, i) { return '<col min="' + (i + 1) + '" max="' + (i + 1) + '" width="' + Math.min(50, Math.max(10, String(h).length + 4)) + '" customWidth="1"/>'; }).join("") + "</cols><sheetData>";
+    all.forEach(function (r, ri) {
+      x += '<row r="' + (ri + 1) + '">' + r.map(function (v, ci) {
+        var ref = colName(ci) + (ri + 1), st = ri === 0 ? ' s="1"' : "";
+        if (ri > 0 && typeof v === "number" && isFinite(v)) return '<c r="' + ref + '"><v>' + v + "</v></c>";
+        return '<c r="' + ref + '" t="inlineStr"' + st + "><is><t xml:space=\"preserve\">" + xesc(v) + "</t></is></c>";
+      }).join("") + "</row>";
+    });
+    return x + "</sheetData></worksheet>";
+  }
+  function xlsx(fileName, sheets) {
+    var used = {};
+    sheets = sheets.map(function (s, i) { var n = String(s.title).replace(/[\\\/\?\*\[\]:]/g, " ").slice(0, 28) || "Sheet" + (i + 1); while (used[n]) n = n.slice(0, 26) + i; used[n] = 1; return { name: n, d: s }; });
+    var files = [
+      { name: "[Content_Types].xml", data: '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>' + sheets.map(function (s, i) { return '<Override PartName="/xl/worksheets/sheet' + (i + 1) + '.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>'; }).join("") + "</Types>" },
+      { name: "_rels/.rels", data: '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>' },
+      { name: "xl/workbook.xml", data: '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>' + sheets.map(function (s, i) { return '<sheet name="' + xesc(s.name) + '" sheetId="' + (i + 1) + '" r:id="rId' + (i + 1) + '"/>'; }).join("") + "</sheets></workbook>" },
+      { name: "xl/_rels/workbook.xml.rels", data: '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' + sheets.map(function (s, i) { return '<Relationship Id="rId' + (i + 1) + '" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet' + (i + 1) + '.xml"/>'; }).join("") + '<Relationship Id="rId' + (sheets.length + 1) + '" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>' },
+      { name: "xl/styles.xml", data: '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font></fonts><fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FFD1F2EE"/></patternFill></fill></fills><borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1"/></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>' }
+    ].concat(sheets.map(function (s, i) { return { name: "xl/worksheets/sheet" + (i + 1) + ".xml", data: sheetXml(s.d) }; }));
+    var blob = zip(files);
+    window.__fmLastXlsx = { name: fileName, files: files, blob: blob };
+    var a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = fileName; document.body.appendChild(a); a.click(); setTimeout(function () { a.remove(); }, 800);
+    return blob;
+  }
+
+  /* =========================================================================
+     PRINTS
+     ========================================================================= */
+  function printInsp(i) {
+    var s = inspScore(i), caps = F().capa.filter(function (c) { return c.inspId === i.id && !c.deleted; });
+    printHTML("<h3>FACILITY INSPECTION REPORT — " + E(modOf(i.module).n).toUpperCase() + "</h3>" +
+      "<table><tr><th>Inspection no.</th><td><b>" + E(i.no) + "</b></td><th>Checklist</th><td>" + E(i.clName) + " (" + E(i.freq) + ")</td></tr>" +
+      "<tr><th>Date / time</th><td>" + show(i.date) + " " + E(i.time) + "</td><th>Department / location</th><td>" + E(i.dept) + (i.location ? " / " + E(i.location) : "") + "</td></tr>" +
+      "<tr><th>Inspected by</th><td>" + E(i.inspector) + (i.accompanied ? " with " + E(i.accompanied) : "") + "</td><th>Standard set</th><td>" + E(i.edition) + "</td></tr>" +
+      "<tr><th>Result</th><td colspan='3'>Compliant " + s.c + " · Non-compliant " + s.nc + " · NA " + s.na + " · <b>Score " + (s.pct == null ? "—" : s.pct + "%") + "</b> · Status: " + E(i.status) + "</td></tr></table>" +
+      "<table><tr><th style='width:4%'>#</th><th>Checklist item</th><th style='width:9%'>Std</th><th style='width:7%'>Result</th><th style='width:24%'>Remarks</th><th style='width:16%'>Photo</th></tr>" + i.res.map(function (r, k) {
+        return "<tr><td>" + (k + 1) + "</td><td>" + E(r.t) + "</td><td>" + E(r.std) + "</td><td><b>" + E(r.s || "") + "</b></td><td>" + E(r.rm) + "</td><td>" + (r.ph || []).slice(0, 2).map(function (id) { return F().photos[id] ? '<img src="' + F().photos[id] + '">' : ""; }).join("") + "</td></tr>";
+      }).join("") + "</table>" + (i.summary ? "<p style='font-size:11.5px'><b>Summary:</b> " + E(i.summary) + "</p>" : "") +
+      (caps.length ? "<table><tr><th>CAPA</th><th>Issue</th><th>Responsible</th><th>Target</th><th>Status</th></tr>" + caps.map(function (c) { return "<tr><td>" + E(c.no) + "</td><td>" + E(c.issue) + "</td><td>" + E(c.responsible) + "</td><td>" + show(c.target) + "</td><td>" + E(c.status) + "</td></tr>"; }).join("") + "</table>" : "") +
+      '<div class="sig"><span>Inspected by: ' + E(i.inspector) + "</span><span>Reviewed by: " + E(i.reviewedBy || "__________") + "</span><span>Approved by: " + E(i.approvedBy || "__________") + "</span></div>");
+    trail("Inspection report printed", i.no);
+  }
+  function printBlank(cl) {
+    printHTML("<h3>" + E(cl.name).toUpperCase() + "</h3><table><tr><th>Module</th><td>" + E(modOf(cl.module).n) + "</td><th>Frequency</th><td>" + E(cl.freq) + "</td></tr><tr><th>Department / area</th><td>" + E(cl.dept) + "</td><th>Date / time</th><td>____________</td></tr><tr><th>Inspected by</th><td></td><th>Standard set</th><td>" + E(cl.edition) + "</td></tr></table>" +
+      "<table><tr><th style='width:4%'>#</th><th>Checklist item</th><th style='width:10%'>Std</th><th style='width:6%'>C</th><th style='width:6%'>NC</th><th style='width:6%'>NA</th><th style='width:26%'>Remarks</th></tr>" +
+      cl.items.map(function (r, k) { return "<tr><td>" + (k + 1) + "</td><td>" + E(r.t) + "</td><td>" + E(r.std) + "</td><td>☐</td><td>☐</td><td>☐</td><td style='height:22px'></td></tr>"; }).join("") + "</table>" +
+      '<div class="sig"><span>Inspected by</span><span>Reviewed by</span><span>Approved by</span></div>');
+  }
+  function printCapa(c) {
+    printHTML("<h3>CORRECTIVE & PREVENTIVE ACTION (CAPA)</h3><table><tr><th>CAPA no.</th><td><b>" + E(c.no) + "</b></td><th>Source</th><td>" + E(c.source) + " " + E(c.ref) + "</td></tr><tr><th>Module</th><td>" + E(modOf(c.module).n) + "</td><th>Department</th><td>" + E(c.dept) + "</td></tr>" +
+      "<tr><th>Issue</th><td colspan='3'>" + E(c.issue) + "</td></tr><tr><th>Root cause</th><td colspan='3'>" + E(c.rootCause) + "</td></tr><tr><th>Correction</th><td colspan='3'>" + E(c.correction) + "</td></tr><tr><th>Corrective action</th><td colspan='3'>" + E(c.corrective) + "</td></tr>" +
+      "<tr><th>Preventive action</th><td colspan='3'>" + E(c.preventive) + "</td></tr><tr><th>Responsible</th><td>" + E(c.responsible) + "</td><th>Target date</th><td>" + show(c.target) + "</td></tr><tr><th>Status</th><td>" + E(c.status) + "</td><th>Verified by</th><td>" + E(c.verifiedBy || "") + " " + E(c.effective ? "(effective: " + c.effective + ")" : "") + "</td></tr></table>" +
+      "<div>" + (c.photos || []).concat(c.evidence || []).map(function (id) { return F().photos[id] ? '<img src="' + F().photos[id] + '">' : ""; }).join("") + "</div>" + '<div class="sig"><span>Responsible</span><span>Facility Manager</span><span>Quality Manager</span></div>');
+  }
+  function printEq(e) {
+    var b = eqDown(e);
+    printHTML("<h3>EQUIPMENT HISTORY CARD</h3><table><tr><th>Equipment ID</th><td><b>" + E(e.eqId) + "</b></td><th>Name</th><td>" + E(e.name) + "</td></tr><tr><th>Department</th><td>" + E(e.dept) + "</td><th>Manufacturer / model</th><td>" + E(e.make) + " / " + E(e.model) + "</td></tr>" +
+      "<tr><th>Serial no.</th><td>" + E(e.serial) + "</td><th>Installed</th><td>" + show(e.installed) + "</td></tr><tr><th>Warranty up to</th><td>" + show(e.warrantyTo) + "</td><th>" + E(e.amcType || "AMC") + "</th><td>" + E(e.amcVendor) + " " + show(e.amcFrom) + " – " + show(e.amcTo) + "</td></tr>" +
+      "<tr><th>PM</th><td>" + E(e.pmFreq) + " · next " + show(e.pmNext) + "</td><th>Calibration</th><td>" + E(e.calFreq) + " · next " + show(e.calNext) + " " + E(e.calAgency) + "</td></tr><tr><th>Status</th><td>" + E(e.status) + "</td><th>Total downtime</th><td>" + b.reduce(function (s, x) { return s + hours(x); }, 0) + " h (" + b.length + " breakdowns)</td></tr></table>" +
+      "<table><tr><th>Date</th><th>Type</th><th>Done by</th><th>Report no.</th><th>Result</th><th>Notes</th></tr>" + (e.service || []).map(function (s) { return "<tr><td>" + show(s.date) + "</td><td>" + E(s.type) + "</td><td>" + E(s.by) + "</td><td>" + E(s.no) + "</td><td>" + E(s.result) + "</td><td>" + E(s.note) + "</td></tr>"; }).join("") +
+      b.map(function (x) { return "<tr><td>" + E(String(x.downAt || "").replace("T", " ")) + "</td><td>Breakdown</td><td>" + E(x.attendedBy) + "</td><td>" + E(x.no) + "</td><td>" + E(x.status) + " (" + hours(x) + " h)</td><td>" + E(x.problem) + " → " + E(x.action) + "</td></tr>"; }).join("") + "</table>" +
+      '<div class="sig"><span>Biomedical engineer</span><span>Department in-charge</span><span>Facility Manager</span></div>');
+  }
+
+  /* =========================================================================
+     ACTIONS
+     ========================================================================= */
+  function ilog(i, what) { (i.log = i.log || []).push({ at: new Date().toISOString(), by: who(), role: myRole(), what: what }); }
+  function curInsp() { return byId("inspections", ST.insp); }
+  function readInspHead(i) { i.date = g("fi_date") || i.date; i.time = g("fi_time") || i.time; i.dept = g("fi_dept") || i.dept; i.location = g("fi_loc"); i.inspector = g("fi_by") || i.inspector; i.accompanied = g("fi_with"); i.summary = g("fi_sum"); i.res.forEach(function (r, k) { var el = document.getElementById("fi_rm" + k); if (el) r.rm = el.value.trim(); }); }
+  window.thFMS = {
+    period: function (p) { ST.from = g("fmd_f") || ST.from; ST.to = g("fmd_t") || ST.to; if (document.getElementById("fmc_m")) ST.fmod = g("fmc_m"); refresh(p); },
+    clFilter: function (p) { ST.fmod = g("fmc_m"); ST.fst = g("fmc_s"); refresh(p || "thFMSCL"); },
+    search: function (v, p) { ST.q = v; refresh(p); },
+    mod: function (k) { ST.mod = k; refresh("thFMSMod"); },
+    photo: function (id) { var src = F().photos[id]; if (!src) return; var z = document.createElement("div"); z.className = "fm-zoom"; z.innerHTML = '<img src="' + src + '">'; z.onclick = function () { z.remove(); }; document.body.appendChild(z); },
+    /* checklists */
+    newCL: function (m) { if (!can("config")) return toast2("Not allowed"); ST.edit = { module: m || "bld", items: [] }; refresh("thFMSCLEdit"); },
+    editCL: function (id) { if (!can("config")) return toast2("Not allowed"); ST.edit = byId("checklists", id); refresh("thFMSCLEdit"); },
+    saveCL: function () {
+      if (!can("config")) return toast2("Not allowed");
+      var items = g("fe_items").split(/\n/).map(function (l) { var p = l.split("|"); return { t: (p[0] || "").trim(), std: (p[1] || "").trim() }; }).filter(function (x) { return x.t; });
+      if (!g("fe_name")) return toast2("Enter checklist name"); if (!items.length) return toast2("Add at least one checklist item");
+      var x = ST.edit && ST.edit.id ? byId("checklists", ST.edit.id) : null, isNew = !x;
+      if (!x) { x = { id: uid("cl"), created: new Date().toISOString(), createdBy: who(), lastDone: "" }; F().checklists.push(x); }
+      Object.assign(x, { module: g("fe_mod"), name: g("fe_name"), freq: g("fe_freq"), dept: g("fe_dept"), assignee: g("fe_ass"), reviewer: g("fe_rev"), edition: g("fe_ed"), nextDue: g("fe_start") || today(), start: x.start || g("fe_start") || today(), active: g("fe_act"), applicable: g("fe_app"), items: items, updated: new Date().toISOString() });
+      trail(isNew ? "Checklist created" : "Checklist edited", x.name + " (" + x.freq + ", " + items.length + " items)"); saveAll(); toast2("Checklist saved"); ST.edit = null; refresh("thFMSCL");
+    },
+    delCL: function () { var x = ST.edit && byId("checklists", ST.edit.id); if (!x || !can("del")) return; if (!confirm("Delete checklist “" + x.name + "”? Past inspections are kept.")) return; x.deleted = true; trail("Checklist deleted", x.name); saveAll(); refresh("thFMSCL"); },
+    printBlank: function (id) { var c = byId("checklists", id); if (c) printBlank(c); },
+    /* inspections */
+    start: function (clId) {
+      if (!can("inspect")) return toast2("Your role cannot perform inspections");
+      var cl = byId("checklists", clId); if (!cl) return;
+      if (!seesDept(cl.dept) && !can("viewAll")) return toast2("This checklist belongs to another department");
+      var ex = F().inspections.filter(function (i) { return i.clId === cl.id && !i.deleted && (i.status === "Draft" || i.status === "Returned"); })[0];
+      if (!ex) {
+        ex = { id: uid("in"), no: nextNo("inspections", "INS"), clId: cl.id, clName: cl.name, module: cl.module, freq: cl.freq, edition: cl.edition, dept: cl.dept, location: "", date: today(), time: nowTime(), inspector: cl.assignee || who(), accompanied: "",
+          res: cl.items.map(function (it) { return { t: it.t, std: it.std, s: "", rm: "", ph: [] }; }), status: "Draft", summary: "", log: [], created: new Date().toISOString() };
+        ilog(ex, "Inspection started"); F().inspections.push(ex); trail("Inspection started", ex.no + " " + cl.name); saveAll();
+      }
+      ST.insp = ex.id; refresh("thFMSInspect");
+    },
+    ans: function (k, v) { var i = curInsp(); if (!i) return; readInspHead(i); i.res[k].s = v; saveAll(); refresh("thFMSInspect"); },
+    rm: function (k, v) { var i = curInsp(); if (i) { i.res[k].rm = String(v).trim(); } },
+    markAll: function (v) { var i = curInsp(); if (!i) return; readInspHead(i); i.res.forEach(function (r) { if (!r.s) r.s = v; }); saveAll(); refresh("thFMSInspect"); },
+    addPh: function (k, input) { var i = curInsp(); if (!i) return; readInspHead(i); readPhotos(input, function (ids) { i.res[k].ph = (i.res[k].ph || []).concat(ids); ilog(i, ids.length + " photo(s) added to item " + (k + 1)); saveAll(); refresh("thFMSInspect"); }); },
+    delPh: function (k, id) { var i = curInsp(); if (!i) return; readInspHead(i); i.res[k].ph = (i.res[k].ph || []).filter(function (x) { return x !== id; }); delete F().photos[id]; ilog(i, "Photo removed from item " + (k + 1)); saveAll(); refresh("thFMSInspect"); },
+    saveDraft: function () { var i = curInsp(); if (!i) return; readInspHead(i); ilog(i, "Draft saved"); saveAll(); toast2("Draft saved"); },
+    submit: function () {
+      var i = curInsp(); if (!i) return; readInspHead(i);
+      var miss = i.res.map(function (r, k) { return r.s ? null : k + 1; }).filter(Boolean);
+      if (miss.length) return toast2("Answer all items — missing: " + miss.slice(0, 10).join(", "));
+      var noRm = i.res.map(function (r, k) { return r.s === "NC" && !r.rm ? k + 1 : null; }).filter(Boolean);
+      if (noRm.length) return toast2("Write remarks for non-compliant item(s): " + noRm.join(", "));
+      if (!i.inspector) return toast2("Select who inspected");
+      i.status = "Submitted"; i.submittedAt = new Date().toISOString(); i.submittedBy = who(); ilog(i, "Submitted");
+      var cl = byId("checklists", i.clId);
+      if (cl && (!cl.lastDone || i.date >= cl.lastDone)) { cl.lastDone = i.date; cl.nextDue = nextFrom(cl.freq, i.date); }
+      var made = 0;
+      i.res.forEach(function (r, k) {
+        if (r.s !== "NC") return;
+        if (F().capa.some(function (c) { return c.inspId === i.id && c.item === k && !c.deleted; })) return;
+        newCapa({ source: "Inspection", inspId: i.id, item: k, ref: i.no + " #" + (k + 1), module: i.module, dept: i.dept, issue: r.t + (r.rm ? " — " + r.rm : ""), responsible: (cl && cl.assignee) || i.inspector, photos: (r.ph || []).slice() });
+        made++;
+      });
+      if (made) ilog(i, made + " CAPA raised automatically");
+      trail("Inspection submitted", i.no + " · score " + (inspScore(i).pct == null ? "—" : inspScore(i).pct + "%") + (made ? " · " + made + " CAPA" : ""));
+      saveAll(); toast2("Submitted" + (made ? " — " + made + " CAPA raised" : "") + (cl ? " · next due " + show(cl.nextDue) : "")); refresh("thFMSInsp");
+    },
+    openInsp: function (id) { ST.insp = id; var i = curInsp(); refresh(i && (i.status === "Draft" || i.status === "Returned") ? "thFMSInspect" : "thFMSInsp"); },
+    review: function (id) { var i = byId("inspections", id); if (!i || !can("review") || i.status !== "Submitted") return; if (i.inspector === who() && !can("approve")) return toast2("Another person must review"); i.status = "Reviewed"; i.reviewedBy = who(); i.reviewedAt = new Date().toISOString(); i.reviewNote = g("fv_note"); ilog(i, "Reviewed" + (i.reviewNote ? ": " + i.reviewNote : "")); trail("Inspection reviewed", i.no); saveAll(); refresh("thFMSInsp"); },
+    approve: function (id) { var i = byId("inspections", id); if (!i || !can("approve") || !(i.status === "Submitted" || i.status === "Reviewed")) return; if (i.status === "Submitted") { i.reviewedBy = who(); i.reviewedAt = new Date().toISOString(); } i.status = "Approved"; i.approvedBy = who(); i.approvedAt = new Date().toISOString(); ilog(i, "Approved"); trail("Inspection approved", i.no); saveAll(); refresh("thFMSInsp"); },
+    ret: function (id) { var i = byId("inspections", id); if (!i || !(can("review") || can("approve"))) return; var n = g("fv_note"); if (!n) return toast2("Write the reason for returning"); i.status = "Returned"; i.returnedBy = who(); i.returnNote = n; ilog(i, "Returned: " + n); trail("Inspection returned", i.no + " — " + n); saveAll(); refresh("thFMSInsp"); },
+    printInsp: function (id) { var i = byId("inspections", id); if (i) printInsp(i); },
+    /* CAPA */
+    newCapa: function () { if (!can("capaUpdate")) return toast2("Not allowed"); var c = newCapa({ source: "Ad hoc", module: ST.fmod || "capa", dept: myDept() || "Whole hospital", responsible: who() }); trail("CAPA created", c.no); saveAll(); ST.capa = c.id; refresh("thFMSCapaEdit"); },
+    openCapa: function (id) { ST.capa = id; refresh("thFMSCapaEdit"); },
+    saveCapa: function (done) {
+      var c = byId("capa", ST.capa); if (!c || !can("capaUpdate") || c.status === "Closed") return;
+      Object.assign(c, { module: g("fc_mod"), dept: g("fc_dept"), responsible: g("fc_resp"), target: g("fc_target"), issue: g("fc_issue"), rootCause: g("fc_root"), correction: g("fc_corr"), corrective: g("fc_ca"), preventive: g("fc_pa") });
+      if (!c.issue) return toast2("Describe the issue");
+      if (done) { if (!c.rootCause || !c.corrective) return toast2("Root cause and corrective action are required"); c.status = "Action taken"; c.actionAt = new Date().toISOString(); c.actionBy = who(); }
+      (c.log = c.log || []).push({ at: new Date().toISOString(), by: who(), role: myRole(), what: done ? "Action completed — sent for verification" : "Saved" });
+      trail(done ? "CAPA action completed" : "CAPA updated", c.no); saveAll(); toast2(done ? "Sent for verification" : "Saved"); refresh("thFMSCapaEdit");
+    },
+    verify: function (ok) {
+      var c = byId("capa", ST.capa); if (!c || !can("capaVerify") || c.status !== "Action taken") return;
+      if (c.actionBy === who() && myRole() !== "Administrator") return toast2("Closure must be verified by another person");
+      var eff = g("fc_eff"), note = g("fc_vnote");
+      if (ok && eff !== "Yes") ok = false;
+      if (!ok && !note) return toast2("Write why it is reopened");
+      c.verifiedBy = who(); c.verifiedAt = new Date().toISOString(); c.effective = eff; c.verifyNote = note; c.status = ok ? "Closed" : "Reopened"; if (ok) c.closedOn = today();
+      (c.log = c.log || []).push({ at: c.verifiedAt, by: who(), role: myRole(), what: ok ? "Verified effective — closed" : "Reopened: " + note });
+      trail(ok ? "CAPA verified & closed" : "CAPA reopened", c.no); saveAll(); refresh("thFMSCapaEdit");
+    },
+    capaPh: function (input) { var c = byId("capa", ST.capa); if (!c) return; readPhotos(input, function (ids) { c.evidence = (c.evidence || []).concat(ids); (c.log = c.log || []).push({ at: new Date().toISOString(), by: who(), role: myRole(), what: ids.length + " evidence photo(s) added" }); saveAll(); refresh("thFMSCapaEdit"); }); },
+    capaDelPh: function (id) { var c = byId("capa", ST.capa); if (!c) return; c.evidence = (c.evidence || []).filter(function (x) { return x !== id; }); c.photos = (c.photos || []).filter(function (x) { return x !== id; }); saveAll(); refresh("thFMSCapaEdit"); },
+    printCapa: function (id) { var c = byId("capa", id); if (c) printCapa(c); },
+    /* equipment */
+    newEq: function () { if (!can("equip")) return toast2("Not allowed"); ST.eq = ""; ST.edit = { status: "Working" }; ST.eqTab = "info"; refresh("thFMSEqEdit"); },
+    openEq: function (id, tab) { ST.eq = id; ST.edit = null; ST.eqTab = tab || "info"; refresh("thFMSEqEdit"); },
+    eqTab: function (t) { ST.eqTab = t; refresh("thFMSEqEdit"); },
+    saveEq: function () {
+      if (!can("equip")) return toast2("Not allowed");
+      if (!g("fq_name")) return toast2("Enter equipment name");
+      var id = g("fq_id"); if (F().equipment.some(function (e) { return !e.deleted && e.eqId === id && e.id !== ST.eq; })) return toast2("Equipment ID " + id + " already exists");
+      var e = byId("equipment", ST.eq), isNew = !e;
+      if (!e) { e = { id: uid("eq"), service: [], created: new Date().toISOString() }; F().equipment.push(e); }
+      Object.assign(e, { eqId: id, name: g("fq_name"), dept: g("fq_dept"), make: g("fq_make"), model: g("fq_model"), serial: g("fq_serial"), crit: g("fq_crit"), installed: g("fq_inst"), cost: g("fq_cost"), supplier: g("fq_supp"), warrantyTo: g("fq_wto"),
+        amcType: g("fq_amct"), amcVendor: g("fq_amcv"), amcFrom: g("fq_amcf"), amcTo: g("fq_amcto"), amcNo: g("fq_amcno"), amcCost: g("fq_amcc"), amcPhone: g("fq_amcp"), pmFreq: g("fq_pmf"), pmLast: g("fq_pml"), pmNext: g("fq_pmn"), calFreq: g("fq_calf"), calLast: g("fq_call"), calNext: g("fq_caln"), calAgency: g("fq_cala"),
+        status: g("fq_st"), custodian: g("fq_user"), remarks: g("fq_rem") });
+      if (!e.pmNext && e.pmFreq) e.pmNext = nextFrom(e.pmFreq, e.pmLast || e.installed || today());
+      if (!e.calNext && e.calFreq) e.calNext = nextFrom(e.calFreq, e.calLast || e.installed || today());
+      trail(isNew ? "Equipment added" : "Equipment edited", e.eqId + " " + e.name); saveAll(); toast2("Equipment saved"); ST.eq = e.id; refresh("thFMSEqEdit");
+    },
+    delEq: function () { var e = byId("equipment", ST.eq); if (!e || !can("del")) return; if (!confirm("Delete " + e.eqId + " " + e.name + "? (history is kept)")) return; e.deleted = true; trail("Equipment deleted", e.eqId); saveAll(); refresh("thFMSEq"); },
+    svcAdd: function (type) {
+      var e = byId("equipment", ST.eq); if (!e || !can("registers")) return;
+      var input = document.getElementById("fs_ph");
+      readPhotos(input || { files: [] }, function (ids) {
+        var s = { id: uid("sv"), type: type, date: g("fs_date") || today(), by: g("fs_by"), no: g("fs_no"), result: g("fs_res"), note: g("fs_note"), cost: g("fs_cost"), photos: ids, at: new Date().toISOString(), user: who() };
+        if (!s.by) return toast2("Enter who did the work");
+        (e.service = e.service || []).push(s);
+        if (type === "PM") { e.pmLast = s.date; e.pmNext = nextFrom(e.pmFreq || "Quarterly", s.date); }
+        if (type === "Calibration") { e.calLast = s.date; e.calNext = nextFrom(e.calFreq || "Annual", s.date); }
+        if (/Failed|repair/i.test(s.result) && e.status === "Working") e.status = "Under maintenance";
+        trail(type + " recorded", e.eqId + " " + s.date + " " + s.result); saveAll(); toast2(type + " saved" + (type === "PM" ? " · next PM " + show(e.pmNext) : type === "Calibration" ? " · next " + show(e.calNext) : "")); refresh("thFMSEqEdit");
+      });
+    },
+    /* generic registers */
+    regNew: function (key, eqRef) {
+      if (!can(REG[key].perm)) return toast2("Not allowed");
+      ST.reg = key; ST.regId = ""; ST.edit = { module: REG[key].mod };
+      if (eqRef) { var e = byId("equipment", eqRef); ST.edit.eqRef = eqRef; if (e) { ST.edit.dept = e.dept; ST.edit.item = e.name; ST.edit.module = "bd"; } }
+      if (key === "breakdowns") { var d = new Date(); ST.edit.downAt = iso(d) + "T" + nowTime(); ST.edit.status = "Open"; ST.edit.reportedBy = who(); }
+      refresh("thFMSReg");
+    },
+    regOpen: function (key, id) { ST.reg = key; ST.regId = id; ST.edit = null; refresh("thFMSReg"); },
+    regSave: function () {
+      var key = ST.reg, R = REG[key]; if (!R || !can(R.perm)) return toast2("Not allowed");
+      var r = byId(key, ST.regId), isNew = !r;
+      var vals = {}; R.f.forEach(function (f) { vals[f[0]] = g("fr_" + f[0]); });
+      if (key === "breakdowns") { if (!vals.eqRef && !vals.item) return toast2("Choose equipment or type the item"); if (!vals.downAt) return toast2("Enter breakdown time"); if (vals.upAt && vals.upAt < vals.downAt) return toast2("Restored time is before breakdown time"); if (vals.upAt && vals.status === "Open") vals.status = "Restored"; }
+      if (key === "contracts" && !vals.vendor) return toast2("Enter vendor");
+      if (key === "risks" && !vals.hazard) return toast2("Enter hazard");
+      if (key === "trainings" && !vals.date) return toast2("Enter date");
+      var input = document.getElementById("fr_ph");
+      readPhotos(input || { files: [] }, function (ids) {
+        if (!r) { r = { id: uid("rg"), no: nextNo(key, R.pre), created: new Date().toISOString(), createdBy: who(), photos: [] }; F()[key].push(r); }
+        Object.assign(r, vals); r.photos = (r.photos || []).concat(ids); r.updated = new Date().toISOString();
+        if (key === "breakdowns" && r.eqRef) { var e = byId("equipment", r.eqRef); if (e) { e.status = r.status === "Open" ? "Breakdown" : r.status === "Condemned" ? "Condemned" : "Working"; } }
+        trail((isNew ? "Added: " : "Updated: ") + R.t, r.no); saveAll(); toast2("Saved " + r.no); ST.regId = r.id; ST.edit = null; refresh("thFMSReg");
+      });
+    },
+    regDel: function () { var r = byId(ST.reg, ST.regId); if (!r || !can("del")) return; if (!confirm("Delete " + r.no + "?")) return; r.deleted = true; trail("Deleted: " + REG[ST.reg].t, r.no); saveAll(); refresh(REG[ST.reg].page); },
+    regDelPh: function (id) { var r = byId(ST.reg, ST.regId); if (!r) return; r.photos = (r.photos || []).filter(function (x) { return x !== id; }); saveAll(); refresh("thFMSReg"); },
+    regCapa: function () {
+      var r = byId(ST.reg, ST.regId); if (!r) return toast2("Save the record first"); if (!can("capaUpdate")) return toast2("Not allowed");
+      var lines = ST.reg === "drills" ? String(r.gaps || "").split(/\n/).map(function (x) { return x.trim(); }).filter(Boolean) : [ST.reg === "risks" ? "Risk: " + r.hazard + " (" + r.consequence + ")" : "Breakdown: " + (r.item || "") + " — " + (r.problem || "")];
+      if (!lines.length) return toast2("Write the gaps first");
+      var made = 0;
+      lines.forEach(function (l) { if (F().capa.some(function (c) { return c.ref === r.no && c.issue === l && !c.deleted; })) return; newCapa({ source: REG[ST.reg].t, ref: r.no, module: r.module || REG[ST.reg].mod, dept: r.dept || "Whole hospital", issue: l, responsible: r.owner || r.observer || "", photos: (r.photos || []).slice() }); made++; });
+      trail("CAPA raised from " + REG[ST.reg].t, r.no + " (" + made + ")"); saveAll(); toast2(made + " CAPA raised"); refresh("thFMSCapa");
+    },
+    /* settings */
+    saveSet: function () {
+      if (!can("config")) return; var c = C();
+      var eds = g("fs_eds").split(/\n/).map(function (x) { return x.trim(); }).filter(Boolean); if (eds.length) c.editions = eds;
+      c.edition = c.editions.indexOf(g("fs_ed")) >= 0 ? g("fs_ed") : c.editions[0]; c.remindDays = Math.max(0, +g("fs_rem") || 0); c.capaDays = Math.max(1, +g("fs_cd") || 7);
+      var ar = g("fs_areas").split(/\n/).map(function (x) { return x.trim(); }).filter(Boolean); if (ar.length) c.areas = ar;
+      trail("FMS settings saved", c.edition); saveAll(); toast2("Settings saved"); refresh("thFMSSet");
+    },
+    saveRoles: function (n) {
+      if (myRole() !== "Administrator") return toast2("Only Administrator");
+      var c = C(), adminLeft = false;
+      for (var i = 0; i < n; i++) { var s = document.getElementById("fr_r" + i); if (!s) continue; var nm = s.getAttribute("data-n"); if (s.value) c.userRoles[nm] = s.value; else delete c.userRoles[nm]; var d = g("fr_d" + i); if (d) c.userDept[nm] = d; else delete c.userDept[nm]; }
+      people().forEach(function (p) { if (c.userRoles[p] === "Administrator") adminLeft = true; });
+      if (!adminLeft && c.userRoles[who()] && c.userRoles[who()] !== "Administrator" && !/master|admin/i.test(appRole())) { c.userRoles[who()] = "Administrator"; toast2("You stay Administrator so the module is not locked"); }
+      var gr = document.getElementById("fr_menu"), granted = 0;
+      if (!gr || gr.checked) granted = grantMenus();
+      trail("FMS roles changed", JSON.stringify(c.userRoles).slice(0, 200) + (granted ? " | menu rights given to " + granted + " login(s)" : "")); saveAll(); toast2("Roles saved" + (granted ? " • FMS menus ticked for " + granted + " login(s)" : "")); refresh("thFMSSet");
+    },
+    seedMissing: function () {
+      if (!can("config")) return; var f = F(), add = 0, ed = C().edition, t = today();
+      MODULES.forEach(function (m) { (DEF[m.k] || []).forEach(function (cl) { if (f.checklists.some(function (x) { return x.module === m.k && x.name === cl[0] && !x.deleted; })) return; f.checklists.push({ id: uid("cl"), module: m.k, name: cl[0], freq: cl[1], dept: "Whole hospital", assignee: "", reviewer: "", edition: ed, applicable: true, active: true, items: cl[2].map(function (x) { return { t: x, std: m.ch }; }), start: t, nextDue: t, lastDone: "", created: new Date().toISOString(), createdBy: who() }); add++; }); });
+      trail("Default checklists added", add); saveAll(); toast2(add + " checklist(s) added");
+    },
+    retag: function () { if (!can("config")) return; if (!confirm("Tag every checklist with “" + C().edition + "”?")) return; F().checklists.forEach(function (x) { x.edition = C().edition; }); trail("Checklists re-tagged", C().edition); saveAll(); toast2("Done"); },
+    /* reports */
+    rep: function (kind, fmt) {
+      if (!can("reports") && !can("viewAll") && kind !== "insp") return toast2("Your role cannot export reports");
+      if (fmt === "xlsx") {
+        var sheets = kind === "all" ? REPS.map(function (r) { return repData(r[0]); }) : [repData(kind)];
+        xlsx("FMS_" + (kind === "all" ? "Workbook" : kind) + "_" + ST.from + "_to_" + ST.to + ".xlsx", sheets);
+        trail("Excel exported", kind); saveAll(); return;
+      }
+      var d = repData(kind); printHTML(pdfTable(d)); trail("Report printed", d.title);
+    },
+    printEq: function (id) { var e = byId("equipment", id); if (e) printEq(e); },
+    /* for other modules / tests */
+    _: { F: F, C: C, can: can, myRole: myRole, dueState: dueState, nextFrom: nextFrom, stats: stats, repData: repData, inspScore: inspScore, xlsx: xlsx, MODULES: MODULES, ST: ST }
+  };
+
+  /* =========================================================================
+     ALERTS: red count on the menu + once-a-day reminder
+     ========================================================================= */
+  /* app menu rights: tick FMS menu items in Users & Rights for logins that got an FMS role (only adds, never removes) */
+  var BASE_KEYS = ["thFMSDash", "thFMSDue", "thFMSMods", "thFMSCL", "thFMSInsps", "thFMSCapa", "thFMSEq", "thFMSPM", "thFMSBd", "thFMSAmc", "thFMSRisk", "thFMSDrill", "thFMSTrain"];
+  function keysFor(role) { var p = PERM[role] || {}, k = BASE_KEYS.slice(); if (p.all || p.reports) k.push("thFMSRep"); if (p.all || p.config) k.push("thFMSSet"); return k; }
+  function grantMenus() {
+    var c = C(), n = 0;
+    (Array.isArray(db.users) ? db.users : []).forEach(function (u) {
+      if (!u || u.role === "Master") return;
+      var nm = V(u.name || u.fullName || u.username || u.user || u.u).trim(), role = c.userRoles[nm] || (u.role === "Admin" ? "Administrator" : "");
+      if (!role) return;
+      if (!Array.isArray(u.perms)) u.perms = [];
+      var add = keysFor(role).filter(function (k) { return u.perms.indexOf(k) < 0; });
+      if (add.length) { u.perms = u.perms.concat(add); n++; }
+    });
+    return n;
+  }
+  /* inner FMS pages are opened from FMS screens only; their access is checked by the FMS role inside each page */
+  try { if (typeof PAGE_PERM !== "undefined") ["thFMSMod", "thFMSCLEdit", "thFMSInspect", "thFMSInsp", "thFMSCapaEdit", "thFMSEqEdit", "thFMSReg"].forEach(function (k) { PAGE_PERM[k] = null; }); } catch (e) {}
+
+  function alertCounts() {
+    try {
+      var CL = visibleCL().filter(function (c) { return c.active && c.applicable !== false; });
+      var t = today();
+      return { over: CL.filter(function (c) { return dueState(c) === "overdue"; }).length, due: CL.filter(function (c) { return dueState(c) === "due"; }).length,
+        capa: visibleCAPA().filter(function (c) { return c.status !== "Closed" && c.target && c.target < t; }).length,
+        pm: F().equipment.filter(function (e) { return !e.deleted && e.status !== "Condemned" && ((e.pmNext && e.pmNext < t) || (e.calNext && e.calNext < t)); }).length,
+        amc: F().contracts.filter(function (c) { return !c.deleted && c.to && daysBetween(t, c.to) <= 30; }).length };
+    } catch (e) { return null; }
+  }
+  function paintBadge() {
+    if (typeof db === "undefined" || !db || !Array.isArray(db.patients)) return;
+    var a = alertCounts(); if (!a) return;
+    var n = a.over + a.capa + a.pm;
+    var el = Array.prototype.filter.call(document.querySelectorAll("nav *, aside *, .sidebar *, a, div, span, li"), function (e) { return e.children.length < 3 && /^\W*FACILITY MANAGEMENT\W*$/i.test((e.textContent || "").replace(/\d+$/, "").trim()); })[0];
+    if (!el) return;
+    var b = el.querySelector(".fm-menu-badge");
+    if (!n) { if (b) b.remove(); return; }
+    if (!b) { b = document.createElement("span"); b.className = "fm-menu-badge"; el.appendChild(b); }
+    if (b.textContent !== String(n)) { b.textContent = n; b.title = a.over + " overdue inspection(s), " + a.capa + " overdue CAPA, " + a.pm + " overdue PM / calibration"; }
+    var key = "thFMSRemind_" + today() + "_" + who();
+    try { if (!localStorage.getItem(key) && (a.over || a.due || a.capa || a.pm || a.amc)) { localStorage.setItem(key, "1"); toast2("🏢 Facility: " + a.over + " overdue, " + a.due + " due soon, " + a.capa + " CAPA overdue, " + a.pm + " PM/calibration overdue" + (a.amc ? ", " + a.amc + " contract(s) expiring" : "")); } } catch (e) {}
+  }
+  try { TH.after("renderNav", function () { setTimeout(paintBadge, 0); }); } catch (e) {}
+  setTimeout(paintBadge, 4000);
+  setInterval(paintBadge, 60000);
+  window.__fmPaint = paintBadge;
+})();
+/*TH-SIGN:d1f96c82dc8f20550d63c822d9054b8c*/

@@ -1,0 +1,272 @@
+/*TRUEHOPE-UPDATE {"id":"th-vitals-pad-20261120","name":"Vitals Pad (quick entry)","version":"1.0","date":"2026-11-20","description":"🩺 Vitals Pad button on IPD Vitals Chart and Day Care nursing: big tap-friendly screen to enter BP, pulse, temp, RR, SpO2, pain, intake/output with tap-to-pick value lists (normal values in green) and +/- buttons, age-wise normal ranges, last values, red alert for abnormal; OK fills the chart (nothing is filled automatically)."} */
+(function () {
+  if (window.__thVP) return;
+  window.__thVP = true;
+
+  function E(s) { try { return esc(String(s == null ? "" : s)); } catch (e) { return String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;"); } }
+
+  /* ---------- normal ranges (age group) ---------- */
+  var GROUPS = {
+    infant: { label: "Infant (< 1 yr)", sys: [70, 100], dia: [40, 65], pulse: [100, 160], rr: [30, 60] },
+    child: { label: "Child (1–5 yr)", sys: [80, 110], dia: [50, 75], pulse: [80, 140], rr: [20, 30] },
+    school: { label: "Child (6–12 yr)", sys: [90, 120], dia: [55, 80], pulse: [70, 120], rr: [18, 25] },
+    adult: { label: "Adult / teen", sys: [90, 140], dia: [60, 90], pulse: [60, 100], rr: [12, 20] }
+  };
+  var COMMON = { spo2: [95, 100], tempF: [97.0, 99.5], tempC: [36.1, 37.5], pain: [0, 3] };
+  function ageGroup() {
+    var t = (document.body.innerText || "").match(/Age\s*\/?\s*(?:Sex|Gender)?\s*:?\s*([^\n]{0,30})/i);
+    var s = t ? t[1] : "";
+    var m;
+    if (/\b(\d+)\s*(d|day)/i.test(s) || /\b(\d+)\s*(m|mo|month)/i.test(s)) {
+      m = s.match(/(\d+)\s*(y|yr|year)/i);
+      if (!m || +m[1] < 1) return "infant";
+    }
+    m = s.match(/(\d+)\s*(y|yr|year)?/i);
+    if (!m) return "adult";
+    var y = +m[1];
+    return y < 1 ? "infant" : y <= 5 ? "child" : y <= 12 ? "school" : "adult";
+  }
+
+  /* ---------- find chart fields by their labels ---------- */
+  var MAP = [["bp", /^bp\b/i], ["pulse", /^pulse/i], ["temp", /^temp/i], ["rr", /^rr\b/i], ["spo2", /^spo/i], ["pain", /^pain/i],
+    ["intake", /^intake/i], ["output", /^output/i], ["rbs", /^(rbs|grbs)/i], ["remarks", /^(remarks|nursing note)/i]];
+  function fieldOf(lab) {
+    var n = lab.nextElementSibling;
+    if (n && /^(INPUT|SELECT|TEXTAREA)$/.test(n.tagName)) return n;
+    if (lab.htmlFor) { var f = document.getElementById(lab.htmlFor); if (f) return f; }
+    var all = lab.parentElement ? lab.parentElement.querySelectorAll("input,select,textarea") : [];
+    return all.length === 1 ? all[0] : null;
+  }
+  function fields(card) {
+    var out = {};
+    Array.prototype.forEach.call(card.querySelectorAll("label"), function (lab) {
+      var t = (lab.textContent || "").trim();
+      MAP.forEach(function (m) { if (!out[m[0]] && m[1].test(t)) { var f = fieldOf(lab); if (f) out[m[0]] = f; } });
+    });
+    return out;
+  }
+  function setVal(el, v) {
+    if (!el) return;
+    if (el.tagName === "SELECT") {
+      var o = Array.prototype.filter.call(el.options, function (x) { return String(x.value) === String(v) || (x.textContent || "").trim().indexOf(String(v)) === 0; })[0];
+      if (o) el.value = o.value; else return;
+    } else el.value = v;
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+    el.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+  /* last recorded values from the table under the chart */
+  function lastValues(card) {
+    var tbl = null, n = card;
+    for (var i = 0; i < 4 && n; i++) { n = n.nextElementSibling; if (n && (n.tagName === "TABLE" || n.querySelector && n.querySelector("table"))) { tbl = n.tagName === "TABLE" ? n : n.querySelector("table"); break; } }
+    if (!tbl) tbl = card.querySelector("table");
+    if (!tbl) return {};
+    var rows = Array.prototype.slice.call(tbl.querySelectorAll("tr"));
+    if (rows.length < 2) return {};
+    var head = Array.prototype.map.call(rows[0].children, function (c) { return (c.textContent || "").trim(); });
+    function dt(r) { var t = (r.children[0] && r.children[0].textContent || ""), m = t.match(/(\d{1,2})[-\/](\d{1,2})[-\/](\d{4})\D*(\d{1,2})?:?(\d{2})?/); return m ? new Date(+m[3], +m[2] - 1, +m[1], +(m[4] || 0), +(m[5] || 0)).getTime() : 0; }
+    var data = rows.slice(1).filter(function (r) { return r.children.length >= head.length - 1 && !/no entries/i.test(r.textContent); });
+    if (!data.length) return {};
+    data.sort(function (a, b) { return dt(b) - dt(a); });
+    var last = data[0], out = {};
+    head.forEach(function (h, i) { MAP.forEach(function (m) { if (!out[m[0]] && m[1].test(h)) out[m[0]] = (last.children[i] && last.children[i].textContent || "").trim(); }); });
+    return out;
+  }
+
+  /* ---------- style ---------- */
+  TH.css([
+    ".thvp-ov{position:fixed;inset:0;z-index:2147482000;background:rgba(15,23,42,.6);display:flex;align-items:center;justify-content:center;padding:14px;font-family:inherit}",
+    ".thvp{background:#f8fafc;border-radius:18px;width:min(1100px,100%);max-height:96vh;overflow:auto;box-shadow:0 20px 60px rgba(0,0,0,.4)}",
+    ".thvp-h{background:linear-gradient(135deg,#0b2545,#1d4f91);color:#fff;padding:14px 20px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;border-radius:18px 18px 0 0;position:sticky;top:0;z-index:2}",
+    ".thvp-h b{font-size:20px;flex:1}.thvp-h select{width:auto !important;border-radius:8px;padding:5px 8px}",
+    ".thvp-g{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:12px;padding:16px}",
+    ".thvp-t{background:#fff;border:2px solid #e2e8f0;border-radius:14px;padding:12px 14px}",
+    ".thvp-t.ok{border-color:#86efac;background:#f0fdf4}.thvp-t.bad{border-color:#fca5a5;background:#fef2f2}",
+    ".thvp-t h4{margin:0;font-size:15px;color:#0b2545;display:flex;justify-content:space-between;align-items:center}",
+    ".thvp-t small{display:block;color:#64748b;font-size:11.5px;margin:2px 0 8px}",
+    ".thvp-row{display:flex;align-items:center;gap:6px}",
+    ".thvp-row input{flex:1;min-width:0;width:auto !important;font-size:26px !important;font-weight:800;text-align:center;height:52px;border-radius:10px;border:1px solid #cbd5e1;color:#0b2545}",
+    ".thvp-row button{width:46px;height:52px;border-radius:10px;border:1px solid #cbd5e1;background:#f1f5f9;font-size:24px;font-weight:700;cursor:pointer;color:#0b2545;flex:none}",
+    ".thvp-row button:active{background:#dbeafe}.thvp-sl{font-size:22px;font-weight:700;color:#94a3b8}",
+    ".thvp-chips{display:flex;flex-wrap:wrap;gap:5px;margin-top:8px}.thvp-chips button{border:1px solid #cbd5e1;background:#fff;border-radius:16px;padding:4px 10px;font-size:12.5px;cursor:pointer}",
+    ".thvp-chips button.on{background:#0b2545;color:#fff;border-color:#0b2545}",
+    ".thvp-st{font-size:11.5px;font-weight:700;border-radius:12px;padding:2px 8px}.thvp-st.ok{background:#dcfce7;color:#166534}.thvp-st.bad{background:#fee2e2;color:#991b1b}",
+    ".thvp-f{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:12px 16px 16px;border-top:1px solid #e2e8f0;position:sticky;bottom:0;background:#f8fafc}",
+    ".thvp-f .msg{flex:1;font-size:13px;color:#991b1b;font-weight:700}",
+    ".thvp-f button{height:44px;border-radius:10px;padding:0 18px;font-size:15px;font-weight:700;cursor:pointer;border:1px solid #0b2545}",
+    ".thvp-ok{background:#16a34a !important;border-color:#16a34a !important;color:#fff}.thvp-ok2{background:#0b2545;color:#fff}.thvp-cn{background:#fff;color:#0b2545}",
+    ".thvp-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(48px,1fr));gap:4px;max-height:126px;overflow-y:auto;margin-top:8px;padding:3px;border:1px solid #e2e8f0;border-radius:10px;background:#fff}",
+    ".thvp-list button{height:32px;border:1px solid #e2e8f0;background:#f8fafc;border-radius:8px;font-size:13.5px;font-weight:600;cursor:pointer;color:#334155;padding:0}",
+    ".thvp-list button.n{background:#ecfdf5;border-color:#a7f3d0;color:#065f46}.thvp-list button.on{background:#0b2545 !important;border-color:#0b2545 !important;color:#fff !important}",
+    ".thvp-sub{font-size:11px;color:#64748b;margin-top:6px;font-weight:700}",
+    ".thvp-btn{background:linear-gradient(135deg,#0e7490,#0891b2) !important;color:#fff !important;border-color:#0891b2 !important;font-weight:700 !important}"
+  ].join(""));
+
+  /* ---------- the pad ---------- */
+  var V = {}, G = "adult", CARD = null, F = null, LAST = {};
+  function rng(k) {
+    var g = GROUPS[G];
+    if (k === "sys" || k === "dia" || k === "pulse" || k === "rr") return g[k];
+    if (k === "spo2") return COMMON.spo2;
+    if (k === "temp") return +V.temp && +V.temp < 45 ? COMMON.tempC : COMMON.tempF;
+    if (k === "pain") return COMMON.pain;
+    return null;
+  }
+  function state(k) {
+    var v = V[k];
+    if (v === "" || v == null || isNaN(+v)) return "";
+    var r = rng(k); if (!r) return "ok";
+    return +v < r[0] ? "low" : +v > r[1] ? "high" : "ok";
+  }
+  var STEP = { sys: 2, dia: 2, pulse: 1, rr: 1, spo2: 1, temp: 0.1, intake: 50, output: 50 };
+  function startVal(k) {
+    var l = LAST[k];
+    if (k === "sys" || k === "dia") { var b = String(LAST.bp || "").match(/(\d+)\s*\/\s*(\d+)/); if (b) return +(k === "sys" ? b[1] : b[2]); }
+    else if (l && !isNaN(parseFloat(l))) return parseFloat(l);
+    var r = rng(k); return r ? Math.round((r[0] + r[1]) / 2 * 10) / 10 : 0;
+  }
+  function stepBtn(k, d) {
+    var cur = V[k] === "" || V[k] == null ? null : +V[k];
+    var n = cur == null ? startVal(k) : cur + d * STEP[k];
+    if (k === "spo2") n = Math.min(100, n);
+    n = Math.max(0, Math.round(n * 10) / 10);
+    V[k] = k === "temp" ? n.toFixed(1) : String(n);
+    paint();
+  }
+  function tile(k, title, unit, extra) {
+    var r = k === "bp" ? null : rng(k);
+    return '<div class="thvp-t" data-k="' + k + '"><h4>' + title + ' <span class="thvp-st" data-st="' + k + '"></span></h4><small>' +
+      (k === "bp" ? "Normal " + rng("sys").join("–") + " / " + rng("dia").join("–") + " mmHg" : r ? "Normal " + r.join("–") + " " + unit : unit) +
+      (LAST[k] ? " · Last: <b>" + E(LAST[k]) + "</b>" : "") + "</small>" + extra + "</div>";
+  }
+  var LISTS = { sys: [50, 240, 2], dia: [30, 140, 2], pulse: [30, 200, 1], tempF: [94, 106, 0.1], tempC: [34.5, 41.5, 0.1], rr: [6, 70, 1], spo2: [60, 100, 1], intake: [0, 3000, 50], output: [0, 3000, 50], rbs: [40, 500, 5] };
+  function listHTML(k) {
+    var key = k === "temp" ? (window.__thvpC ? "tempC" : "tempF") : k, L = LISTS[key]; if (!L) return "";
+    var r = k === "temp" ? (key === "tempC" ? COMMON.tempC : COMMON.tempF) : rng(k), out = [];
+    for (var v = L[0]; v <= L[1] + 1e-9; v += L[2]) {
+      var x = L[2] < 1 ? v.toFixed(1) : String(Math.round(v));
+      var n = r && +x >= r[0] && +x <= r[1];
+      out.push('<button type="button" data-lv="' + k + '" data-x="' + x + '" class="' + (n ? "n" : "") + '" onclick="thVP.pick(\'' + k + '\',\'' + x + '\')">' + x + "</button>");
+    }
+    return (k === "temp" ? '<div class="thvp-chips" style="margin-top:6px"><button type="button" class="' + (window.__thvpC ? "" : "on") + '" onclick="thVP.unit(0)">°F</button><button type="button" class="' + (window.__thvpC ? "on" : "") + '" onclick="thVP.unit(1)">°C</button></div>' : "") +
+      '<div class="thvp-list" data-l="' + k + '">' + out.join("") + "</div>";
+  }
+  function numRow(k, ph) {
+    return '<div class="thvp-row"><button type="button" onclick="thVP.step(\'' + k + '\',-1)">−</button><input inputmode="decimal" data-v="' + k + '" placeholder="' + (ph || "—") + '" oninput="thVP.typed(\'' + k + '\',this.value)"><button type="button" onclick="thVP.step(\'' + k + '\',1)">+</button></div>' + listHTML(k);
+  }
+  function build() {
+    var h = '<div class="thvp"><div class="thvp-h"><b>🩺 Vitals Pad</b><span style="font-size:12px;opacity:.85">Measure first, then enter. Nothing is filled automatically.</span>' +
+      '<select onchange="thVP.group(this.value)">' + Object.keys(GROUPS).map(function (g) { return '<option value="' + g + '"' + (g === G ? " selected" : "") + ">Ranges: " + GROUPS[g].label + "</option>"; }).join("") + "</select></div>" +
+      '<div class="thvp-g">' +
+      (F.bp ? tile("bp", "Blood pressure", "mmHg", '<div class="thvp-row"><button type="button" onclick="thVP.step(\'sys\',-1)">−</button><input inputmode="numeric" data-v="sys" placeholder="SYS" oninput="thVP.typed(\'sys\',this.value)"><button type="button" onclick="thVP.step(\'sys\',1)">+</button></div><div class="thvp-sub">Systolic (upper)</div>' + listHTML("sys") +
+        '<div class="thvp-row" style="margin-top:6px"><button type="button" onclick="thVP.step(\'dia\',-1)">−</button><input inputmode="numeric" data-v="dia" placeholder="DIA" oninput="thVP.typed(\'dia\',this.value)"><button type="button" onclick="thVP.step(\'dia\',1)">+</button></div><div class="thvp-sub">Diastolic (lower)</div>' + listHTML("dia")) : "") +
+      (F.pulse ? tile("pulse", "Pulse", "/min", numRow("pulse")) : "") +
+      (F.temp ? tile("temp", "Temperature", "°F (or °C)", numRow("temp")) : "") +
+      (F.rr ? tile("rr", "Respiratory rate", "/min", numRow("rr")) : "") +
+      (F.spo2 ? tile("spo2", "SpO₂", "%", numRow("spo2") + '<div class="thvp-chips">' + ["Room air", "On O₂ 2 L", "On O₂ 4 L", "On O₂ mask", "On ventilator"].map(function (c) { return '<button type="button" data-o2="' + c + '" onclick="thVP.o2(this)">' + c + "</button>"; }).join("") + "</div>") : "") +
+      (F.pain ? tile("pain", "Pain score", "0 = no pain, 10 = worst", '<div class="thvp-chips">' + [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(function (n) { return '<button type="button" data-pain="' + n + '" onclick="thVP.pain(' + n + ')" style="min-width:34px;font-size:15px;font-weight:700">' + n + "</button>"; }).join("") + "</div>") : "") +
+      (F.intake ? tile("intake", "Intake", "ml", numRow("intake") + '<div class="thvp-chips">' + [50, 100, 200, 500].map(function (n) { return '<button type="button" onclick="thVP.add(\'intake\',' + n + ')">+' + n + "</button>"; }).join("") + "</div>") : "") +
+      (F.output ? tile("output", "Output", "ml", numRow("output") + '<div class="thvp-chips">' + [50, 100, 200, 500].map(function (n) { return '<button type="button" onclick="thVP.add(\'output\',' + n + ')">+' + n + "</button>"; }).join("") + "</div>") : "") +
+      (F.rbs ? tile("rbs", "RBS / other", "mg/dL", numRow("rbs")) : "") +
+      (F.remarks ? '<div class="thvp-t" style="grid-column:1/-1"><h4>Remarks</h4><small>Tap to add, or type</small><input data-v="remarks" oninput="thVP.typed(\'remarks\',this.value)" style="width:100%;height:42px;font-size:15px;border-radius:10px;border:1px solid #cbd5e1;padding:0 10px;box-sizing:border-box">' +
+        '<div class="thvp-chips">' + ["Stable", "Conscious, oriented", "Afebrile", "Doctor informed", "Medication given as advised", "Sleeping comfortably", "Complains of pain"].map(function (c) { return '<button type="button" onclick="thVP.note(this.textContent)">' + c + "</button>"; }).join("") + "</div></div>" : "") +
+      "</div>" +
+      '<div class="thvp-f"><span class="msg"></span><button type="button" class="thvp-cn" onclick="thVP.close()">Cancel</button>' +
+      '<button type="button" class="thvp-ok2" onclick="thVP.ok(false)">OK — fill chart</button>' +
+      (addBtn() ? '<button type="button" class="thvp-ok" onclick="thVP.ok(true)">OK &amp; Add entry ✔</button>' : "") + "</div></div>";
+    return h;
+  }
+  function paint() {
+    var ov = document.querySelector(".thvp-ov"); if (!ov) return;
+    Array.prototype.forEach.call(ov.querySelectorAll("input[data-v]"), function (i) { var k = i.getAttribute("data-v"); if (document.activeElement !== i) i.value = V[k] == null ? "" : V[k]; });
+    var bad = [];
+    ["bp", "pulse", "temp", "rr", "spo2", "pain", "intake", "output", "rbs"].forEach(function (k) {
+      var t = ov.querySelector('.thvp-t[data-k="' + k + '"]'); if (!t) return;
+      var st = k === "bp" ? (function () { var a = state("sys"), b = state("dia"); return !a && !b ? "" : (a && a !== "ok") || (b && b !== "ok") ? "bad" : "ok"; })() : state(k);
+      var lab = ov.querySelector('[data-st="' + k + '"]');
+      var isBad = st === "low" || st === "high" || st === "bad";
+      t.className = "thvp-t" + (st === "" ? "" : isBad ? " bad" : " ok");
+      if (lab) { lab.className = "thvp-st" + (st === "" ? "" : isBad ? " bad" : " ok"); lab.textContent = st === "" ? "" : isBad ? (st === "low" ? "LOW" : st === "high" ? "HIGH" : "ABNORMAL") : "Normal"; }
+      if (isBad) bad.push(k === "bp" ? "BP " + (V.sys || "-") + "/" + (V.dia || "-") : k.toUpperCase() + " " + V[k]);
+    });
+    Array.prototype.forEach.call(ov.querySelectorAll("[data-lv]"), function (b) {
+      var k = b.getAttribute("data-lv"), on = V[k] !== undefined && V[k] !== "" && Math.abs(+V[k] - +b.getAttribute("data-x")) < 1e-6;
+      if (on !== b.classList.contains("on")) { b.classList.toggle("on", on); if (on) scrollTo(b); }
+    });
+    Array.prototype.forEach.call(ov.querySelectorAll("[data-pain]"), function (b) { b.className = String(V.pain) === b.getAttribute("data-pain") ? "on" : ""; });
+    ov.querySelector(".thvp-f .msg").textContent = bad.length ? "⚠ Abnormal: " + bad.join(", ") + " — inform doctor" : "";
+  }
+  function scrollTo(b) { var l = b.parentElement; if (!l) return; var t = b.offsetTop - l.offsetTop; if (t < l.scrollTop || t > l.scrollTop + l.clientHeight - 34) l.scrollTop = t - 40; }
+  function scrollNormal(ov) {
+    Array.prototype.forEach.call(ov.querySelectorAll(".thvp-list"), function (l) { var f = l.querySelector("button.on") || l.querySelector("button.n"); if (f) l.scrollTop = f.offsetTop - l.offsetTop - 4; });
+  }
+  function addBtn() {
+    if (!CARD) return null;
+    return Array.prototype.filter.call(CARD.querySelectorAll("button"), function (b) { return /add entry/i.test(b.textContent || "") && !b.hasAttribute("data-thvp"); })[0] || null;
+  }
+  function open(card) {
+    CARD = card; F = fields(card); LAST = lastValues(card); G = ageGroup(); V = {};
+    if (F.remarks && F.remarks.value) V.remarks = F.remarks.value;
+    var ov = document.createElement("div"); ov.className = "thvp-ov"; ov.innerHTML = build(); document.body.appendChild(ov);
+    ov.addEventListener("keydown", function (e) { if (e.key === "Escape") thVP.close(); });
+    paint(); scrollNormal(ov);
+  }
+  window.thVP = {
+    step: function (k, d) { stepBtn(k, d); },
+    typed: function (k, v) { V[k] = v.trim(); paint(); },
+    add: function (k, n) { V[k] = String((+V[k] || 0) + n); paint(); },
+    pain: function (n) { V.pain = String(n); paint(); },
+    o2: function (b) { V.o2 = b.getAttribute("data-o2"); Array.prototype.forEach.call(document.querySelectorAll("[data-o2]"), function (x) { x.className = x === b ? "on" : ""; }); },
+    note: function (t) { V.remarks = (V.remarks ? V.remarks.replace(/[,\s]+$/, "") + ", " : "") + t; paint(); },
+    group: function (g) { G = g; var ov = document.querySelector(".thvp-ov"); if (ov) { ov.innerHTML = build(); paint(); scrollNormal(ov); } },
+    pick: function (k, x) { V[k] = x; paint(); },
+    unit: function (c) { window.__thvpC = !!c; if (V.temp) V.temp = ""; var ov = document.querySelector(".thvp-ov"); if (ov) { ov.innerHTML = build(); paint(); scrollNormal(ov); } },
+    close: function () { var ov = document.querySelector(".thvp-ov"); if (ov) ov.remove(); },
+    ok: function (andAdd) {
+      var any = ["sys", "dia", "pulse", "temp", "rr", "spo2", "pain", "intake", "output", "rbs"].some(function (k) { return V[k] !== undefined && V[k] !== ""; });
+      if (!any) { try { toast("Enter at least one vital"); } catch (e) {} return; }
+      if ((V.sys && !V.dia) || (!V.sys && V.dia)) { try { toast("Enter both BP values (SYS and DIA)"); } catch (e) {} return; }
+      F = fields(CARD);
+      if (V.sys && V.dia) setVal(F.bp, V.sys + "/" + V.dia);
+      ["pulse", "temp", "rr", "pain", "intake", "output", "rbs"].forEach(function (k) { if (V[k] !== undefined && V[k] !== "") setVal(F[k], V[k]); });
+      if (V.spo2) setVal(F.spo2, V.spo2);
+      var rem = V.remarks || "";
+      if (V.o2 && rem.indexOf(V.o2) < 0) rem = (rem ? rem + ", " : "") + V.o2;
+      if (F.remarks && rem) setVal(F.remarks, rem);
+      var b = andAdd ? addBtn() : null;
+      thVP.close();
+      try { audit("Vitals entered via Vitals Pad", [V.sys && V.dia ? "BP " + V.sys + "/" + V.dia : "", V.pulse ? "P " + V.pulse : "", V.spo2 ? "SpO2 " + V.spo2 : ""].filter(Boolean).join(", ")); } catch (e) {}
+      if (b) setTimeout(function () { b.click(); }, 60);
+      else { try { toast("Vitals filled — check and click Add entry"); } catch (e) {} }
+    }
+  };
+
+  /* ---------- put the button on the Vitals Chart (IPD) and Day Care nursing ---------- */
+  var busy = false, tm = null;
+  function inject() {
+    if (busy) return;
+    var heads = Array.prototype.filter.call(document.querySelectorAll("h2,h3,h4,b,strong,div"), function (h) {
+      return h.children.length < 2 && /^(Vitals Chart|Vitals & nursing notes|Vitals)$/i.test((h.textContent || "").trim());
+    });
+    heads.forEach(function (h) {
+      var card = h.closest(".card") || h.parentElement;
+      if (!card || card.querySelector("[data-thvp]")) return;
+      var f = fields(card);
+      if (!f.bp && !f.pulse && !f.spo2) return;
+      var add = Array.prototype.filter.call(card.querySelectorAll("button"), function (b) { return /add entry/i.test(b.textContent || ""); })[0];
+      busy = true;
+      try {
+        var b = document.createElement("button");
+        b.type = "button"; b.setAttribute("data-thvp", "1");
+        b.className = (add ? add.className : "btn") + " thvp-btn";
+        b.style.marginRight = "8px";
+        b.textContent = "🩺 Vitals Pad";
+        b.onclick = function () { open(card); };
+        if (add && add.parentElement) add.parentElement.insertBefore(b, add); else card.appendChild(b);
+      } catch (e) { console.warn("Vitals Pad:", e); }
+      setTimeout(function () { busy = false; }, 0);
+    });
+  }
+  new MutationObserver(function () { if (busy) return; clearTimeout(tm); tm = setTimeout(inject, 200); }).observe(document.documentElement, { childList: true, subtree: true });
+  setTimeout(inject, 500);
+})();
+/*TH-SIGN:4186a0f598a07689f61cce3888377927*/

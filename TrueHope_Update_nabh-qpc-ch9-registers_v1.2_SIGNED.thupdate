@@ -1,0 +1,560 @@
+/*TRUEHOPE-UPDATE {"id":"nabh-qpc-ch9-registers","name":"NABH Chapter 9 - Quality of Patient Care (QPC 1-18) Registers","version":"1.2","date":"2026-11-20","description":"Adverse event, meeting, surgery/OT, ICU APACHE and ACS/STEMI registers linked with OPD/IPD patient data, auto monthly QPC 1-18 report (print ready)"} */
+(function () {
+  'use strict';
+
+  /* ================= DATA (new key db.qpc — existing data is never touched) ================= */
+  function D() {
+    if (!db.qpc || typeof db.qpc !== 'object') db.qpc = {};
+    var q = db.qpc;
+    ['ae', 'meet', 'surg', 'icu', 'acs'].forEach(function (k) { if (!Array.isArray(q[k])) q[k] = []; });
+    if (!q.counts || typeof q.counts !== 'object') q.counts = {};
+    return q;
+  }
+  function iso(d) {
+    d = d || new Date();
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  }
+  var month = iso().slice(0, 7);
+  function E(v) { return (typeof esc === 'function') ? esc(v == null ? '' : String(v)) : String(v == null ? '' : v).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+  function showDate(s) { try { return (typeof dmy === 'function' && s) ? dmy(s) : (s || ''); } catch (e) { return s || ''; } }
+  function monthName(m) { var p = m.split('-'); return ['January','February','March','April','May','June','July','August','September','October','November','December'][+p[1] - 1] + ' ' + p[0]; }
+
+  /* ================= REGISTER DEFINITIONS ================= */
+  var SPEC = [['gen', 'General Surgery'], ['cabg', 'CABG'], ['valve', 'Valve Surgery'], ['pcnl', 'PCNL / Urology'], ['ortho', 'Orthopaedics'], ['gynae', 'Gynaecology (non-obstetric)'], ['obs', 'Obstetrics'], ['other', 'Other']];
+  var REG = {
+    ae: {
+      title: 'Adverse Event Register', qpc: 'QPC 1',
+      help: 'Record every medication error, blood transfusion reaction, adverse drug reaction and wrong patient / wrong side surgery with corrective action.',
+      fields: [
+        { k: 'date', label: 'Date', type: 'date', req: 1, list: 1 },
+        { k: 'uhid', label: 'UHID', type: 'uhid', list: 1 },
+        { k: 'name', label: 'Patient name', type: 'text', list: 1 },
+        { k: 'ward', label: 'Ward / Area', type: 'text', list: 1 },
+        { k: 'type', label: 'Event type', type: 'select', req: 1, list: 1, opts: [['med', 'Medication error'], ['trans', 'Blood transfusion reaction'], ['adr', 'Adverse drug reaction'], ['wrong', 'Wrong patient / wrong side surgery'], ['other', 'Other adverse event']] },
+        { k: 'desc', label: 'What happened', type: 'area', list: 1 },
+        { k: 'action', label: 'Corrective / preventive action taken', type: 'area', list: 1 },
+        { k: 'by', label: 'Reported by', type: 'text', list: 1 }
+      ]
+    },
+    meet: {
+      title: 'Adverse Event Review Meeting Register', qpc: 'QPC 2',
+      help: 'Monthly meeting where adverse events are discussed and corrective measures are decided.',
+      fields: [
+        { k: 'date', label: 'Meeting date', type: 'date', req: 1, list: 1 },
+        { k: 'chair', label: 'Chaired by', type: 'text', list: 1 },
+        { k: 'attendees', label: 'Members present', type: 'area', list: 1 },
+        { k: 'discussed', label: 'Events reviewed / discussed', type: 'area', list: 1 },
+        { k: 'actions', label: 'Corrective measures decided (responsibility, target date)', type: 'area', list: 1 },
+        { k: 'next', label: 'Next meeting date', type: 'date', list: 1 }
+      ]
+    },
+    surg: {
+      title: 'Surgery / OT Quality Register', qpc: 'QPC 3, 4, 7, 8, 12-18',
+      help: 'One entry per major surgery (planned + emergency). Used for surgical safety checklist, post-op complications, re-surgery, post-op deaths, CABG, valve, PCNL, ortho and gynae indicators.',
+      fields: [
+        { k: 'date', label: 'Surgery date', type: 'date', req: 1, list: 1 },
+        { k: 'uhid', label: 'UHID', type: 'uhid', list: 1 },
+        { k: 'name', label: 'Patient name', type: 'text', list: 1 },
+        { k: 'proc', label: 'Procedure', type: 'text', req: 1, list: 1 },
+        { k: 'spec', label: 'Speciality', type: 'select', list: 1, opts: SPEC },
+        { k: 'ptype', label: 'Planned / Emergency', type: 'select', list: 1, opts: [['planned', 'Planned'], ['emergency', 'Emergency']] },
+        { k: 'surgeon', label: 'Surgeon', type: 'text', list: 1 },
+        { k: 'major', label: 'Major surgery', type: 'check', def: 1, list: 1 },
+        { k: 'clean', label: 'Clean surgery', type: 'check', list: 1 },
+        { k: 'ssc', label: 'Surgical Safety Checklist filled', type: 'check', def: 1, list: 1 },
+        { k: 'compCat', label: 'Complication category', type: 'select', list: 1, opts: [['0', 'No complication'], ['1', '1 - Surgical complication'], ['2', '2 - Anaesthetic complication'], ['3', '3 - Due to pre-existing illness']] },
+        { k: 'compGrade', label: 'Complication grade', type: 'select', list: 1, opts: [['0', 'None'], ['1', '1 - No treatment'], ['2', '2 - Medicine treatment'], ['3', '3 - Surgical intervention'], ['4', '4 - ICU'], ['5', '5 - Death']] },
+        { k: 'compDesc', label: 'Complication details / action taken', type: 'area' },
+        { k: 'resurg', label: 'Repeat surgery within 30 days', type: 'check', list: 1 },
+        { k: 'death', label: 'Died after surgery (before discharge / 30 days)', type: 'check', list: 1 },
+        { k: 'lima', label: 'CABG: Left Internal Mammary Artery graft used', type: 'check', list: 1 },
+        { k: 'sternal', label: 'CABG/Valve: sternal wound infection', type: 'check', list: 1 },
+        { k: 'calculi', label: 'PCNL: residual calculi', type: 'check', list: 1 },
+        { k: 'nonunion', label: 'Ortho: repeat surgery for non-union / delayed union', type: 'check', list: 1 }
+      ]
+    },
+    icu: {
+      title: 'ICU APACHE II Register', qpc: 'QPC 6',
+      help: 'APACHE II admission score of every ICU admission and outcome.',
+      fields: [
+        { k: 'date', label: 'ICU admission date', type: 'date', req: 1, list: 1 },
+        { k: 'uhid', label: 'UHID', type: 'uhid', list: 1 },
+        { k: 'name', label: 'Patient name', type: 'text', list: 1 },
+        { k: 'dx', label: 'Diagnosis', type: 'text', list: 1 },
+        { k: 'apache', label: 'APACHE II score', type: 'num', req: 1, list: 1 },
+        { k: 'outcome', label: 'Outcome', type: 'select', list: 1, opts: [['alive', 'Shifted / Discharged'], ['died', 'Died'], ['inicu', 'Still in ICU']] }
+      ]
+    },
+    acs: {
+      title: 'ACS / STEMI Register', qpc: 'QPC 10, 11',
+      help: 'Acute coronary syndrome cases: door-to-needle / door-to-balloon time and DAPT + statin at discharge.',
+      fields: [
+        { k: 'date', label: 'Arrival date', type: 'date', req: 1, list: 1 },
+        { k: 'uhid', label: 'UHID', type: 'uhid', list: 1 },
+        { k: 'name', label: 'Patient name', type: 'text', list: 1 },
+        { k: 'dx', label: 'Diagnosis', type: 'select', list: 1, opts: [['stemi', 'STEMI'], ['nstemi', 'NSTEMI'], ['ua', 'Unstable angina']] },
+        { k: 'arrive', label: 'Arrival time', type: 'time', list: 1 },
+        { k: 'therapy', label: 'Reperfusion', type: 'select', list: 1, opts: [['none', 'None'], ['lysis', 'Thrombolysis'], ['pci', 'Primary PCI']] },
+        { k: 'tx', label: 'Needle / balloon time', type: 'time', list: 1 },
+        { k: 'outcome', label: 'Outcome', type: 'select', list: 1, opts: [['alive', 'Discharged alive'], ['died', 'Died'], ['ref', 'Transferred / referred']] },
+        { k: 'dapt', label: 'Dual antiplatelet at discharge', type: 'check', list: 1 },
+        { k: 'statin', label: 'Statin at discharge', type: 'check', list: 1 }
+      ]
+    }
+  };
+
+  /* ================= FORM + TABLE ================= */
+  function optLabel(f, v) { var o = (f.opts || []).filter(function (x) { return String(x[0]) === String(v); })[0]; return o ? o[1] : (v || ''); }
+  function input(reg, f) {
+    var id = 'qpc_' + reg + '_' + f.k, lab = '<label for="' + id + '">' + E(f.label) + (f.req ? ' *' : '') + '</label>';
+    if (f.type === 'check') return '<div class="qpc-chk"><label><input type="checkbox" id="' + id + '"' + (f.def ? ' checked' : '') + '> ' + E(f.label) + '</label></div>';
+    if (f.type === 'select') return '<div>' + lab + '<select id="' + id + '">' + f.opts.map(function (o) { return '<option value="' + E(o[0]) + '">' + E(o[1]) + '</option>'; }).join('') + '</select></div>';
+    if (f.type === 'area') return '<div class="qpc-wide">' + lab + '<textarea id="' + id + '" rows="2"></textarea></div>';
+    var t = f.type === 'date' ? 'date' : f.type === 'time' ? 'time' : f.type === 'num' ? 'number' : 'text';
+    var extra = f.type === 'uhid' ? ' onchange="QPC.fillName(\'' + reg + '\',this.value)" placeholder="Type UHID"' : '';
+    var v = f.type === 'date' && f.k === 'date' ? ' value="' + iso() + '"' : '';
+    return '<div>' + lab + '<input type="' + t + '" id="' + id + '"' + v + extra + '></div>';
+  }
+  function cell(f, r) {
+    var v = r[f.k];
+    if (f.type === 'check') return v ? '✔' : '';
+    if (f.type === 'select') return E(optLabel(f, v));
+    if (f.type === 'date') return E(showDate(v));
+    return E(v);
+  }
+  function rowsOf(reg, m) { return D()[reg].filter(function (r) { return String(r.date || '').slice(0, 7) === m; }).sort(function (a, b) { return String(a.date).localeCompare(String(b.date)); }); }
+  function table(reg, rows, forPrint) {
+    var fs = REG[reg].fields.filter(function (f) { return f.list; });
+    if (!rows.length) return '<p class="qpc-nil">No entries for ' + E(monthName(month)) + ' (NIL).</p>';
+    return '<table class="table qpc-table"><thead><tr><th>#</th>' + fs.map(function (f) { return '<th>' + E(f.label) + '</th>'; }).join('') + (forPrint ? '' : '<th></th>') + '</tr></thead><tbody>' +
+      rows.map(function (r, i) {
+        var act = '';
+        if (!forPrint) {
+          if (reg === 'surg' && +r.compGrade > 0) act += '<button class="btn sm" onclick="QPC.printComp(\'' + r.id + '\')">Complication form</button> ';
+          act += '<button class="btn sm sec" onclick="QPC.del(\'' + reg + '\',\'' + r.id + '\')">Delete</button>';
+        }
+        return '<tr><td>' + (i + 1) + '</td>' + fs.map(function (f) { return '<td>' + cell(f, r) + '</td>'; }).join('') + (forPrint ? '' : '<td style="white-space:nowrap">' + act + '</td>') + '</tr>';
+      }).join('') + '</tbody></table>';
+  }
+  function monthBar(page) {
+    return '<div class="row qpc-bar"><label>Month&nbsp;</label><input type="month" value="' + month + '" onchange="QPC.setMonth(this.value,\'' + page + '\')">' +
+      '<button class="btn sec" onclick="go(\'qpc_report\')">QPC 1-18 Report</button></div>';
+  }
+  function regPage(reg) {
+    var R = REG[reg];
+    return '<div class="card"><h2>' + E(R.title) + ' <small>(' + E(R.qpc) + ')</small></h2><p class="qpc-help">' + E(R.help) + '</p>' +
+      (reg === 'meet' ? '' : '<div class="grid qpc-form">' + pickerHtml(reg) + '</div>') +
+      '<div class="grid qpc-form">' + R.fields.map(function (f) { return input(reg, f); }).join('') + '</div>' +
+      '<input type="hidden" id="qpc_' + reg + '_admId">' +
+      '<div class="row" style="margin-top:10px"><button class="btn" onclick="QPC.add(\'' + reg + '\')">Save entry</button></div></div>' +
+      (reg === 'surg' ? suggestCard() : '') +
+      '<div class="card">' + monthBar('qpc_' + reg) + '<h3>' + E(R.title) + ' — ' + E(monthName(month)) + '</h3>' + table(reg, rowsOf(reg, month)) +
+      '<div class="row" style="margin-top:10px"><button class="btn sec" onclick="QPC.printReg(\'' + reg + '\')">Print register</button></div></div>';
+  }
+
+  /* ================= LINK WITH REAL OPD / IPD DATA (read only — never changes patient data) ================= */
+  function parseD(s) {
+    if (s === null || s === undefined || s === '') return null;
+    if (s instanceof Date) return isNaN(s) ? null : s;
+    if (typeof s === 'number') return s > 946684800000 ? new Date(s) : null;
+    s = String(s).trim(); var m;
+    if ((m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/))) return new Date(+m[1], +m[2] - 1, +m[3]);
+    if ((m = s.match(/^(\d{1,2})[-\/.](\d{1,2})[-\/.](\d{4})/))) return new Date(+m[3], +m[2] - 1, +m[1]);
+    return null;
+  }
+  function getv(o, path) {
+    if (!o || !path) return undefined;
+    var p = String(path).split('.'), v = o;
+    for (var i = 0; i < p.length; i++) { if (v == null || typeof v !== 'object') return undefined; v = v[p[i]]; }
+    return v;
+  }
+  /* list every field (and one level inside objects) found in a data array, with a sample value */
+  function fieldsOf(arr) {
+    var out = {}, n = 0;
+    (arr || []).slice(-400).forEach(function (o) {
+      if (!o || typeof o !== 'object') return; n++;
+      Object.keys(o).forEach(function (k) {
+        var v = o[k];
+        if (v && typeof v === 'object' && !Array.isArray(v)) {
+          Object.keys(v).forEach(function (k2) { var v2 = v[k2]; if (v2 !== null && typeof v2 !== 'object') add(k + '.' + k2, v2); });
+        } else if (!Array.isArray(v)) add(k, v);
+      });
+    });
+    function add(k, v) {
+      var f = out[k] || (out[k] = { key: k, filled: 0, dates: 0, strings: 0, sample: '' });
+      if (v === '' || v === null || v === undefined) return;
+      f.filled++;
+      if (parseD(v)) f.dates++;
+      if (typeof v === 'string') f.strings++;
+      if (!f.sample) f.sample = String(v).slice(0, 40);
+    }
+    return Object.keys(out).map(function (k) { return out[k]; });
+  }
+  function choose(fs, prefer, re, onlyDates) {
+    var ok = fs.filter(function (f) { return f.filled && (!onlyDates || f.dates >= f.filled * 0.6); });
+    for (var i = 0; i < prefer.length; i++) { var lo = prefer[i].toLowerCase(); var f = ok.filter(function (x) { return x.key.toLowerCase() === lo; })[0]; if (f) return f.key; }
+    var r = ok.filter(function (x) { return re.test(x.key); }).sort(function (a, b) { return b.filled - a.filled; })[0];
+    return r ? r.key : '';
+  }
+  var ROLES = {
+    adm: [
+      ['uhid', 'UHID', ['uhid', 'UHID', 'pid', 'patientId', 'patientUhid'], /uhid|^pid$|patient.?id/i],
+      ['admDate', 'Admission date', ['admDate', 'admissionDate', 'doa', 'admitDate', 'admittedOn', 'date', 'admDateTime'], /adm|doa/i, 1],
+      ['disDate', 'Discharge date', ['dDate', 'disDate', 'dischargeDate', 'dod', 'dischargedOn', 'discharge.date', 'dis.date', 'disDateTime'], /dis|dod/i, 1],
+      ['disType', 'Discharge type / status', ['dType', 'disType', 'dischargeType', 'discharge.type', 'dis.type', 'outcome', 'disStatus', 'status', 'condition'], /(dis|discharge).*(type|status|mode|outcome|cond)|outcome|^status$|condition/i],
+      ['ward', 'Ward / bed', ['ward', 'wardName', 'bed', 'bedNo'], /ward|bed/i],
+      ['dx', 'Diagnosis', ['discharge.dx', 'dx', 'diagnosis', 'dx', 'provDx', 'finalDx', 'provisionalDiagnosis'], /diag|dx/i],
+      ['doctor', 'Doctor / consultant', ['doctor', 'consultant', 'drName', 'doctorName'], /doc|consult|^dr/i],
+      ['proc', 'Surgery / procedure / package', ['discharge.proc', 'surgery', 'procedure', 'operation', 'package', 'packageName'], /surg|proced|operat|package/i]
+    ],
+    vis: [
+      ['uhid', 'UHID', ['uhid', 'UHID', 'pid', 'patientId'], /uhid|^pid$|patient.?id/i],
+      ['date', 'Visit date', ['date', 'visitDate', 'vdate', 'createdAt'], /date/i, 1],
+      ['dx', 'Diagnosis / complaint', ['diagnosis', 'dx', 'complaint', 'complaints'], /diag|dx|complain/i],
+      ['doctor', 'Doctor', ['doctor', 'drName', 'doctorName', 'consultant'], /doc|consult|^dr/i]
+    ]
+  };
+  function maps() {
+    var saved = D().map || {}, res = {};
+    [['adm', db.admissions], ['vis', db.visits]].forEach(function (x) {
+      var fs = fieldsOf(x[1]), m = {};
+      ROLES[x[0]].forEach(function (r) {
+        var s = saved[x[0]] && saved[x[0]][r[0]];
+        m[r[0]] = (s !== undefined && s !== null && s !== 'auto') ? s : choose(fs, r[2], r[3], r[4]);
+      });
+      res[x[0]] = m; res[x[0] + 'Fields'] = fs;
+    });
+    return res;
+  }
+  function pName(uhid) {
+    try { var p = typeof getP === 'function' ? getP(uhid) : null; if (p) return p.name || p.pname || p.fullName || p.patientName || ((p.first || p.fname || '') + ' ' + (p.last || p.lname || '')).trim(); } catch (e) {}
+    return '';
+  }
+  function rec(a, M) {   // one admission in plain form
+    var uhid = String(getv(a, M.uhid) || ''), t = String(getv(a, M.disType) || '');
+    return {
+      src: a, uhid: uhid, name: pName(uhid) || String(a.name || a.patientName || ''), id: a.id || a.admId || a.ipdNo || '',
+      adm: parseD(getv(a, M.admDate)), dis: parseD(getv(a, M.disDate)), type: t,
+      ward: String(getv(a, M.ward) || ''), dx: String(getv(a, M.dx) || ''), doctor: String(getv(a, M.doctor) || ''), proc: String(getv(a, M.proc) || ''),
+      death: /death|expired|died|dead|mortality/i.test(t) || /expired/i.test(String(getv(a, 'discharge.cond') || '')),
+      transfer: /transfer|refer|higher/i.test(t)
+    };
+  }
+  function adms() { var M = maps().adm; return (db.admissions || []).filter(function (a) { return a && typeof a === 'object'; }).map(function (a, i) { var r = rec(a, M); r.idx = i; return r; }); }
+  function bounds(m) { var p = m.split('-'); return [new Date(+p[0], +p[1] - 1, 1), new Date(+p[0], +p[1], 1)]; }
+  function inM(d, b) { return d && d >= b[0] && d < b[1]; }
+  function auto(m) {
+    var b = bounds(m), now = new Date(), r = { ipDays: 0, discharges: 0, ipdTotal: 0, transferred: 0, deaths: 0, lists: { dis: [], ref: [], died: [] } };
+    adms().forEach(function (a) {
+      if (!a.adm) return;
+      if (inM(a.adm, b)) r.ipdTotal++;
+      if (inM(a.dis, b)) {
+        r.discharges++; r.lists.dis.push(a);
+        if (a.transfer) { r.transferred++; r.lists.ref.push(a); }
+        if (a.death) { r.deaths++; r.lists.died.push(a); }
+      }
+      if (a.adm < b[1] && (!a.dis || a.dis >= b[0])) {
+        var from = a.adm > b[0] ? a.adm : b[0], to = a.dis ? (a.dis < b[1] ? a.dis : b[1]) : (now < b[1] ? now : b[1]);
+        var d = Math.round((to - from) / 86400000);
+        if (d < 1 && inM(a.dis, b)) d = 1;
+        if (d > 0) r.ipDays += d;
+      }
+    });
+    return r;
+  }
+  function figs(m) {
+    var a = auto(m), c = D().counts[m] || {}, out = {};
+    ['ipDays', 'bloodUnits', 'discharges', 'ipdTotal', 'transferred'].forEach(function (k) {
+      out[k] = (c[k] !== undefined && c[k] !== '' && c[k] !== null) ? +c[k] : (a[k] !== undefined ? a[k] : 0);
+    });
+    return { val: out, auto: a, manual: c };
+  }
+  /* patient picker: IPD patients (current + this month) and OPD visits of the month */
+  function pickerList() {
+    var b = bounds(month), b0 = new Date(b[0].getFullYear(), b[0].getMonth() - 1, 1), list = [];
+    adms().forEach(function (a) {
+      if (!a.adm) return;
+      if ((a.adm >= b0 && a.adm < b[1]) || (!a.dis && a.adm < b[1]) || inM(a.dis, b))
+        list.push({ v: 'A:' + a.idx, t: a.adm, l: 'IPD • ' + a.uhid + ' • ' + (a.name || '-') + ' • adm ' + iso(a.adm) + (a.dis ? ' • dis ' + iso(a.dis) : ' • admitted') + (a.ward ? ' • ' + a.ward : '') });
+    });
+    var V = maps().vis;
+    (db.visits || []).forEach(function (v, i) {
+      if (!v || typeof v !== 'object') return;
+      var d = parseD(getv(v, V.date)); if (!inM(d, b)) return;
+      var u = String(getv(v, V.uhid) || '');
+      list.push({ v: 'V:' + i, t: d, l: 'OPD • ' + u + ' • ' + (pName(u) || '-') + ' • ' + iso(d) });
+    });
+    return list.sort(function (x, y) { return y.t - x.t; }).slice(0, 400);
+  }
+  function pickerHtml(reg) {
+    var L = pickerList();
+    return '<div class="qpc-wide qpc-pick"><label>Select patient from OPD / IPD (' + L.length + ' found for ' + E(monthName(month)) + ')</label>' +
+      '<select onchange="QPC.pick(\'' + reg + '\',this.value)"><option value="">— choose patient (or type UHID below) —</option>' +
+      L.map(function (o) { return '<option value="' + o.v + '">' + E(o.l) + '</option>'; }).join('') + '</select></div>';
+  }
+  function surgSuggest(m) {
+    var b = bounds(m), done = {};
+    D().surg.forEach(function (s) { if (s.admId) done['A' + s.admId] = 1; if (s.uhid) done['U' + s.uhid + '_' + String(s.date).slice(0, 7)] = 1; });
+    return adms().filter(function (a) {
+      return a.proc && (inM(a.adm, b) || inM(a.dis, b)) && !done['A' + a.idx] && !done['U' + a.uhid + '_' + m];
+    });
+  }
+
+  /* ================= QPC 1-18 CALCULATION ================= */
+  function pct(n, d, mul) { mul = mul || 100; return d > 0 ? (n * mul / d).toFixed(2) : 'NA'; }
+  function compute(m) {
+    var F = figs(m).val, ae = rowsOf('ae', m), sg = rowsOf('surg', m), icu = rowsOf('icu', m), acs = rowsOf('acs', m), meet = rowsOf('meet', m);
+    var cnt = function (arr, fn) { return arr.filter(fn).length; };
+    var major = sg.filter(function (r) { return r.major; });
+    var gen = major.filter(function (r) { return r.spec === 'gen'; }), genClean = gen.filter(function (r) { return r.clean; });
+    var by = function (s) { return major.filter(function (r) { return r.spec === s; }); };
+    var cabg = by('cabg'), valve = by('valve'), pcnl = by('pcnl'), ortho = by('ortho'), gyn = by('gynae'), heart = cabg.concat(valve);
+    var med = cnt(ae, function (r) { return r.type === 'med'; }), tr = cnt(ae, function (r) { return r.type === 'trans'; }),
+        adr = cnt(ae, function (r) { return r.type === 'adr'; }), wrong = cnt(ae, function (r) { return r.type === 'wrong'; });
+    var ap = icu.filter(function (r) { var s = +r.apache; return s >= 20 && s <= 24; });
+    var apPct = icu.length ? ap.length * 100 / icu.length : null;
+    var stemi = acs.filter(function (r) { return r.dx === 'stemi' && r.therapy !== 'none' && r.doorMin !== '' && r.doorMin != null && !isNaN(+r.doorMin); });
+    var dtn = stemi.length ? (stemi.reduce(function (s, r) { return s + (+r.doorMin); }, 0) / stemi.length).toFixed(1) : 'NA';
+    var acsAlive = acs.filter(function (r) { return r.outcome === 'alive'; });
+    function R(code, ind, num, den, val, unit, type, note) { return { code: code, ind: ind, num: num, den: den, val: val, unit: unit || '', type: type, note: note || '' }; }
+    return [
+      R('QPC 1.1', 'Medication errors × 100 / in-patient days', med, F.ipDays, pct(med, F.ipDays), '%', 'Process'),
+      R('QPC 1.2', 'Blood transfusion reactions × 100 / blood units issued', tr, F.bloodUnits, pct(tr, F.bloodUnits), '%', 'Process'),
+      R('QPC 1.3', 'Adverse drug reactions × 100 / in-patient days', adr, F.ipDays, pct(adr, F.ipDays), '%', 'Process'),
+      R('QPC 1.4', 'Wrong patient / wrong side surgery (absolute number)', wrong, '-', String(wrong), 'no.', 'Process'),
+      R('QPC 2', 'Monthly adverse event review meeting held', meet.length, '-', meet.length ? 'Yes (' + meet.length + ')' : 'Not held', '', 'Process'),
+      R('QPC 3', 'Surgeries with Surgical Safety Checklist × 100 / total surgeries', cnt(sg, function (r) { return r.ssc; }), sg.length, pct(cnt(sg, function (r) { return r.ssc; }), sg.length), '%', 'Process'),
+      R('QPC 4', 'Post-operative complications × 100 / major surgeries (planned + emergency)', cnt(major, function (r) { return +r.compGrade > 0; }), major.length, pct(cnt(major, function (r) { return +r.compGrade > 0; }), major.length), '%', 'Outcome', 'Complication form printed for each case'),
+      R('QPC 5', 'Average length of stay = in-patient days / IPD discharges', F.ipDays, F.discharges, pct(F.ipDays, F.discharges, 1), 'days', 'Process'),
+      R('QPC 6', 'ICU admissions with APACHE II 20–24 × 100 / total ICU admissions', ap.length, icu.length, apPct == null ? 'NA' : apPct.toFixed(2), '%', 'Process',
+        (apPct == null ? '' : (apPct > 40 ? 'Above 40% – score 0. ' : 'Up to 40% – score 1. ')) + 'Mortality in this group: ' + pct(cnt(ap, function (r) { return r.outcome === 'died'; }), ap.length) + '%'),
+      R('QPC 7', 'Gen surgery: repeat surgery within 30 days × 100 / major surgeries', cnt(gen, function (r) { return r.resurg; }), gen.length, pct(cnt(gen, function (r) { return r.resurg; }), gen.length), '%', 'Outcome'),
+      R('QPC 8', 'Gen surgery: post-operative deaths × 100 / major surgeries (clean)', cnt(genClean, function (r) { return r.death; }), genClean.length, pct(cnt(genClean, function (r) { return r.death; }), genClean.length), '%', 'Outcome', 'Only clean surgeries'),
+      R('QPC 9', 'Patients transferred out × 100 / total IPD', F.transferred, F.ipdTotal, pct(F.transferred, F.ipdTotal), '%', 'Process'),
+      R('QPC 10', 'Average door-to-needle / door-to-balloon time in STEMI', stemi.length, '-', dtn, 'min', 'Process'),
+      R('QPC 11', 'ACS discharged on DAPT + statin × 100 / ACS discharged', cnt(acsAlive, function (r) { return r.dapt && r.statin; }), acsAlive.length, pct(cnt(acsAlive, function (r) { return r.dapt && r.statin; }), acsAlive.length), '%', 'Process'),
+      R('QPC 12', 'CABG: deaths before discharge × 100 / CABG', cnt(cabg, function (r) { return r.death; }), cabg.length, pct(cnt(cabg, function (r) { return r.death; }), cabg.length), '%', 'Outcome'),
+      R('QPC 13', 'CABG with LIMA graft × 100 / CABG', cnt(cabg, function (r) { return r.lima; }), cabg.length, pct(cnt(cabg, function (r) { return r.lima; }), cabg.length), '%', 'Process'),
+      R('QPC 14', 'Valve surgery: deaths before discharge × 100 / valve surgeries', cnt(valve, function (r) { return r.death; }), valve.length, pct(cnt(valve, function (r) { return r.death; }), valve.length), '%', 'Outcome'),
+      R('QPC 15', 'Sternotomy (CABG/valve) wound infection × 100 / sternotomies', cnt(heart, function (r) { return r.sternal; }), heart.length, pct(cnt(heart, function (r) { return r.sternal; }), heart.length), '%', 'Process'),
+      R('QPC 16', 'PCNL with residual calculi × 100 / PCNL operated', cnt(pcnl, function (r) { return r.calculi; }), pcnl.length, pct(cnt(pcnl, function (r) { return r.calculi; }), pcnl.length), '%', 'Process'),
+      R('QPC 17', 'Ortho: repeat surgery for non-union / delayed union × 100 / ortho surgeries', cnt(ortho, function (r) { return r.nonunion; }), ortho.length, pct(cnt(ortho, function (r) { return r.nonunion; }), ortho.length), '%', 'Outcome'),
+      R('QPC 18', 'Gynae: post-operative deaths × 100 / major gynae surgeries (obstetric excluded)', cnt(gyn, function (r) { return r.death; }), gyn.length, pct(cnt(gyn, function (r) { return r.death; }), gyn.length), '%', 'Outcome', 'Within same hospitalization')
+    ];
+  }
+  function reportTable(m) {
+    return '<table class="table qpc-table"><thead><tr><th>Std UID</th><th>Indicator</th><th>Numerator</th><th>Denominator</th><th>Result</th><th>Type</th><th>Remarks</th></tr></thead><tbody>' +
+      compute(m).map(function (r) {
+        return '<tr><td>' + E(r.code) + '</td><td>' + E(r.ind) + '</td><td>' + E(r.num) + '</td><td>' + E(r.den) + '</td><td><b>' + E(r.val) + '</b> ' + (r.val === 'NA' ? '' : E(r.unit)) + '</td><td>' + E(r.type) + '</td><td>' + E(r.note) + '</td></tr>';
+      }).join('') + '</tbody></table>';
+  }
+  function plist(arr) {
+    if (!arr.length) return '<span class="qpc-nil">NIL</span>';
+    return arr.map(function (a) { return E(a.uhid + ' – ' + (a.name || '-') + ' (' + (a.dis ? iso(a.dis) : '') + ')'); }).join('<br>');
+  }
+  function linkCard(a) {
+    var M = maps().adm, n = (db.admissions || []).length;
+    return '<div class="card"><h3>Linked IPD data — ' + E(monthName(month)) + '</h3>' +
+      (n ? '<p class="qpc-help">' + n + ' IPD admissions found in software. Using: admission date = <b>' + E(M.admDate || 'not found') + '</b>, discharge date = <b>' + E(M.disDate || 'not found') +
+        '</b>, discharge type = <b>' + E(M.disType || 'not found') + '</b>. <a href="#" onclick="go(\'qpc_link\');return false">Check / change</a></p>'
+         : '<p class="qpc-help">No IPD admissions found yet.</p>') +
+      '<table class="table qpc-table"><tr><th>Discharged (' + a.lists.dis.length + ')</th><th>Transferred / referred (' + a.lists.ref.length + ')</th><th>Deaths (' + a.lists.died.length + ')</th></tr>' +
+      '<tr><td>' + plist(a.lists.dis) + '</td><td>' + plist(a.lists.ref) + '</td><td>' + plist(a.lists.died) + '</td></tr></table></div>';
+  }
+  function suggestCard() {
+    var L = surgSuggest(month);
+    if (!L.length) return '';
+    return '<div class="card"><h3>Surgical IPD patients not yet in this register (' + L.length + ')</h3><p class="qpc-help">Taken from IPD admissions of ' + E(monthName(month)) + ' that have a surgery / procedure / package.</p>' +
+      '<table class="table qpc-table"><thead><tr><th>UHID</th><th>Patient</th><th>Admission</th><th>Procedure</th><th>Doctor</th><th></th></tr></thead><tbody>' +
+      L.map(function (a) { return '<tr><td>' + E(a.uhid) + '</td><td>' + E(a.name) + '</td><td>' + E(a.adm ? iso(a.adm) : '') + '</td><td>' + E(a.proc) + '</td><td>' + E(a.doctor) + '</td><td><button class="btn sm" onclick="QPC.pick(\'surg\',\'A:' + a.idx + '\')">Add</button></td></tr>'; }).join('') +
+      '</tbody></table></div>';
+  }
+  function linkPage() {
+    var mp = maps(), saved = D().map || {};
+    function sec(kind, title, count) {
+      var fs = mp[kind + 'Fields'];
+      return '<div class="card"><h3>' + E(title) + ' — ' + count + ' records</h3>' +
+        (fs.length ? '<div class="grid qpc-form">' + ROLES[kind].map(function (r) {
+          var cur = saved[kind] && saved[kind][r[0]] !== undefined && saved[kind][r[0]] !== 'auto' ? saved[kind][r[0]] : 'auto';
+          return '<div><label>' + E(r[1]) + '</label><select id="qpc_map_' + kind + '_' + r[0] + '">' +
+            '<option value="auto"' + (cur === 'auto' ? ' selected' : '') + '>Automatic (' + E(mp[kind][r[0]] || 'not found') + ')</option>' +
+            '<option value=""' + (cur === '' ? ' selected' : '') + '>— not available —</option>' +
+            fs.map(function (f) { return '<option value="' + E(f.key) + '"' + (cur === f.key ? ' selected' : '') + '>' + E(f.key + '  e.g. ' + f.sample) + '</option>'; }).join('') + '</select></div>';
+        }).join('') + '</div>' : '<p class="qpc-nil">No records yet.</p>') + '</div>';
+    }
+    var prev = adms().slice(-8).reverse();
+    var other = Object.keys(db).filter(function (k) { return Array.isArray(db[k]); }).map(function (k) { return k + ' (' + db[k].length + ')'; }).join(', ');
+    return '<div class="card"><h2>QPC – Link with OPD / IPD data</h2><p class="qpc-help">The QPC registers only READ your patient data. Leave everything on "Automatic". Change a box only if the preview below shows a wrong date or type.</p></div>' +
+      sec('adm', 'IPD admissions', (db.admissions || []).length) + sec('vis', 'OPD visits', (db.visits || []).length) +
+      '<div class="card"><button class="btn" onclick="QPC.saveMap()">Save link settings</button> <button class="btn sec" onclick="QPC.resetMap()">Reset to automatic</button></div>' +
+      '<div class="card"><h3>Preview – last 8 admissions as read by QPC</h3><table class="table qpc-table"><thead><tr><th>UHID</th><th>Name</th><th>Admission</th><th>Discharge</th><th>Discharge type</th><th>Counted as</th><th>Ward</th><th>Diagnosis</th><th>Procedure</th></tr></thead><tbody>' +
+      prev.map(function (a) { return '<tr><td>' + E(a.uhid) + '</td><td>' + E(a.name) + '</td><td>' + E(a.adm ? iso(a.adm) : '?') + '</td><td>' + E(a.dis ? iso(a.dis) : (a.adm ? 'admitted' : '?')) + '</td><td>' + E(a.type) + '</td><td>' + (a.death ? 'Death' : a.transfer ? 'Transfer out' : a.dis ? 'Discharge' : '-') + '</td><td>' + E(a.ward) + '</td><td>' + E(a.dx) + '</td><td>' + E(a.proc) + '</td></tr>'; }).join('') +
+      '</tbody></table></div><div class="card"><p class="qpc-help">Data lists in software (for True Hope support): ' + E(other) + '</p></div>';
+  }
+  function reportPage() {
+    var f = figs(month), a = f.auto, c = f.manual;
+    var box = function (k, label, autoVal) {
+      return '<div><label>' + E(label) + '</label><input type="number" min="0" id="qpc_c_' + k + '" value="' + E(c[k] !== undefined ? c[k] : '') + '" placeholder="' + (autoVal === undefined ? 'enter' : 'auto: ' + autoVal) + '"></div>';
+    };
+    return '<div class="card">' + monthBar('qpc_report') +
+      '<h2>Chapter 9 – Quality of Patient Care: QPC 1–18 — ' + E(monthName(month)) + '</h2>' +
+      '<p class="qpc-help">Monthly figures below are counted automatically from IPD admissions. Type a number only if you want to correct it (leave blank = automatic).</p>' +
+      '<div class="grid qpc-form">' + box('ipDays', 'In-patient days', a.ipDays) + box('discharges', 'IPD discharges', a.discharges) + box('ipdTotal', 'Total IPD admissions', a.ipdTotal) +
+      box('transferred', 'Transferred out / referred', a.transferred) + box('bloodUnits', 'Blood units issued', undefined) + '</div>' +
+      '<div class="row" style="margin-top:10px"><button class="btn sec" onclick="QPC.saveCounts()">Save monthly figures</button></div></div>' +
+      '<div class="card">' + reportTable(month) +
+      '<div class="row" style="margin-top:10px"><button class="btn" onclick="QPC.printReport()">Print QPC report</button></div>' +
+      '<p class="qpc-help">Scoring is based on maintenance of records. NA = no cases this month (record NIL).</p></div>' + linkCard(a);
+  }
+
+  /* ================= PRINT ================= */
+  function doPrint(html) {
+    var head = '';
+    try { head = typeof printHead === 'function' ? printHead() : ''; } catch (e) {}
+    var area = document.getElementById('printArea');
+    var full = '<div class="pf qpc-print">' + head + html + '</div>';
+    if (area) { area.innerHTML = full; setTimeout(function () { window.print(); }, 200); }
+    else { var w = window.open('', '_blank'); if (w) { w.document.write('<html><head><title>Print</title></head><body>' + full + '</body></html>'); w.document.close(); setTimeout(function () { w.print(); }, 300); } }
+  }
+  function signs(a, b, c) { return '<div class="sign">' + [a, b, c].filter(Boolean).map(function (s) { return '<div>' + E(s) + '</div>'; }).join('') + '</div>'; }
+
+  /* ================= GLOBAL ACTIONS ================= */
+  window.QPC = {
+    pick: function (reg, v) {
+      if (!v) return;
+      var set = function (k, val) { var el = document.getElementById('qpc_' + reg + '_' + k); if (el && val !== undefined && val !== null && val !== '' && el.tagName !== 'SELECT') el.value = val; };
+      if (v.charAt(0) === 'A') {
+        var i = +v.slice(2); if (document.getElementById('qpc_' + reg + '_uhid') === null) go('qpc_' + reg);
+        var a = adms().filter(function (x) { return x.idx === i; })[0]; if (!a) return;
+        set('uhid', a.uhid); set('name', a.name); set('ward', a.ward); set('surgeon', a.doctor); set('proc', a.proc);
+        if (reg === 'icu') { set('dx', a.dx); if (a.adm) set('date', iso(a.adm)); }
+        if (reg === 'acs' && a.adm) set('date', iso(a.adm));
+        var h = document.getElementById('qpc_' + reg + '_admId'); if (h) h.value = String(a.idx);
+        if (a.death) { var d = document.getElementById('qpc_' + reg + '_death'); if (d) d.checked = true; var o = document.getElementById('qpc_' + reg + '_outcome'); if (o) o.value = 'died'; }
+        else if (a.transfer) { var o2 = document.getElementById('qpc_' + reg + '_outcome'); if (o2 && reg === 'acs') o2.value = 'ref'; }
+        var top = document.getElementById('qpc_' + reg + '_uhid'); if (top && top.scrollIntoView) top.scrollIntoView({ block: 'center' });
+      } else {
+        var V = maps().vis, vv = (db.visits || [])[+v.slice(2)]; if (!vv) return;
+        var u = String(getv(vv, V.uhid) || ''), d2 = parseD(getv(vv, V.date));
+        set('uhid', u); set('name', pName(u)); if (d2) set('date', iso(d2));
+      }
+      toast('Patient details filled');
+    },
+    saveMap: function () {
+      var m = {};
+      Object.keys(ROLES).forEach(function (kind) {
+        m[kind] = {};
+        ROLES[kind].forEach(function (r) { var el = document.getElementById('qpc_map_' + kind + '_' + r[0]); if (el) m[kind][r[0]] = el.value; });
+      });
+      D().map = m; save();
+      try { audit('QPC data link settings', 'saved'); } catch (e) {}
+      toast('Link settings saved'); go('qpc_link');
+    },
+    resetMap: function () { D().map = {}; save(); toast('Reset to automatic'); go('qpc_link'); },
+    setMonth: function (m, page) { if (/^\d{4}-\d{2}$/.test(m)) month = m; go(page); },
+    fillName: function (reg, uhid) {
+      try {
+        var p = typeof getP === 'function' ? getP(String(uhid).trim()) : null, el = document.getElementById('qpc_' + reg + '_name');
+        if (p && el) el.value = p.name || p.pname || p.fullName || ((p.first || '') + ' ' + (p.last || '')).trim();
+        else if (!p && uhid && typeof toast === 'function') toast('UHID not found');
+      } catch (e) {}
+    },
+    add: function (reg) {
+      var R = REG[reg], rec = { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), at: new Date().toISOString() };
+      for (var i = 0; i < R.fields.length; i++) {
+        var f = R.fields[i], el = document.getElementById('qpc_' + reg + '_' + f.k);
+        if (!el) continue;
+        var v = f.type === 'check' ? el.checked : String(el.value || '').trim();
+        if (f.req && !v) { toast('Please fill: ' + f.label); el.focus(); return; }
+        rec[f.k] = v;
+      }
+      var ai = document.getElementById('qpc_' + reg + '_admId'); if (ai && ai.value) rec.admId = ai.value;
+      if (reg === 'acs') {
+        rec.doorMin = '';
+        if (rec.arrive && rec.tx) {
+          var t1 = rec.arrive.split(':'), t2 = rec.tx.split(':'), d = (+t2[0] * 60 + +t2[1]) - (+t1[0] * 60 + +t1[1]);
+          if (d < 0) d += 1440;
+          rec.doorMin = d;
+        }
+      }
+      if (reg === 'surg' && rec.compGrade === '5') rec.death = true;
+      D()[reg].push(rec);
+      save();
+      try { audit('QPC entry added', R.title + (rec.uhid ? ' – UHID ' + rec.uhid : '') + ' – ' + rec.date); } catch (e) {}
+      if (rec.date) month = rec.date.slice(0, 7);
+      toast('Saved in ' + R.title);
+      go('qpc_' + reg);
+    },
+    del: function (reg, id) {
+      var list = D()[reg], i = list.findIndex(function (r) { return r.id === id; });
+      if (i < 0) return;
+      if (!confirm('Delete this entry from ' + REG[reg].title + '?')) return;
+      var r = list.splice(i, 1)[0];
+      save();
+      try { audit('QPC entry deleted', REG[reg].title + ' – ' + (r.uhid || '') + ' ' + (r.date || '')); } catch (e) {}
+      go('qpc_' + reg);
+    },
+    saveCounts: function () {
+      var c = {};
+      ['ipDays', 'discharges', 'ipdTotal', 'transferred', 'bloodUnits'].forEach(function (k) {
+        var el = document.getElementById('qpc_c_' + k);
+        if (el && el.value !== '') c[k] = Math.max(0, +el.value);
+      });
+      D().counts[month] = c;
+      save();
+      try { audit('QPC monthly figures', month); } catch (e) {}
+      toast('Monthly figures saved');
+      go('qpc_report');
+    },
+    printReport: function () {
+      doPrint('<h3 style="text-align:center;margin:6px 0">CHAPTER 9 – QUALITY OF PATIENT CARE (QPC 1–18)</h3>' +
+        '<p style="text-align:center;margin:0 0 8px">Monthly Quality Indicator Report – ' + E(monthName(month)) + '</p>' +
+        reportTable(month) +
+        '<p style="font-size:11px">For these indicators, scoring is based on maintenance of records. NA = no cases in the month.</p>' +
+        signs('Quality Manager', 'Medical Superintendent', 'Director'));
+    },
+    printReg: function (reg) {
+      doPrint('<h3 style="text-align:center;margin:6px 0">' + E(REG[reg].title.toUpperCase()) + ' (' + E(REG[reg].qpc) + ')</h3>' +
+        '<p style="text-align:center;margin:0 0 8px">' + E(monthName(month)) + '</p>' + table(reg, rowsOf(reg, month), true) +
+        signs('Prepared by', 'Quality Manager', 'Medical Superintendent'));
+    },
+    printComp: function (id) {
+      var r = D().surg.find(function (x) { return x.id === id; });
+      if (!r) return;
+      var f = {}; REG.surg.fields.forEach(function (x) { f[x.k] = x; });
+      var row = function (l, v) { return '<tr><th style="width:35%;text-align:left">' + E(l) + '</th><td>' + v + '</td></tr>'; };
+      doPrint('<h3 style="text-align:center;margin:6px 0">PATIENT POST-OPERATIVE COMPLICATION FORM (QPC 4)</h3>' +
+        '<table class="table qpc-table">' +
+        row('UHID', E(r.uhid)) + row('Patient name', E(r.name)) + row('Date of surgery', E(showDate(r.date))) +
+        row('Procedure', E(r.proc)) + row('Speciality', E(optLabel(f.spec, r.spec))) + row('Planned / Emergency', E(optLabel(f.ptype, r.ptype))) +
+        row('Surgeon', E(r.surgeon)) + row('Complication category', E(optLabel(f.compCat, r.compCat))) +
+        row('Complication grade', E(optLabel(f.compGrade, r.compGrade))) +
+        row('Details / action taken', E(r.compDesc).replace(/\n/g, '<br>') + '<br><br>') +
+        row('Repeat surgery within 30 days', r.resurg ? 'Yes' : 'No') + row('Outcome', r.death ? 'Death' : 'Alive') +
+        '</table>' + signs('Operating Surgeon', 'Anaesthetist', 'Quality Manager'));
+    }
+  };
+
+  /* ================= MENU + PAGES ================= */
+  TH.css(
+    '.qpc-form{grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:10px}' +
+    '.qpc-form label{display:block;font-size:12px;font-weight:600;margin-bottom:3px}' +
+    '.qpc-form input,.qpc-form select,.qpc-form textarea{width:100%;box-sizing:border-box}' +
+    '.qpc-wide{grid-column:1/-1}.qpc-chk{display:flex;align-items:flex-end}.qpc-chk label{font-weight:500!important;display:flex!important;gap:6px;align-items:center}' +
+    '.qpc-chk input{width:auto!important}.qpc-pick select{background:#eef6ff;font-weight:600}.qpc-help{color:#5a6b7d;font-size:13px;margin:4px 0 10px}.qpc-nil{color:#888;font-style:italic}' +
+    '.qpc-bar{gap:8px;align-items:center;margin-bottom:8px}.qpc-table td,.qpc-table th{font-size:12px;vertical-align:top}' +
+    '.qpc-print .qpc-table{width:100%;border-collapse:collapse}.qpc-print .qpc-table td,.qpc-print .qpc-table th{border:1px solid #333;padding:4px 5px;font-size:11px}'
+  );
+  TH.addMenu('qpc', 'Quality (NABH Ch.9)', '📊');
+  TH.addMenuItem('qpc', 'qpc_report', 'QPC 1–18 Monthly Report');
+  TH.addMenuItem('qpc', 'qpc_ae', 'Adverse Event Register (QPC 1)');
+  TH.addMenuItem('qpc', 'qpc_meet', 'Review Meeting Register (QPC 2)');
+  TH.addMenuItem('qpc', 'qpc_surg', 'Surgery / OT Quality Register');
+  TH.addMenuItem('qpc', 'qpc_icu', 'ICU APACHE II Register (QPC 6)');
+  TH.addMenuItem('qpc', 'qpc_acs', 'ACS / STEMI Register (QPC 10–11)');
+  TH.addMenuItem('qpc', 'qpc_link', 'Link with OPD / IPD data');
+  TH.page('qpc_link', linkPage, 'qpc');
+  TH.page('qpc_report', reportPage, 'qpc');
+  ['ae', 'meet', 'surg', 'icu', 'acs'].forEach(function (reg) { TH.page('qpc_' + reg, function () { return regPage(reg); }, 'qpc'); });
+})();
+/*TH-SIGN:4ae354f7355b48f3dbddf881c5aee6c9*/

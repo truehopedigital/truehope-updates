@@ -1,0 +1,414 @@
+/*TRUEHOPE-UPDATE {"id":"th-drug-mar-20261120","name":"Drug Chart — dose-wise tick, Paper MAR, NABH drug names","version":"1.4","date":"2026-11-20","description":"v1.4: edit name / time / note of an already ticked dose (change kept in history). v1.3: Diagnosis & Allergies on MAR (from admission / patient record, editable before print), correct nurse name. v1.2: NABH — drug names in CAPITAL letters and HIGH-ALERT drugs in red on Drug Chart, MAR and every printed medicine table (editable high-alert list in Settings). v1.1: compact hospital header (or letterhead space), wider Time column. IPD Drug Chart: today's dose slots (Morning / Afternoon / Night, by frequency) for every medicine — tick Given / Held / Refused / NPO / Not available with time and nurse name (Given also updates the software's own count). Paper MAR print (1-7 days) with tick boxes, time and sign columns, already-recorded doses printed in."} */
+(function () {
+  if (window.__thMAR) return;
+  window.__thMAR = true;
+
+  function E(s) { try { return esc(String(s == null ? "" : s)); } catch (e) { return String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;"); } }
+  function iso(d) { d = d || new Date(); return d.getFullYear() + "-" + ("0" + (d.getMonth() + 1)).slice(-2) + "-" + ("0" + d.getDate()).slice(-2); }
+  function show(s) { var p = String(s || "").split("-"); return p.length === 3 ? p[2] + "-" + p[1] + "-" + p[0] : s; }
+  function addDays(s, n) { var d = new Date(s + "T00:00:00"); d.setDate(d.getDate() + n); return iso(d); }
+  function nowTime() { var d = new Date(); return ("0" + d.getHours()).slice(-2) + ":" + ("0" + d.getMinutes()).slice(-2); }
+  function who() {
+    try {
+      if (window.curUser && (curUser.name || curUser.u)) return curUser.name || curUser.u;
+      var h = document.querySelector("header"); if (!h) return "";
+      var lines = (h.innerText || "").split(/\n/).map(function (l) { return l.trim(); }).filter(function (l) { return /•/.test(l) && !/version|auto-save|backup|storage/i.test(l); });
+      var m = lines.length ? lines[lines.length - 1].match(/^(.+?)\s*•/) : null;
+      return m ? m[1].trim() : "";
+    } catch (e) { return ""; }
+  }
+
+  /* ---------- print header: plain paper (hospital header) or pre-printed letterhead ---------- */
+  function paper() {
+    db.settings = db.settings || {};
+    var p = db.settings.thPaper;
+    if (!p || typeof p !== "object") p = db.settings.thPaper = { mode: "plain", top: 40, bottom: 25 };
+    return p;
+  }
+  function hdrHTML() {
+    var p = paper();
+    if (p.mode === "letterhead") return '<div style="height:' + (+p.top || 0) + 'mm"></div>';
+    var raw = ""; try { raw = printHead() || ""; } catch (e) {}
+    var t = document.createElement("div"); t.innerHTML = raw;
+    var img = t.querySelector("img");
+    Array.prototype.slice.call(t.querySelectorAll("img,style,script")).forEach(function (n) { if (n !== img) n.remove(); });
+    if (img) img.remove();
+    var txt = t.innerHTML.replace(/<br\s*\/?>/gi, "\n").replace(/<\/(div|p|h\d|tr|li|table)>/gi, "\n").replace(/<[^>]+>/g, "");
+    var ta = document.createElement("textarea"); ta.innerHTML = txt; txt = ta.value;
+    var lines = txt.split(/\n/).map(function (s) { return s.replace(/\s+/g, " ").trim(); }).filter(Boolean);
+    if (!img && !lines.length) return raw;                       // software's own letterhead spacer — keep it
+    return '<div class="thph"><div class="thph-s">' + (img ? '<img src="' + E(img.getAttribute("src")) + '">' : "") + '</div><div class="thph-c">' +
+      (lines.length ? '<div class="thph-n">' + E(lines[0]) + "</div>" + lines.slice(1).map(function (l) { return "<div>" + E(l) + "</div>"; }).join("") : "") +
+      '</div><div class="thph-s"></div></div>';
+  }
+  function ftrHTML() { var p = paper(); return p.mode === "letterhead" ? '<div style="height:' + (+p.bottom || 0) + 'mm"></div>' : ""; }
+
+
+  /* ================= NABH: CAPITAL drug names + HIGH-ALERT drugs in red ================= */
+  var DEF_HA = ["Insulin", "Heparin", "Enoxaparin", "Dalteparin", "Fondaparinux", "Warfarin", "Acenocoumarol", "Apixaban", "Rivaroxaban", "Dabigatran",
+    "Streptokinase", "Alteplase", "Tenecteplase", "Urokinase", "Potassium chloride", "KCl", "Potassium phosphate", "Magnesium sulphate", "Magnesium sulfate",
+    "Sodium chloride 3%", "Hypertonic saline", "Dextrose 25%", "Dextrose 50%", "Sodium bicarbonate", "Calcium gluconate", "Morphine", "Fentanyl", "Pethidine", "Tramadol inj",
+    "Buprenorphine", "Pentazocine", "Midazolam", "Lorazepam inj", "Diazepam inj", "Propofol", "Ketamine", "Thiopentone", "Etomidate", "Vecuronium", "Atracurium",
+    "Rocuronium", "Succinylcholine", "Suxamethonium", "Adrenaline", "Epinephrine", "Noradrenaline", "Norepinephrine", "Dopamine", "Dobutamine", "Vasopressin",
+    "Phenylephrine", "Isoprenaline", "Amiodarone", "Digoxin", "Adenosine", "Lignocaine inj", "Lidocaine inj", "Nitroglycerin", "Glyceryl trinitrate", "Sodium nitroprusside",
+    "Labetalol inj", "Esmolol", "Oxytocin", "Carboprost", "Methylergometrine", "Methotrexate", "Cyclophosphamide", "Cisplatin", "Carboplatin", "Paclitaxel", "Docetaxel",
+    "Doxorubicin", "Vincristine", "5-Fluorouracil", "Fluorouracil", "Gemcitabine", "Phenytoin inj", "Glibenclamide", "Glimepiride", "Gliclazide", "Colchicine", "Chloral hydrate"];
+  function HA() {
+    db.settings = db.settings || {};
+    if (!Array.isArray(db.settings.thHighAlert) || !db.settings.thHighAlert.length) db.settings.thHighAlert = DEF_HA.slice();
+    return db.settings.thHighAlert;
+  }
+  function isHA(name) {
+    var n = " " + String(name || "").toLowerCase().replace(/[^a-z0-9%]+/g, " ") + " ";
+    return HA().some(function (h) {
+      var k = String(h).toLowerCase().replace(/[^a-z0-9%]+/g, " ").trim(); if (!k) return false;
+      var parts = k.split(" ");
+      // first word must match as a whole word; extra words (e.g. "inj", "3%") must also appear
+      return parts.every(function (w) { return n.indexOf(" " + w + " ") >= 0 || (w === "inj" && /\b(inj|injection|iv)\b/.test(n)); });
+    });
+  }
+  var HA_TAG = '<span class="thha-tag">⚠ HIGH ALERT</span>';
+  function upText(el) {
+    var tw = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, null, false), n;
+    while ((n = tw.nextNode())) n.nodeValue = n.nodeValue.toUpperCase();
+  }
+  function markCell(td) {
+    if (!td || td.__thha) return;
+    td.__thha = 1;
+    var nameEl = td.querySelector("b,strong") || td;
+    var name = (nameEl.textContent || "").trim(); if (!name) return;
+    upText(nameEl);
+    if (isHA(name)) {
+      nameEl.style.color = "#c00000"; nameEl.style.fontWeight = "800";
+      if (!td.querySelector(".thha-tag")) nameEl.insertAdjacentHTML("afterend", " " + HA_TAG);
+      td.classList.add("thha");
+    }
+  }
+  function markTables(root) {
+    Array.prototype.forEach.call(root.querySelectorAll("table"), function (t) {
+      var rows = t.querySelectorAll("tr"); if (rows.length < 2) return;
+      var hi = -1, hr = 0;
+      for (var r = 0; r < Math.min(3, rows.length) && hi < 0; r++) {
+        Array.prototype.forEach.call(rows[r].children, function (c, i) { if (hi < 0 && /^(medicine|drug|औषध|दवा)/i.test((c.textContent || "").trim())) { hi = i; hr = r; } });
+      }
+      if (hi < 0) return;
+      for (var k = hr + 1; k < rows.length; k++) { var c = rows[k].children[hi]; if (c && c.tagName === "TD") markCell(c); }
+    });
+  }
+  window.thPrintHooks = window.thPrintHooks || [];
+  if (window.thPrintHooks.indexOf(markTables) < 0) window.thPrintHooks.push(markTables);
+  // fallback when the Print Preview update is not installed
+  (function () { var prev = window.print; window.print = function () { try { var pa = document.getElementById("printArea"); if (pa && !window.__thPPhooks) markTables(pa); } catch (e) {} return prev.apply(this, arguments); }; })();
+  window.__thMarkDrugs = markTables;
+
+  TH.addMenuItem("set", "thHighAlert", "High-Alert Drug List (NABH)");
+  TH.page("thHighAlert", function () {
+    return '<h2>⚠ High-Alert Medicines (NABH)</h2><div class="card"><p style="font-size:13px;color:#475569;margin-top:0">These medicines print in <b style="color:#c00000">RED with ⚠ HIGH ALERT</b> on Drug Chart, MAR, prescriptions and discharge medicine tables. All drug names print in CAPITAL letters. One name per line — add words like <b>inj</b> or <b>3%</b> to match only that form.</p>' +
+      '<textarea id="thha_list" style="width:100%;min-height:340px">' + E(HA().join("\n")) + "</textarea>" +
+      '<div style="display:flex;gap:8px;margin-top:8px"><button class="btn" type="button" onclick="thHAsave()">Save list</button><button class="btn sec" type="button" onclick="thHAreset()">Reset to default list</button></div>' +
+      '<div style="margin-top:10px;font-size:13px">Check a name: <input id="thha_test" placeholder="e.g. Inj Insulin Regular 10 U" style="max-width:320px" oninput="document.getElementById(\'thha_res\').innerHTML=this.value?(thHAis(this.value)?\'<b style=color:#c00000>⚠ HIGH ALERT</b>\':\'Not high-alert\'):\'\'"> <span id="thha_res"></span></div></div>';
+  });
+  window.thHAis = isHA;
+  window.thHAsave = function () { var l = (document.getElementById("thha_list").value || "").split(/\n/).map(function (x) { return x.trim(); }).filter(Boolean); if (!l.length) return toast("List is empty"); db.settings.thHighAlert = l; save(); try { audit("High-alert drug list saved", l.length + " drugs"); } catch (e) {} toast("Saved — " + l.length + " high-alert drugs"); };
+  window.thHAreset = function () { if (!confirm("Reset to the default high-alert list?")) return; db.settings.thHighAlert = DEF_HA.slice(); save(); try { go("thHighAlert"); } catch (e) {} };
+
+  /* ---------- data: db.thMAR[ipdNo][medKey][date] = [{slot,status,time,by,note}] ---------- */
+  function M() { if (!db.thMAR || typeof db.thMAR !== "object") db.thMAR = {}; return db.thMAR; }
+  function recs(ipd, mk, date) { var a = M()[ipd] || {}, b = a[mk] || {}; return b[date] || []; }
+  function addRec(ipd, mk, date, r) { var a = M(); a[ipd] = a[ipd] || {}; a[ipd][mk] = a[ipd][mk] || {}; (a[ipd][mk][date] = a[ipd][mk][date] || []).push(r); }
+
+
+  /* ---------- diagnosis & allergies from the saved admission / patient ---------- */
+  function admByIpd(ipd) {
+    var A = Array.isArray(db.admissions) ? db.admissions : (db.admissions && typeof db.admissions === "object" ? Object.keys(db.admissions).map(function (k) { return db.admissions[k]; }) : []);
+    return A.filter(function (a) { return a && [a.ipdNo, a.ipd, a.no, a.id].some(function (v) { return v != null && String(v) === String(ipd); }); })[0] || null;
+  }
+  function deepFind(o, re, skip, depth, seen) {
+    if (!o || typeof o !== "object" || depth > 4) return "";
+    seen = seen || []; if (seen.indexOf(o) >= 0) return ""; seen.push(o);
+    var keys = Object.keys(o), i, v;
+    for (i = 0; i < keys.length; i++) {
+      v = o[keys[i]];
+      if (re.test(keys[i]) && !skip.test(keys[i]) && v != null && typeof v !== "object" && String(v).trim() && !/^(no|false|0)$/i.test(String(v).trim())) return String(v).trim();
+      if (re.test(keys[i]) && Array.isArray(v) && v.length && typeof v[0] !== "object") return v.join(", ");
+    }
+    for (i = 0; i < keys.length; i++) { v = o[keys[i]]; if (v && typeof v === "object") { var r = deepFind(v, re, skip, depth + 1, seen); if (r) return r; } }
+    return "";
+  }
+  function clinical(ipd) {
+    var A = admByIpd(ipd), p = null;
+    try { if (A) p = getP(A.uhid); } catch (e) {}
+    var skip = /date|time|by|code$|icd|status|type|id$|no$/i;
+    var dx = A ? (A.finalDiagnosis || A.diagnosis || A.provDiag || A.provisionalDiagnosis || A.dx || deepFind(A, /diagnos|^dx$|provdiag|impression/i, skip, 0)) : "";
+    var al = (A && deepFind(A, /allerg/i, skip, 0)) || (p && deepFind(p, /allerg/i, skip, 0)) || "";
+    var meta = (M()[ipd] || {}).__meta || {};
+    return { dx: meta.dx != null && meta.dx !== "" ? meta.dx : String(dx || ""), allergy: meta.allergy != null && meta.allergy !== "" ? meta.allergy : String(al || "") };
+  }
+
+  /* ---------- dose slots from frequency ---------- */
+  function slots(freq) {
+    var f = String(freq || "").trim().toUpperCase().replace(/\s+/g, "");
+    var m = f.match(/^(\d+(?:\.\d+)?|½)-(\d+(?:\.\d+)?|½)-(\d+(?:\.\d+)?|½)(?:-(\d+(?:\.\d+)?|½))?$/);
+    if (m) {
+      var names = m[4] != null ? ["Morning", "Noon", "Evening", "Night"] : ["Morning", "Afternoon", "Night"];
+      var v = m[4] != null ? [m[1], m[2], m[3], m[4]] : [m[1], m[2], m[3]];
+      var out = []; v.forEach(function (x, i) { if (x !== "0") out.push(names[i]); }); return out.length ? out : ["Dose"];
+    }
+    if (/^(OD|QD|ONCE|1TIME|DAILY)$/.test(f)) return ["Morning"];
+    if (/^(BD|BID|TWICE|12HRLY|Q12H)$/.test(f)) return ["Morning", "Night"];
+    if (/^(TDS|TID|THRICE|8HRLY|Q8H)$/.test(f)) return ["Morning", "Afternoon", "Night"];
+    if (/^(QID|QDS|6HRLY|Q6H)$/.test(f)) return ["6 AM", "12 PM", "6 PM", "12 AM"];
+    if (/^(Q4H|4HRLY)$/.test(f)) return ["6 AM", "10 AM", "2 PM", "6 PM", "10 PM", "2 AM"];
+    if (/^(HS|BEDTIME|NIGHT)$/.test(f)) return ["Night"];
+    if (/^(STAT|NOW)$/.test(f)) return ["Stat"];
+    if (/^(SOS|PRN)$/.test(f)) return ["SOS"];
+    if (/^(AC|BEFOREFOOD)$/.test(f)) return ["Morning"];
+    return ["Dose"];
+  }
+  var SHORT = { Morning: "M", Afternoon: "A", Noon: "Nn", Evening: "E", Night: "N", Dose: "D", Stat: "Stat", SOS: "SOS" };
+  var STATUS = [["Given", "✔", "#15803d"], ["Held", "H", "#b45309"], ["Refused", "R", "#b91c1c"], ["NPO", "NPO", "#7c3aed"], ["Not available", "NA", "#475569"]];
+  function stInfo(s) { return STATUS.filter(function (x) { return x[0] === s; })[0] || STATUS[0]; }
+
+  /* ---------- read the IPD chart screen ---------- */
+  function ipdNo() {
+    var h = Array.prototype.filter.call(document.querySelectorAll("h1,h2"), function (x) { return /IPD Chart/i.test(x.textContent || ""); })[0];
+    var m = h && (h.textContent || "").match(/IPD[-\/]?[\w\/-]*\d+/i);
+    return m ? m[0] : "";
+  }
+  function patient() {
+    var h = Array.prototype.filter.call(document.querySelectorAll("h1,h2"), function (x) { return /IPD Chart/i.test(x.textContent || ""); })[0];
+    var ht = h ? (h.textContent || "").replace(/\s+/g, " ").trim() : "";
+    var bar = Array.prototype.filter.call(document.querySelectorAll("div,section,p"), function (x) { var t = x.textContent || ""; return /UHID:/.test(t) && /Admitted:/.test(t) && t.length < 400; }).sort(function (a, b) { return a.textContent.length - b.textContent.length; })[0];
+    var bt = bar ? (bar.innerText || bar.textContent || "").replace(/\s+/g, " ") : "";
+    function g(re, s) { var m = (s || bt).match(re); return m ? m[1].trim() : ""; }
+    var parts = ht.replace(/^IPD Chart\s*[—–-]\s*/i, "").split(/\s*[•·]\s*/);
+    var nameIpd = parts[0] || "", ipd = ipdNo();
+    return { name: nameIpd.replace(ipd, "").trim(), ipd: ipd, ward: parts[1] || "", status: parts[2] || "",
+      uhid: g(/UHID:\s*([^\s]+)/), age: g(/Age\/Sex:\s*(.*?)\s*Doctor:/), doctor: g(/Doctor:\s*(.*?)\s*Admitted:/), admitted: g(/Admitted:\s*(.*?)\s*(Day:|Dx:|$)/), dx: g(/Dx:\s*(.*?)(Open admission|$)/) };
+  }
+  function medTable() {
+    var lab = Array.prototype.filter.call(document.querySelectorAll("h2,h3,h4,b,strong,div"), function (x) { return x.children.length < 3 && /^Active medicines/i.test((x.textContent || "").trim()); })[0];
+    if (!lab) return null;
+    var n = lab, t = null;
+    for (var i = 0; i < 5 && n && !t; i++) { n = n.nextElementSibling; if (n) t = n.tagName === "TABLE" ? n : n.querySelector && n.querySelector("table"); }
+    if (!t && lab.parentElement) t = lab.parentElement.querySelector("table");
+    return t;
+  }
+  function meds(t) {
+    var rows = Array.prototype.slice.call(t.querySelectorAll("tr"));
+    if (rows.length < 2) return [];
+    var head = Array.prototype.map.call(rows[0].children, function (c) { return (c.textContent || "").trim().toLowerCase(); });
+    function col(re) { for (var i = 0; i < head.length; i++) if (re.test(head[i])) return i; return -1; }
+    var ci = { med: col(/^medicine/), dose: col(/^dose/), route: col(/^route/), freq: col(/^freq/), start: col(/^start/), by: col(/^ordered/) };
+    return rows.slice(1).map(function (r) {
+      var c = r.children; function v(i) { return i >= 0 && c[i] ? (c[i].innerText || c[i].textContent || "").trim() : ""; }
+      var medLines = v(ci.med).split(/\n/);
+      var name = (medLines[0] || "").replace(/\s*⚠\s*HIGH ALERT\s*/i, "").trim(), instr = medLines.slice(1).join(" ").trim();
+      return { row: r, name: name, instr: instr, dose: v(ci.dose), route: v(ci.route), freq: v(ci.freq), start: v(ci.start), by: v(ci.by), key: (name + "|" + v(ci.start)).toLowerCase() };
+    }).filter(function (m) { return m.name; });
+  }
+
+  /* ---------- style ---------- */
+  TH.css([
+    ".thmar-s{display:flex;flex-wrap:wrap;gap:4px}",
+    ".thha-tag{display:inline-block;background:#c00000;color:#fff !important;font-size:9.5px;font-weight:800;border-radius:4px;padding:0 4px;letter-spacing:.3px;vertical-align:middle;-webkit-print-color-adjust:exact;print-color-adjust:exact}",
+    "tr.thha-row td{background:#fff1f2}",
+    ".thmar-s button{min-width:46px;border:1.5px dashed #94a3b8;background:#fff;border-radius:8px;padding:3px 6px;font-size:11.5px;cursor:pointer;line-height:1.15;color:#334155}",
+    ".thmar-s button b{display:block;font-size:12px}",
+    ".thmar-s button.d{border-style:solid;color:#fff}",
+    ".thmar-pop{position:fixed;z-index:2147482500;background:#fff;border-radius:14px;box-shadow:0 14px 40px rgba(0,0,0,.3);padding:14px;width:300px;border:1px solid #e2e8f0}",
+    ".thmar-pop h4{margin:0 0 4px;color:#0b2545}.thmar-pop small{color:#64748b}",
+    ".thmar-pop .st{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin:10px 0}",
+    ".thmar-pop .st button{border:1px solid #cbd5e1;background:#f8fafc;border-radius:9px;padding:8px;font-weight:700;cursor:pointer}",
+    ".thmar-pop .st button.on{color:#fff}",
+    ".thmar-pop input{width:100%;box-sizing:border-box;margin-top:4px}",
+    ".thmar-pop .act{display:flex;gap:6px;justify-content:flex-end;margin-top:10px}",
+    ".thmar-pr h3{text-align:center;margin:4px 0;font-size:15px;letter-spacing:.4px}",
+    ".thmar-pr table{width:100%;border-collapse:collapse;table-layout:fixed}.thmar-pr td,.thmar-pr th{border:1px solid #333;font-size:10px;padding:2px 3px;vertical-align:top;text-align:left}",
+    ".thph{display:flex;align-items:center;gap:12px;border-bottom:2px solid #0b2545;padding-bottom:6px;margin-bottom:8px}",
+    ".thph-s{width:95px;flex:none}.thph-s img{max-width:95px;max-height:80px;display:block}",
+    ".thph-c{flex:1;text-align:center;font-size:11.5px;line-height:1.35;color:#111}.thph-n{font-size:20px;font-weight:800;color:#0b2545;letter-spacing:.3px;text-transform:uppercase}",
+    ".thmar-pr th{background:#eef2f7;text-align:center}.thmar-pr .c{text-align:center}.thmar-pr .bx{height:26px;min-width:34px}",
+    ".thmar-pr .pt{table-layout:auto}.thmar-pr .pt td{font-size:11px;padding:3px 5px}.thmar-pr .lg{font-size:10px;margin-top:5px}.thmar-pr .sig{display:flex;justify-content:space-between;margin-top:22px;font-size:11px}",
+    "@media print{.thmar-pr{zoom:1}}"
+  ].join(""));
+
+  /* ---------- today's dose slots in the Active medicines table ---------- */
+  var busy = false, tm = null;
+  function slotHTML(ipd, m) {
+    var today = iso(), R = recs(ipd, m.key, today);
+    var ss = slots(m.freq);
+    var html = ss.map(function (sl) {
+      var r = R.filter(function (x) { return x.slot === sl; }).slice(-1)[0];
+      if (sl === "SOS") {
+        var given = R.filter(function (x) { return x.slot === "SOS"; });
+        return given.map(function (x) { var s = stInfo(x.status); return '<button type="button" class="d" style="background:' + s[2] + ';border-color:' + s[2] + '" title="' + E(x.status + " " + x.time + " by " + x.by + (x.note ? " — " + x.note : "")) + '"><b>' + s[1] + "</b>" + E(x.time) + "</button>"; }).join("") +
+          '<button type="button" data-mk="' + E(m.key) + '" data-sl="SOS"><b>+ SOS</b>dose</button>';
+      }
+      if (r) { var s = stInfo(r.status); return '<button type="button" class="d" style="background:' + s[2] + ';border-color:' + s[2] + '" data-mk="' + E(m.key) + '" data-sl="' + E(sl) + '" title="' + E(r.status + " at " + r.time + " by " + r.by + (r.note ? " — " + r.note : "")) + '"><b>' + (SHORT[sl] || sl) + " " + s[1] + "</b>" + E(r.time) + "</button>"; }
+      return '<button type="button" data-mk="' + E(m.key) + '" data-sl="' + E(sl) + '" title="Tick ' + E(sl) + ' dose"><b>' + (SHORT[sl] || sl) + "</b>☐</button>";
+    }).join("");
+    return '<div class="thmar-s">' + html + "</div>";
+  }
+  function inject() {
+    if (busy) return;
+    var t = medTable(); if (!t) return;
+    var ipd = ipdNo(); if (!ipd) return;
+    busy = true;
+    try {
+      var rows = t.querySelectorAll("tr");
+      if (rows.length && !rows[0].querySelector("[data-thmar-h]")) {
+        var th = document.createElement("th"); th.setAttribute("data-thmar-h", "1"); th.textContent = "Today's doses (" + show(iso()) + ")";
+        var last = rows[0].lastElementChild; rows[0].insertBefore(th, last);
+      }
+      markTables(t.parentElement || t);
+      meds(t).forEach(function (m) {
+        if (isHA(m.name)) m.row.classList.add("thha-row");
+        var td = m.row.querySelector("[data-thmar]");
+        var html = slotHTML(ipd, m);
+        if (!td) { td = document.createElement("td"); td.setAttribute("data-thmar", "1"); m.row.insertBefore(td, m.row.lastElementChild); }
+        if (td.innerHTML !== html) td.innerHTML = html;
+        td.__m = m;
+      });
+      // print button
+      var pb = Array.prototype.filter.call(document.querySelectorAll("button"), function (b) { return /Print Drug Chart/i.test(b.textContent || "") && !b.hasAttribute("data-thmar-p"); })[0];
+      if (pb && !document.querySelector("[data-thmar-p]")) {
+        var b = document.createElement("button"); b.type = "button"; b.className = pb.className; b.setAttribute("data-thmar-p", "1");
+        b.style.marginLeft = "8px"; b.textContent = "🖨 Paper MAR (tick & sign)"; b.onclick = function () { askPrint(); };
+        pb.insertAdjacentElement("afterend", b);
+      }
+    } catch (e) { console.warn("MAR:", e); }
+    setTimeout(function () { busy = false; }, 0);
+  }
+  document.addEventListener("click", function (e) {
+    var b = e.target.closest && e.target.closest(".thmar-s button[data-sl]");
+    if (!b) return;
+    e.preventDefault(); e.stopPropagation();
+    var td = b.closest("td"), m = td && td.__m; if (!m) return;
+    pop(b, m, b.getAttribute("data-sl"));
+  }, true);
+
+  function closePop() { var p = document.querySelector(".thmar-pop"); if (p) p.remove(); }
+  function pop(anchor, m, sl) {
+    closePop();
+    var ipd = ipdNo(), R = recs(ipd, m.key, iso()).filter(function (x) { return x.slot === sl; }), last = sl !== "SOS" ? R.slice(-1)[0] : null;
+    var p = document.createElement("div"); p.className = "thmar-pop";
+    var cur = last ? last.status : "Given";
+    p.innerHTML = "<h4>" + E(m.name) + "</h4><small>" + E([m.dose, m.route, m.freq].filter(Boolean).join(" · ")) + " — <b>" + E(sl) + "</b> dose, " + show(iso()) + "</small>" +
+      (last ? '<div style="font-size:12px;margin-top:6px;color:#b45309">Already marked <b>' + E(last.status) + "</b> at " + E(last.time) + " by " + E(last.by) + ". Saving again adds a correction.</div>" : "") +
+      '<div class="st">' + STATUS.map(function (s) { return '<button type="button" data-s="' + s[0] + '" style="' + (s[0] === cur ? "background:" + s[2] + ";color:#fff;border-color:" + s[2] : "") + '">' + s[1] + " " + s[0] + "</button>"; }).join("") + "</div>" +
+      '<label style="font-size:12px">Time</label><input type="time" class="tm" value="' + E(last ? last.time : nowTime()) + '">' +
+      '<label style="font-size:12px;margin-top:6px;display:block">Given by (you can change the name)</label><input class="by" value="' + E(last ? last.by : who()) + '">' +
+      '<label style="font-size:12px;margin-top:6px;display:block">Note / reason (needed if not given)</label><input class="nt" value="' + E(last ? last.note || "" : "") + '" placeholder="e.g. Patient vomiting, BP low, doctor informed">' +
+      '<div class="act"><button type="button" class="btn sm sec cx">Cancel</button>' + (last ? '<button type="button" class="btn sm sec up">✎ Update this entry</button>' : "") + '<button type="button" class="btn sm ok">' + (last ? "Save as new" : "Save") + "</button></div>";
+    document.body.appendChild(p);
+    var r = anchor.getBoundingClientRect();
+    p.style.top = Math.max(8, Math.min(window.innerHeight - p.offsetHeight - 8, r.bottom + 6)) + "px";
+    p.style.left = Math.max(8, Math.min(window.innerWidth - 310, r.left - 120)) + "px";
+    Array.prototype.forEach.call(p.querySelectorAll(".st button"), function (b) {
+      b.onclick = function () {
+        cur = b.getAttribute("data-s");
+        Array.prototype.forEach.call(p.querySelectorAll(".st button"), function (x) { var s = stInfo(x.getAttribute("data-s")); x.style.cssText = x === b ? "background:" + s[2] + ";color:#fff;border-color:" + s[2] : ""; });
+      };
+    });
+    p.querySelector(".cx").onclick = closePop;
+    if (last && p.querySelector(".up")) p.querySelector(".up").onclick = function () {
+      var nb = p.querySelector(".by").value.trim(), nt = p.querySelector(".tm").value, nn = p.querySelector(".nt").value.trim();
+      if (!nb) { try { toast("Enter the name"); } catch (e) {} return; }
+      if (cur !== "Given" && !nn) { try { toast("Write the reason for " + cur); } catch (e) {} return; }
+      (last.edits = last.edits || []).push({ at: new Date().toISOString(), editedBy: who(), old: { status: last.status, time: last.time, by: last.by, note: last.note } });
+      var wasGiven = last.status === "Given";
+      last.status = cur; last.time = nt || last.time; last.by = nb; last.note = nn;
+      save();
+      try { audit("Drug dose entry corrected", ipd + " — " + m.name + " (" + sl + "): " + last.status + " " + last.time + " by " + last.by + " [edited by " + who() + "]"); } catch (e) {}
+      closePop();
+      if (cur === "Given" && !wasGiven) {
+        var g = Array.prototype.filter.call(m.row.querySelectorAll("button"), function (b) { return /^\W*Given\s*$/i.test((b.textContent || "").trim()); })[0];
+        if (g) g.click();
+      }
+      busy = false; inject();
+      try { toast("Entry updated"); } catch (e) {}
+    };
+    p.querySelector(".ok").onclick = function () {
+      var rec = { slot: sl, status: cur, time: p.querySelector(".tm").value || nowTime(), by: p.querySelector(".by").value.trim() || who(), note: p.querySelector(".nt").value.trim(), at: new Date().toISOString() };
+      if (cur !== "Given" && !rec.note) { try { toast("Write the reason for " + cur); } catch (e) {} return; }
+      if (!rec.by) { try { toast("Enter who gave the dose"); } catch (e) {} return; }
+      addRec(ipd, m.key, iso(), rec);
+      save();
+      try { audit("Drug dose " + cur, ipd + " — " + m.name + " (" + sl + ") at " + rec.time + " by " + rec.by + (rec.note ? " — " + rec.note : "")); } catch (e) {}
+      closePop();
+      // keep the software's own "Today given" count in step (only for a first Given of this slot)
+      if (cur === "Given" && !(last && last.status === "Given")) {
+        var g = Array.prototype.filter.call(m.row.querySelectorAll("button"), function (b) { return /^\W*Given\s*$/i.test((b.textContent || "").trim()) || /✓\s*Given|✔\s*Given/.test(b.textContent || ""); })[0];
+        if (g) { g.__thmarClick = true; g.click(); }
+      }
+      busy = false; inject();
+      try { toast(m.name + " — " + sl + ": " + cur); } catch (e) {}
+    };
+  }
+  document.addEventListener("mousedown", function (e) { var p = document.querySelector(".thmar-pop"); if (p && !p.contains(e.target) && !(e.target.closest && e.target.closest(".thmar-s"))) closePop(); });
+
+  /* ---------- paper MAR ---------- */
+  function askPrint() {
+    closePop();
+    var CL = clinical(ipdNo());
+    var p = document.createElement("div"); p.className = "thmar-pop";
+    p.innerHTML = "<h4>🖨 Paper MAR (tick & sign)</h4><small>Medicines from Active medicines list. Doses already ticked in the software are printed in.</small>" +
+      '<label style="font-size:12px;margin-top:8px;display:block">From date</label><input type="date" class="fd" value="' + iso() + '">' +
+      '<label style="font-size:12px;margin-top:6px;display:block">Number of days</label><select class="nd" style="width:100%">' + [1, 2, 3, 4, 5, 6, 7].map(function (n) { return "<option" + (n === 3 ? " selected" : "") + ">" + n + "</option>"; }).join("") + "</select>" +
+      '<label style="font-size:12px;margin-top:6px;display:block">Diagnosis</label><input class="dx" value="' + E(CL.dx) + '" placeholder="Provisional / final diagnosis">' +
+      '<label style="font-size:12px;margin-top:6px;display:block">Allergies</label><input class="al" value="' + E(CL.allergy) + '" placeholder="NKDA / name the allergy (blank = write by hand)">' +
+      '<label style="font-size:12px;margin-top:6px;display:flex;align-items:center;gap:6px"><input type="checkbox" class="blank" style="width:auto !important;margin:0"> Print empty boxes only (ignore ticks in software)</label>' +
+      '<div class="act"><button type="button" class="btn sm sec cx">Cancel</button><button type="button" class="btn sm ok">Print</button></div>';
+    document.body.appendChild(p);
+    p.style.top = "120px"; p.style.left = Math.max(8, (window.innerWidth - 300) / 2) + "px";
+    p.querySelector(".cx").onclick = closePop;
+    p.querySelector(".ok").onclick = function () {
+      var fd = p.querySelector(".fd").value || iso(), nd = +p.querySelector(".nd").value || 3, bl = p.querySelector(".blank").checked;
+      var ipd = ipdNo(), dx = p.querySelector(".dx").value.trim(), al = p.querySelector(".al").value.trim();
+      if (ipd) { var a = M(); a[ipd] = a[ipd] || {}; a[ipd].__meta = { dx: dx, allergy: al }; save(); }
+      closePop(); printMAR(fd, nd, bl, { dx: dx, allergy: al });
+    };
+  }
+  function printMAR(from, nd, blank, cl) {
+    var t = medTable(); if (!t) { try { toast("Open the Drug Chart first"); } catch (e) {} return; }
+    var P = patient(), L = meds(t), days = [];
+    cl = cl || clinical(P.ipd);
+    var dx = cl.dx || P.dx, al = cl.allergy;
+    for (var i = 0; i < nd; i++) days.push(addDays(from, i));
+    var h = '<div class="thmar-pr">' + hdrHTML() + "<h3>MEDICATION ADMINISTRATION RECORD (MAR) / औषधोपचार नोंद</h3>" +
+      '<table class="pt"><tr><td><b>Patient:</b> ' + E(P.name) + "</td><td><b>UHID:</b> " + E(P.uhid) + "</td><td><b>IPD No.:</b> " + E(P.ipd) + "</td><td><b>Ward / Bed:</b> " + E(P.ward) + "</td></tr>" +
+      "<tr><td><b>Age / Sex:</b> " + E(P.age) + "</td><td><b>Consultant:</b> " + E(P.doctor) + "</td><td><b>Admitted:</b> " + E(P.admitted) + "</td><td" + (al && !/^(nkda|nil|none|no known)/i.test(al) ? ' style="background:#fff1f2"' : "") + "><b>Allergies:</b> " + (al ? (/^(nkda|nil|none|no known)/i.test(al) ? E(al) : '<b style="color:#c00000">⚠ ' + E(al.toUpperCase()) + "</b>") : "______________") + '</td></tr><tr><td colspan="4"><b>Diagnosis:</b> ' + (dx ? E(dx) : "________________________________________") + "</td></tr></table>" +
+      '<table style="margin-top:5px"><tr><th rowspan="2" style="width:3%">#</th><th rowspan="2" style="width:20%">Medicine / dose / route / frequency</th><th rowspan="2" style="width:9%">Time</th>' +
+      days.map(function (d) { return '<th colspan="2">' + show(d) + "</th>"; }).join("") + "</tr><tr>" + days.map(function () { var w = (68 / nd / 2).toFixed(2) + "%"; return '<th style="width:' + w + '">Tick / time</th><th style="width:' + w + '">Sign</th>'; }).join("") + "</tr>";
+    var n = 0;
+    L.forEach(function (m) {
+      var ss = slots(m.freq); if (ss[0] === "SOS") ss = ["SOS", "SOS"];
+      ss.forEach(function (sl, si) {
+        h += "<tr>" + (si === 0 ? '<td rowspan="' + ss.length + '" class="c">' + (++n) + '</td><td rowspan="' + ss.length + '"' + (isHA(m.name) ? ' style="background:#fff1f2"' : "") + '><b style="' + (isHA(m.name) ? "color:#c00000" : "") + '">' + E(m.name.toUpperCase()) + "</b>" + (isHA(m.name) ? " " + HA_TAG : "") + "<br>" + E([m.dose, m.route, m.freq].filter(Boolean).join(" · ")) + (m.instr ? "<br><i>" + E(m.instr) + "</i>" : "") + "<br><small>Dr: " + E(m.by) + " · from " + E(m.start) + "</small></td>" : "") +
+          '<td class="c">' + E(sl) + "</td>" +
+          days.map(function (d) {
+            var list = blank ? [] : recs(P.ipd, m.key, d).filter(function (x) { return x.slot === sl; });
+            var r = sl === "SOS" ? list[si] : list[list.length - 1];
+            if (r) { var s = stInfo(r.status); return '<td class="bx c"><b>' + s[1] + "</b> " + E(r.time) + (r.status !== "Given" && r.note ? "<br><small>" + E(r.note) + "</small>" : "") + '</td><td class="bx c"><small>' + E(r.by) + "</small></td>"; }
+            return '<td class="bx c">☐ ___:___</td><td class="bx"></td>';
+          }).join("") + "</tr>";
+      });
+    });
+    if (!L.length) h += '<tr><td colspan="' + (3 + nd * 2) + '">No active medicine.</td></tr>';
+    for (var k = 0; k < 3; k++) h += '<tr><td class="c">' + (++n) + '</td><td style="height:30px"></td><td></td>' + days.map(function () { return '<td class="bx"></td><td class="bx"></td>'; }).join("") + "</tr>";
+    h += '</table><div class="lg"><b style="color:#c00000">⚠ HIGH ALERT</b> = high-alert medicine, double-check before giving. &nbsp; <b>Codes:</b> ✔ Given &nbsp; H Held &nbsp; R Refused &nbsp; NPO Nil by mouth &nbsp; NA Not available &nbsp;|&nbsp; Write time of administration and sign. Reason must be written for H / R / NPO / NA. ' +
+      "&nbsp;|&nbsp; Right patient · Right drug · Right dose · Right route · Right time · Right documentation.</div>" +
+      '<div class="sig"><span>Staff nurse (Morning): __________</span><span>Staff nurse (Evening): __________</span><span>Staff nurse (Night): __________</span><span>Consultant: __________</span></div>' + ftrHTML() + "</div>";
+    var pa = document.getElementById("printArea");
+    if (!pa) { pa = document.createElement("div"); pa.id = "printArea"; document.body.appendChild(pa); }
+    pa.innerHTML = h;
+    try { audit("Paper MAR printed", P.ipd + " " + show(from) + " (" + nd + " days)"); } catch (e) {}
+    window.print();
+  }
+
+  new MutationObserver(function () { if (busy) return; clearTimeout(tm); tm = setTimeout(inject, 200); }).observe(document.documentElement, { childList: true, subtree: true });
+  setTimeout(inject, 600);
+  window.thMAR = { print: printMAR, slots: slots };
+})();
+/*TH-SIGN:b7fd3ab7fa82e1096ada0b3da94137f1*/

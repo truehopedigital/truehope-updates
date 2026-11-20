@@ -1,0 +1,514 @@
+/*TRUEHOPE-UPDATE {"id":"th-health-check-20261120","name":"System Health Check (auto problem finder)","version":"1.2","date":"2026-11-20","description":"Checks every box, dropdown and button + suggestions. One-click auto test of every screen, every print and the data; live error log, slow-button detector, and a copy-paste report to fix problems fast."} */
+(function () {
+  if (window.__thDiag) return;
+  window.__thDiag = true;
+
+  /* ================= 1. ERROR LOG (kept outside patient data) ================= */
+  var KEY = "thDiagLog", MAX = 300, mem = [], curPage = "", lastClick = "";
+  function rd() { try { return JSON.parse(localStorage.getItem(KEY) || "[]"); } catch (e) { return mem; } }
+  function wr(a) { mem = a; try { localStorage.setItem(KEY, JSON.stringify(a)); } catch (e) {} }
+  function now() { var d = new Date(); return d.toLocaleDateString("en-IN") + " " + d.toLocaleTimeString("en-IN"); }
+  function log(type, msg, extra) {
+    var a = rd();
+    var e = { t: now(), type: type, msg: String(msg || "").slice(0, 400), page: curPage, click: lastClick, at: extra || "" };
+    var last = a[a.length - 1];
+    if (last && last.msg === e.msg && last.page === e.page) { last.n = (last.n || 1) + 1; last.t = e.t; }
+    else a.push(e);
+    if (a.length > MAX) a = a.slice(a.length - MAX);
+    wr(a);
+    badge();
+  }
+  function where(stack) {
+    var m = String(stack || "").split("\n").filter(function (l) { return /at |@/.test(l); })[0];
+    return m ? m.trim().slice(0, 160) : "";
+  }
+
+  window.addEventListener("error", function (e) {
+    if (e && e.message) log("Error", e.message, (e.filename ? e.filename.split("/").pop() + ":" + e.lineno : "") || where(e.error && e.error.stack));
+  });
+  window.addEventListener("unhandledrejection", function (e) {
+    var r = e && e.reason;
+    log("Error", "Promise: " + (r && r.message ? r.message : r), where(r && r.stack));
+  });
+  var cerr = console.error;
+  console.error = function () {
+    try { log("Console", Array.prototype.map.call(arguments, function (x) { return x && x.message ? x.message : (typeof x === "object" ? JSON.stringify(x) : String(x)); }).join(" ")); } catch (e) {}
+    return cerr.apply(console, arguments);
+  };
+
+  /* slow / frozen button detector */
+  document.addEventListener("click", function (e) {
+    var el = e.target && e.target.closest ? e.target.closest("button,a,.btn,[onclick],li,input[type=button],input[type=submit]") : null;
+    if (!el) return;
+    lastClick = ((el.textContent || el.value || el.getAttribute("onclick") || "").replace(/\s+/g, " ").trim()).slice(0, 60);
+    var t0 = performance.now(), label = lastClick;
+    setTimeout(function () {
+      var ms = Math.round(performance.now() - t0);
+      if (ms > 2000) log("Slow", "Button “" + label + "” froze the software for " + (ms / 1000).toFixed(1) + " sec");
+    }, 0);
+  }, true);
+
+  /* page errors */
+  try {
+    TH.wrap("go", function (orig) {
+      return function (p) {
+        curPage = String(p || "");
+        try { return orig.apply(this, arguments); }
+        catch (err) { log("Error", "Screen “" + p + "” failed to open: " + err.message, where(err.stack)); throw err; }
+      };
+    });
+  } catch (e) {}
+
+  /* ================= 2. STYLE + FLOATING BUTTON ================= */
+  TH.css([
+    ".thdg-fab{position:fixed;left:14px;bottom:56px;z-index:99990;width:44px;height:44px;border-radius:50%;border:0;cursor:pointer;",
+    "background:linear-gradient(135deg,#0b2545,#16a34a);color:#fff;font-size:20px;box-shadow:0 6px 18px rgba(0,0,0,.35)}",
+    ".thdg-fab b{position:absolute;top:-4px;right:-4px;background:#dc2626;color:#fff;border-radius:10px;font-size:11px;padding:1px 6px;font-family:Arial}",
+    ".thdg-fab b:empty{display:none}",
+    ".thdg-sum{display:flex;gap:10px;flex-wrap:wrap;margin:8px 0}",
+    ".thdg-sum div{flex:1;min-width:130px;border-radius:10px;padding:10px 14px;color:#fff;font-weight:700}",
+    ".thdg-sum span{display:block;font-size:26px}",
+    ".thdg-ok{color:#15803d;font-weight:700}.thdg-warn{color:#b45309;font-weight:700}.thdg-err{color:#b91c1c;font-weight:700}",
+    ".thdg-t td{font-size:12.5px;vertical-align:top}",
+    ".thdg-run{position:fixed;inset:0;z-index:99999;background:rgba(11,37,69,.85);color:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;font:600 18px 'Segoe UI',Arial}",
+    ".thdg-run small{font-weight:400;font-size:13px;margin-top:8px;opacity:.85}",
+    ".thdg-bar{width:360px;height:8px;background:rgba(255,255,255,.2);border-radius:6px;margin-top:14px;overflow:hidden}",
+    ".thdg-bar i{display:block;height:100%;background:#22c55e;width:0}"
+  ].join(""));
+
+  function seen() { try { return +localStorage.getItem("thDiagSeen") || 0; } catch (e) { return 0; } }
+  function showFab() { try { return localStorage.getItem("thDiagFab") !== "0"; } catch (e) { return true; } }
+  function badge() {
+    var f = document.querySelector(".thdg-fab b");
+    if (!f) return;
+    var n = rd().filter(function (x) { return x.type !== "Info"; }).length - seen();
+    f.textContent = n > 0 ? n : "";
+  }
+  function fab() {
+    var onLogin = !!document.querySelector('input[type="password"]') && !document.querySelector(".thdg-page");
+    var f = document.querySelector(".thdg-fab");
+    if (!showFab() || onLogin) { if (f) f.remove(); return; }
+    if (f) return;
+    f = document.createElement("button");
+    f.className = "thdg-fab";
+    f.title = "System Health Check — find what is not working";
+    f.innerHTML = "🩺<b></b>";
+    f.onclick = function () { try { go("thDiag"); } catch (e) { alert("Open SETTING MENU → System Health Check"); } };
+    document.body.appendChild(f);
+    badge();
+  }
+  var ft = null;
+  new MutationObserver(function () { clearTimeout(ft); ft = setTimeout(fab, 300); }).observe(document.documentElement, { childList: true, subtree: true });
+
+  /* ================= 3. AUTO TESTS ================= */
+  var RES = window.__thDiagRes = window.__thDiagRes || null;
+  var SKIP = /logout|log_out|login|restore|reset|delete|del|remove|clear|wipe|import|exit|quit|lock|thdiag/i;
+
+  function fnOf(n) {
+    if (typeof window[n] === "function") return window[n];
+    try { return new Function("try{return typeof " + n + "===\"function\"?" + n + ":null}catch(e){return null}")(); } catch (e) { return null; }
+  }
+  function E(s) { try { return esc(String(s == null ? "" : s)); } catch (e) { return String(s); } }
+  function arr(x) { return Array.isArray(x) ? x : []; }
+  function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+
+  function findPages() {
+    var keys = {};
+    Array.prototype.forEach.call(document.querySelectorAll("[onclick]"), function (el) {
+      var m = (el.getAttribute("onclick") || "").match(/go\(\s*['"]([\w\-]+)['"]/);
+      if (m) keys[m[1]] = (el.textContent || "").replace(/\s+/g, " ").trim().slice(0, 50) || keys[m[1]] || m[1];
+    });
+    // the software's own page list, if it keeps one
+    Object.keys(window).forEach(function (k) {
+      try {
+        var o = window[k];
+        if (!o || typeof o !== "object" || Array.isArray(o) || o === window || o === db) return;
+        var ks = Object.keys(o);
+        if (ks.length < 6 || ks.length > 400) return;
+        var fnCount = ks.filter(function (x) { return typeof o[x] === "function"; }).length;
+        if (fnCount / ks.length > 0.8 && ("home" in o || "dashboard" in o || "opd" in o)) ks.forEach(function (x) { if (!keys[x]) keys[x] = x; });
+      } catch (e) {}
+    });
+    return Object.keys(keys).filter(function (k) { return !SKIP.test(k); }).map(function (k) { return { key: k, label: keys[k] }; });
+  }
+  function mainText() {
+    var m = document.querySelector("main,#main,.main,#content,.content,#page,.page") || document.body;
+    return (m.innerText || "");
+  }
+  function badText(t) {
+    var a = [];
+    if (/\bundefined\b/.test(t)) a.push("shows the word “undefined”");
+    if (/\bNaN\b/.test(t)) a.push("shows “NaN” (wrong number)");
+    if (/\[object Object\]/.test(t)) a.push("shows “[object Object]”");
+    if (/Invalid Date/.test(t)) a.push("shows “Invalid Date”");
+    return a;
+  }
+
+  function dataChecks(out) {
+    function add(area, status, msg, fix) { out.push({ group: "Data", area: area, status: status, msg: msg, fix: fix || "" }); }
+    ["patients", "visits", "admissions", "bills", "doctors", "departments", "wards", "tariff", "meds", "templates", "users"].forEach(function (k) {
+      if (db[k] === undefined) add("db." + k, "warn", "List is missing (not created yet)", "Open that master once and save, or ignore if not used");
+      else if (!Array.isArray(db[k]) && typeof db[k] !== "object") add("db." + k, "err", "List is damaged (wrong type)", "Restore last good backup");
+    });
+    if (!db.settings || typeof db.settings !== "object") add("db.settings", "err", "Settings are missing", "Open Hospital & Print Settings and save");
+
+    var pts = arr(db.patients), byU = {}, dup = 0;
+    pts.forEach(function (p) { var u = String(p.uhid || ""); if (!u) return; if (byU[u]) dup++; byU[u] = 1; });
+    add("Patients", dup ? "err" : "ok", pts.length + " patients" + (dup ? ", " + dup + " DUPLICATE UHID" : ""), dup ? "Duplicate UHIDs cause wrong patient on print — tell True Hope support" : "");
+    var noName = pts.filter(function (p) { return !(p.name || p.pname || p.fullName); }).length;
+    if (noName) add("Patients", "warn", noName + " patient(s) without name", "Open and complete registration");
+
+    var orphanV = arr(db.visits).filter(function (v) { return v.uhid && !byU[String(v.uhid)]; }).length;
+    add("OPD visits", orphanV ? "warn" : "ok", arr(db.visits).length + " visits" + (orphanV ? ", " + orphanV + " linked to a missing patient" : ""), orphanV ? "These visits will print without patient details" : "");
+    var orphanA = arr(db.admissions).filter(function (a) { return a.uhid && !byU[String(a.uhid)]; }).length;
+    add("Admissions", orphanA ? "warn" : "ok", arr(db.admissions).length + " admissions" + (orphanA ? ", " + orphanA + " linked to a missing patient" : ""), "");
+
+    // wards & beds
+    var beds = {}, dupBed = [], wardsOk = true;
+    arr(db.wards).forEach(function (w) {
+      var bs = w.beds || [];
+      if (typeof bs === "string") bs = bs.split(",");
+      if (!Array.isArray(bs)) { wardsOk = false; return; }
+      bs.forEach(function (b) { var n = String(typeof b === "object" && b ? (b.name || b.bed || b.id) : b).trim().toLowerCase(); if (!n) return; if (beds[n]) dupBed.push(n); beds[n] = 1; });
+    });
+    add("Wards & beds", (!wardsOk || dupBed.length) ? "warn" : "ok", arr(db.wards).length + " wards, " + Object.keys(beds).length + " beds" + (dupBed.length ? " — same bed name in 2 wards: " + dupBed.slice(0, 5).join(", ") : "") + (!wardsOk ? " — a ward has damaged bed list" : ""), dupBed.length ? "Rename duplicate beds in Ward & Bed Master" : "");
+
+    var docs = arr(db.doctors);
+    var badDoc = docs.filter(function (d) { return !d.name; }).length;
+    add("Doctors", docs.length ? (badDoc ? "warn" : "ok") : "warn", docs.length + " doctors" + (badDoc ? ", " + badDoc + " without name" : "") + (docs.length ? "" : " — none added"), docs.length ? "" : "Add doctors in Doctor / Department Master");
+
+    var us = arr(db.users);
+    var noPass = us.filter(function (u) { return !(u.p || u.pass || u.password); }).length;
+    var weak = us.filter(function (u) { var p = String(u.p || u.pass || u.password || ""); return p && (p.length < 6 || /^(admin|master|1234|password)/i.test(p)); }).length;
+    add("Users / passwords", noPass ? "err" : (weak ? "warn" : "ok"), us.length + " users" + (noPass ? ", " + noPass + " WITHOUT password" : "") + (weak ? ", " + weak + " weak password(s)" : ""), (noPass || weak) ? "Change passwords in Users & Rights before giving to client" : "");
+
+    var size = 0;
+    try { size = JSON.stringify(db).length; } catch (e) { add("Database", "err", "Data cannot be saved (circular / damaged): " + e.message, "Restore last good backup"); }
+    if (size) add("Database size", size > 4.5e6 ? "warn" : "ok", (size / 1048576).toFixed(2) + " MB", size > 4.5e6 ? "Large data — keep Unlimited Storage update ON and take backups" : "");
+  }
+
+  function coreChecks(out) {
+    function add(area, status, msg, fix) { out.push({ group: "Core", area: area, status: status, msg: msg, fix: fix || "" }); }
+    ["save", "go", "esc", "getP", "getA", "printHead", "fillTpl", "dmy", "today", "toast", "audit"].forEach(function (f) {
+      var ok = !!fnOf(f);
+      add("Function " + f + "()", ok ? "ok" : "err", ok ? "Present" : "MISSING", ok ? "" : "Software file is damaged or an update removed it — reinstall Setup / disable last update");
+    });
+    add("Print area", document.getElementById("printArea") ? "ok" : "warn", document.getElementById("printArea") ? "Present" : "Not found", "");
+    try { localStorage.setItem("thDiagTest", "1"); localStorage.removeItem("thDiagTest"); add("Local storage", "ok", "Working", ""); }
+    catch (e) { add("Local storage", "err", "Blocked / full: " + e.message, "Free space or enable Unlimited Storage update"); }
+    var recent = rd().filter(function (x) { return x.type === "Error"; }).length;
+    add("Errors recorded so far", recent ? "warn" : "ok", recent + " error(s) in the log below", recent ? "Check the Error log section" : "");
+  }
+
+  async function pageTests(out, step) {
+    var pages = findPages();
+    for (var i = 0; i < pages.length; i++) {
+      var pg = pages[i], before = rd().length, t0 = performance.now(), status = "ok", msg = "Opened", fix = "";
+      step("Opening screen " + (i + 1) + " / " + pages.length + ": " + pg.label, i / pages.length);
+      try { go(pg.key); }
+      catch (e) { status = "err"; msg = "Crashed: " + e.message; fix = "This screen's code has an error — send this report"; }
+      await sleep(150);
+      var ms = Math.round(performance.now() - t0);
+      var newErr = rd().slice(before).filter(function (x) { return x.type === "Error" || x.type === "Console"; });
+      if (status === "ok" && newErr.length) { status = "err"; msg = "Error while opening: " + newErr[0].msg; fix = "Send this report"; }
+      if (status === "ok") {
+        var bad = badText(mainText());
+        if (bad.length) { status = "warn"; msg = "Opened but " + bad.join(", "); fix = "A field name does not match the data — send this report"; }
+        else if (ms > 3000) { status = "warn"; msg = "Opened slowly (" + (ms / 1000).toFixed(1) + " sec)"; fix = "Too much data on one screen or a slow update"; }
+        else msg = "Opened in " + ms + " ms";
+      }
+      out.push({ group: "Screens", area: pg.label + " [" + pg.key + "]", status: status, msg: msg, fix: fix });
+      if (status !== "err") { step("Checking boxes, dropdowns & buttons on: " + pg.label, (i + 0.5) / pages.length); try { await uiScan(pg, out); } catch (e) { out.push({ group: "Controls", area: pg.label, status: "warn", msg: "Could not scan: " + e.message, fix: "" }); } }
+    }
+    return pages.length;
+  }
+
+  /* ---------- deep check of every box, dropdown and button on a screen ---------- */
+  var KW = { "if": 1, "for": 1, "while": 1, "switch": 1, "return": 1, "function": 1, "typeof": 1, "new": 1, "catch": 1, "alert": 1, "confirm": 1, "prompt": 1,
+    "parseInt": 1, "parseFloat": 1, "Number": 1, "String": 1, "Boolean": 1, "Date": 1, "setTimeout": 1, "isNaN": 1, "Math": 1, "JSON": 1, "Object": 1, "Array": 1 };
+  var SEEN = {};
+  function vis(el) { return !!(el && (el.offsetParent !== null || el.getClientRects().length)); }
+  function lbl(el) {
+    var t = "";
+    if (el.id) { var l = document.querySelector('label[for="' + el.id + '"]'); if (l) t = l.textContent; }
+    if (!t && el.closest("label")) t = el.closest("label").textContent;
+    function okL(n) { return n && !/^(INPUT|SELECT|TEXTAREA|BUTTON)$/.test(n.tagName) && !n.querySelector("a,button,input,select,textarea,[onclick]") && (n.textContent || "").trim().length <= 40 ? n.textContent : ""; }
+    if (!t) t = okL(el.previousElementSibling);
+    if (!t && el.parentElement) t = okL(el.parentElement.previousElementSibling);
+    t = (t || el.placeholder || el.name || el.id || el.tagName.toLowerCase()).replace(/\s+/g, " ").trim();
+    return t.slice(0, 40);
+  }
+  function bname(b) { return ((b.textContent || b.value || b.title || b.id || "button").replace(/\s+/g, " ").trim()).slice(0, 40); }
+  function resolve(path) {
+    var parts = path.split(".");
+    if (parts[0] === "this" || parts[0] === "event") return "skip";
+    var o;
+    try { o = new Function("try{return " + parts[0] + "}catch(e){return undefined}")(); } catch (e) { return undefined; }
+    for (var i = 1; i < parts.length; i++) { if (o == null) return undefined; o = o[parts[i]]; }
+    return o;
+  }
+  function calls(code) {
+    var out = [], re = /(^|[^\w$.])([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\s*\(/g, m;
+    while ((m = re.exec(code))) { if (!KW[m[2].split(".")[0]]) out.push(m[2]); }
+    return out;
+  }
+  var SAFE = /^(search|find|filter|show|view|refresh|reload|next|prev|previous|load|preview|details|open|expand|collapse|today|this month|all|go|apply|›|‹|»|«)$/i;
+  var DANGER = /save|delete|remove|print|disch|logout|log out|backup|restore|import|export|download|upload|install|licen|reset|clear|pay|add|submit|send|close|lock|update|approve|post|generate|admit|cancel|new|edit|sign|transfer|refund/i;
+
+  async function uiScan(pg, out) {
+    var root = document.querySelector("main,#main,.main,#content,.content,#page,.page") || document.body;
+    var st = { inp: 0, typed: 0, sel: 0, btn: 0, clicked: 0 }, area = pg.label + " [" + pg.key + "]";
+    function prob(level, msg, fix) {
+      var k = level + msg;
+      if (SEEN[k]) return;
+      SEEN[k] = 1;
+      out.push({ group: "Controls", area: area, status: level, msg: msg, fix: fix || "" });
+    }
+    // duplicate IDs
+    var ids = {};
+    Array.prototype.forEach.call(root.querySelectorAll("[id]"), function (e) { ids[e.id] = (ids[e.id] || 0) + 1; });
+    Object.keys(ids).filter(function (k) { return ids[k] > 1; }).slice(0, 5).forEach(function (k) {
+      prob("warn", "Box ID “" + k + "” is used " + ids[k] + " times on this screen", "Save / search may read the wrong box");
+    });
+    // dropdowns
+    Array.prototype.forEach.call(root.querySelectorAll("select"), function (sl) {
+      if (!vis(sl)) return;
+      st.sel++;
+      var real = Array.prototype.filter.call(sl.options, function (o) { return o.value !== "" && !/^[\s\-—–]*(select|choose|--)/i.test(o.text); });
+      if (!sl.options.length || !real.length) prob("err", "Dropdown “" + lbl(sl) + "” is EMPTY (no options to choose)", "Add values in the related master / settings");
+      else if (real.length === 1 && !sl.multiple && !/user|login/i.test(lbl(sl))) prob("warn", "Dropdown “" + lbl(sl) + "” has only ONE option (" + real[0].text.trim().slice(0, 25) + ")", "Check if more options should be there (like ward Type)");
+    });
+    // typing test
+    var fields = Array.prototype.filter.call(root.querySelectorAll("input,textarea"), function (f) {
+      return vis(f) && !/^(hidden|file|checkbox|radio|button|submit|image|reset|color|range|password)$/i.test(f.type);
+    }).slice(0, 40);
+    for (var i = 0; i < fields.length; i++) {
+      var f = fields[i];
+      st.inp++;
+      if (f.disabled || f.readOnly) continue;
+      var old = f.value, ty = (f.type || "text").toLowerCase();
+      var test = ty === "number" ? "12" : ty === "date" ? "2026-01-01" : ty === "time" ? "10:30" : ty === "email" ? "test@test.in" : ty === "tel" ? "9999999999" : ty === "month" ? "2026-01" : ty === "datetime-local" ? "2026-01-01T10:30" : "Test";
+      var b4 = rd().length, crashed = false;
+      try { f.value = test; f.dispatchEvent(new Event("input", { bubbles: true })); }
+      catch (e) { crashed = true; prob("err", "Typing in “" + lbl(f) + "” crashed: " + e.message, "Send this report"); }
+      var ne = rd().slice(b4).filter(function (x) { return x.type === "Error" || x.type === "Console"; });
+      if (ne.length) prob("err", "Typing in “" + lbl(f) + "” gives error: " + ne[0].msg, "Send this report");
+      else if (!crashed && f.isConnected && f.value !== test) prob("warn", "Box “" + lbl(f) + "” does not accept typing (value not kept)", "Check box type / format");
+      else if (!crashed) st.typed++;
+      try { if (f.isConnected) { f.value = old; f.dispatchEvent(new Event("input", { bubbles: true })); } } catch (e) {}
+    }
+    // buttons: does the function they call exist? do the boxes they read exist?
+    var btns = Array.prototype.filter.call(root.querySelectorAll("button,[onclick],input[type=button],input[type=submit]"), vis);
+    btns.forEach(function (b) {
+      st.btn++;
+      var code = b.getAttribute("onclick") || "";
+      if (!code) return;
+      var name = bname(b), clean = code.replace(/'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"/g, "''");
+      calls(clean).forEach(function (fn) {
+        var r = resolve(fn);
+        if (r !== "skip" && typeof r !== "function") prob("err", "Button “" + name + "” calls " + fn + "() which does NOT exist — this button will not work", "Send this report");
+      });
+      var re = /(?:\bval|getElementById)\(\s*['"]([\w\-]+)['"]|\$\(\s*['"]#([\w\-]+)['"]/g, m;
+      while ((m = re.exec(code))) {
+        var id = m[1] || m[2];
+        if (!document.getElementById(id)) prob("warn", "Button “" + name + "” reads box “" + id + "” which is not on this screen", "Button may use an empty value");
+      }
+    });
+    // click test of SAFE buttons and tabs only (never Save / Delete / Print …)
+    var safe = btns.filter(function (b) {
+      var n = bname(b), code = b.getAttribute("onclick") || "";
+      var isTab = b.matches(".tab,[role=tab],.tabs *");
+      return (SAFE.test(n) || isTab) && !DANGER.test(n) && !/go\(|\.click\(\)|print/i.test(code) && b.type !== "file";
+    }).slice(0, 12);
+    for (var j = 0; j < safe.length; j++) {
+      var bt = safe[j], nm = bname(bt), b5 = rd().length;
+      if (!bt.isConnected) continue;
+      try { bt.click(); st.clicked++; } catch (e) { prob("err", "Button “" + nm + "” crashed: " + e.message, "Send this report"); }
+      await sleep(70);
+      var ne2 = rd().slice(b5).filter(function (x) { return x.type === "Error" || x.type === "Console"; });
+      if (ne2.length) prob("err", "Button “" + nm + "” gives error: " + ne2[0].msg, "Send this report");
+      if (curPage !== pg.key) { try { go(pg.key); } catch (e) {} await sleep(80); }
+    }
+    out.push({ group: "Controls", area: area, status: "ok", msg: st.typed + "/" + st.inp + " boxes typed OK, " + st.sel + " dropdowns, " + st.btn + " buttons checked, " + st.clicked + " safe buttons clicked", fix: "" });
+  }
+
+  function suggestions(rows) {
+    var S = [];
+    function sg(p, t) { S.push({ p: p, t: t }); }
+    var hdr = (document.body.innerText || "");
+    var errs = rows.filter(function (r) { return r.status === "err"; }).length;
+    if (errs) sg("High", "Fix the " + errs + " error(s) above first — click “Copy report” and send it to True Hope support / Claude.");
+    if (/Your Hospital Name/i.test(document.title + hdr)) sg("High", "Hospital name is still “Your Hospital Name”. Set the real name, address, phone, registration no. and logo in SETTING MENU → Hospital & Print Settings — it prints on every document.");
+    if (/Auto-backup\s*OFF/i.test(hdr)) sg("High", "Auto-backup is OFF. Turn it ON and keep the backup folder on D: drive or a pen drive — data loss is the biggest risk in offline software.");
+    var us = arr(db.users), weak = us.filter(function (u) { var p = String(u.p || u.pass || u.password || ""); return !p || p.length < 6 || /^(admin|master|1234|password)/i.test(p); }).length;
+    if (weak) sg("High", weak + " user(s) have a weak or default password. Change them in Users & Rights (8+ characters, letters + numbers) before handing over.");
+    if (us.length < 3) sg("Low", "Create separate logins for reception, nursing, billing, pharmacy, lab — so the audit trail shows who did what (NABH requirement).");
+    var pts = arr(db.patients), byU = {}, dup = 0;
+    pts.forEach(function (p) { var u = String(p.uhid || ""); if (u && byU[u]) dup++; byU[u] = 1; });
+    if (dup) sg("High", dup + " duplicate UHID(s) found — two patients with the same UHID can get each other’s reports. Correct them before printing.");
+    if (/Free trial/i.test(hdr)) sg("Medium", "Software is running on free trial — enter the license key before giving it to the client.");
+    var docs = arr(db.doctors), noReg = docs.filter(function (d) { return !d.reg; }).length, noQ = docs.filter(function (d) { return !d.qual; }).length;
+    if (!docs.length) sg("High", "No doctors added. Add doctors with qualification, department, registration no. and fees in Doctor / Department Master.");
+    else if (noReg || noQ) sg("Medium", (noReg ? noReg + " doctor(s) without registration no. " : "") + (noQ ? noQ + " without qualification. " : "") + "NABH and MJPJAY / PMJAY audits check these on prescriptions and discharge summaries.");
+    if (!arr(db.departments).length) sg("Low", "No departments added — add them so reports can be filtered department-wise.");
+    if (!arr(db.tariff).length) sg("Medium", "Tariff list is empty — add service rates (bed, OT, procedures, investigations) so IPD bills are correct and consistent.");
+    var noRate = arr(db.wards).filter(function (w) { return !(+w.rate > 0); }).length;
+    if (noRate) sg("Medium", noRate + " ward(s) without a daily rate — bed charges will be zero on bills.");
+    if (!arr(db.wards).some(function (w) { return /icu/i.test(String(w.type || w.name || "")); })) sg("Low", "No ICU ward found. If the hospital has ICU / NICU / HDU, add it in Ward & Bed Master with the correct type.");
+    if (pts.length >= 10) {
+      var noMob = pts.filter(function (p) { return !(p.mobile || p.phone || p.mob); }).length;
+      if (noMob / pts.length > 0.2) sg("Low", Math.round(noMob * 100 / pts.length) + "% patients have no mobile number — make mobile compulsory at registration (needed for follow-up and scheme claims).");
+    }
+    var slow = rows.filter(function (r) { return /slowly/.test(r.msg); }).length;
+    if (slow) sg("Medium", slow + " screen(s) open slowly — keep the Unlimited Storage update ON and archive old years’ data.");
+    var one = rows.filter(function (r) { return /only ONE option/.test(r.msg); }).length;
+    if (one) sg("Medium", one + " dropdown(s) have only one option — add the missing choices in the related master / settings.");
+    var slowBtn = rd().filter(function (x) { return x.type === "Slow"; }).length;
+    if (slowBtn) sg("Medium", slowBtn + " slow / frozen button event(s) in the log — see the Error log section for which button.");
+    var size = 0; try { size = JSON.stringify(db).length; } catch (e) {}
+    if (size > 3e6) sg("Medium", "Data is " + (size / 1048576).toFixed(1) + " MB — take a monthly backup copy to an external drive.");
+    sg("Low", "Run this health check once a week, and every time after installing a new update.");
+    var o = { High: 0, Medium: 1, Low: 2 };
+    return S.sort(function (a, b) { return o[a.p] - o[b.p]; });
+  }
+
+  async function printTests(out, step) {
+    var lastV = arr(db.visits).slice(-1)[0], lastA = arr(db.admissions).slice(-1)[0], lastB = arr(db.bills).slice(-1)[0];
+    var tests = [
+      ["printVisit", "OPD form", lastV && lastV.id, "an OPD visit"], ["printReceipt", "OPD receipt", lastV && lastV.id, "an OPD visit"],
+      ["printAdmission", "Admission record", lastA && lastA.id, "an admission"], ["printDischarge", "Discharge summary", lastA && lastA.id, "an admission"],
+      ["printBill", "IPD bill", lastA && lastA.id, "an admission"], ["printOBill", "OPD / other bill", lastB && lastB.id, "a bill"]
+    ];
+    var pa = document.getElementById("printArea");
+    for (var i = 0; i < tests.length; i++) {
+      var t = tests[i];
+      step("Test print (no paper): " + t[1], i / tests.length);
+      var pf = fnOf(t[0]);
+      if (!pf) { out.push({ group: "Prints", area: t[1], status: "warn", msg: t[0] + "() not found in this version", fix: "" }); continue; }
+      if (t[2] == null) { out.push({ group: "Prints", area: t[1], status: "info", msg: "Skipped — needs at least " + t[3] + " in the data", fix: "" }); continue; }
+      var before = rd().length, status = "ok", msg = "Printed correctly", fix = "";
+      if (pa) pa.innerHTML = "";
+      try { pf(t[2]); } catch (e) { status = "err"; msg = "Crashed: " + e.message; fix = "Print code error — send this report"; }
+      await sleep(120);
+      var newErr = rd().slice(before).filter(function (x) { return x.type === "Error" || x.type === "Console"; });
+      if (status === "ok" && newErr.length) { status = "err"; msg = "Error: " + newErr[0].msg; fix = "Send this report"; }
+      if (status === "ok" && pa) {
+        var txt = pa.innerText || pa.textContent || "";
+        if (txt.trim().length < 20) { status = "warn"; msg = "Print page came out empty"; fix = "Check template / Hospital & Print Settings"; }
+        else { var bad = badText(txt); if (bad.length) { status = "warn"; msg = "Prints but " + bad.join(", "); fix = "A placeholder / field is wrong in this format"; } }
+      }
+      out.push({ group: "Prints", area: t[1] + " (" + t[0] + ")", status: status, msg: msg, fix: fix });
+    }
+    if (pa) pa.innerHTML = "";
+  }
+
+  window.thDiagRun = async function (mode) {
+    var ov = document.createElement("div");
+    ov.className = "thdg-run";
+    ov.innerHTML = '🩺 Checking the software…<small>Please do not touch anything</small><div class="thdg-bar"><i></i></div><small class="thdg-st"></small>';
+    document.body.appendChild(ov);
+    function step(t, f) { ov.querySelector(".thdg-st").textContent = t; ov.querySelector(".thdg-bar i").style.width = Math.round((f || 0) * 100) + "%"; }
+
+    // protect data: nothing is saved, printed, audited or asked during the test
+    var snap = null;
+    try { snap = JSON.parse(JSON.stringify(db)); } catch (e) {}
+    SEEN = {};
+    var keep = { open: window.open, save: window.save, print: window.print, audit: window.audit, alert: window.alert, confirm: window.confirm, prompt: window.prompt, toast: window.toast };
+    window.open = function () { return null; }; window.save = function () {}; window.print = function () {}; window.audit = function () {};
+    window.alert = function (m) { log("Info", "Popup message during test: " + m); };
+    window.confirm = function () { return false; }; window.prompt = function () { return null; };
+    window.toast = function () {};
+    var startPage = curPage, out = [], t0 = performance.now(), nPages = 0;
+    try {
+      step("Checking core functions…", 0.02); coreChecks(out); await sleep(50);
+      step("Checking data…", 0.05); dataChecks(out); await sleep(50);
+      if (mode !== "quick") { nPages = await pageTests(out, step); await printTests(out, step); }
+    } catch (e) {
+      out.push({ group: "Core", area: "Health check", status: "err", msg: "Check stopped: " + e.message, fix: "" });
+    } finally {
+      for (var k in keep) window[k] = keep[k];
+      if (snap) { Object.keys(db).forEach(function (k) { if (!(k in snap)) delete db[k]; }); Object.keys(snap).forEach(function (k) { db[k] = snap[k]; }); }
+      ov.remove();
+    }
+    var sugg = [];
+    try { sugg = suggestions(out); } catch (e) {}
+    RES = window.__thDiagRes = { sugg: sugg, at: now(), secs: ((performance.now() - t0) / 1000).toFixed(1), pages: nPages, rows: out, mode: mode || "full" };
+    try { go("thDiag"); } catch (e) {}
+  };
+
+  /* ================= 4. REPORT SCREEN ================= */
+  function reportText() {
+    var r = RES, lines = ["TRUE HOPE DIGITAL SOLUTIONS — System Health Report", "Hospital: " + ((db.settings && (db.settings.hospitalName || db.settings.hospName || db.settings.hospital || db.settings.name)) || (document.title.split("—")[1] || "").trim()),
+      "Date: " + now(), "Software: " + document.title, ""];
+    if (r) {
+      lines.push("Test run: " + r.at + " (" + r.secs + " sec, " + r.pages + " screens)");
+      ["err", "warn"].forEach(function (s) {
+        r.rows.filter(function (x) { return x.status === s; }).forEach(function (x) { lines.push((s === "err" ? "[ERROR] " : "[WARNING] ") + x.group + " > " + x.area + " : " + x.msg + (x.fix ? "  => " + x.fix : "")); });
+      });
+      lines.push("OK items: " + r.rows.filter(function (x) { return x.status === "ok"; }).length);
+      if (r.sugg && r.sugg.length) { lines.push("", "SUGGESTIONS:"); r.sugg.forEach(function (x, i) { lines.push((i + 1) + ". [" + x.p + "] " + x.t); }); }
+    }
+    lines.push("", "Recent error log:");
+    rd().slice(-40).forEach(function (x) { lines.push(x.t + " | " + x.type + " | screen: " + (x.page || "-") + " | after clicking: " + (x.click || "-") + " | " + x.msg + (x.n ? " (x" + x.n + ")" : "") + (x.at ? " | " + x.at : "")); });
+    return lines.join("\n");
+  }
+
+  TH.addMenuItem("set", "thDiag", "System Health Check");
+  TH.page("thDiag", function () {
+    try { localStorage.setItem("thDiagSeen", String(rd().filter(function (x) { return x.type !== "Info"; }).length)); } catch (e) {}
+    setTimeout(badge, 50);
+    var h = '<div class="thdg-page"><h2>🩺 System Health Check</h2>' +
+      '<div class="card"><p style="margin-top:0">Finds which screen, print or data is not working. The test opens every screen, types in every box, checks every dropdown and button (clicks only safe ones like Search / View / tabs — never Save, Delete or Print), test-prints every document <b>without printing paper and without changing any data</b>.</p>' +
+      '<div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" type="button" onclick="thDiagRun(\'full\')">▶ Run full check (screens, boxes, dropdowns, buttons, prints)</button>' +
+      '<button class="btn sec" type="button" onclick="thDiagRun(\'quick\')">Quick check (data only)</button>' +
+      '<button class="btn sec" type="button" onclick="thDiag.copy()">📋 Copy report</button>' +
+      '<button class="btn sec" type="button" onclick="thDiag.download()">⬇ Download report</button></div>' +
+      '<label style="display:block;margin-top:8px;font-size:13px"><input type="checkbox" ' + (showFab() ? "checked" : "") + ' onchange="thDiag.fab(this.checked)"> Show 🩺 quick button on every screen (red number = new errors)</label></div>';
+
+    if (RES) {
+      var c = { ok: 0, warn: 0, err: 0, info: 0 };
+      RES.rows.forEach(function (x) { c[x.status] = (c[x.status] || 0) + 1; });
+      h += '<div class="thdg-sum"><div style="background:#b91c1c">Errors<span>' + c.err + '</span></div><div style="background:#b45309">Warnings<span>' + c.warn +
+        '</span></div><div style="background:#15803d">Working OK<span>' + c.ok + '</span></div><div style="background:#334155">Screens tested<span>' + RES.pages + "</span></div></div>" +
+        (RES.sugg && RES.sugg.length ? '<div class="card"><h3 style="margin-top:0">💡 Suggestions</h3><ol style="margin:0;padding-left:20px">' +
+          RES.sugg.map(function (x) { var c = x.p === "High" ? "#b91c1c" : x.p === "Medium" ? "#b45309" : "#475569"; return '<li style="margin-bottom:6px"><b style="color:' + c + '">[' + x.p + "]</b> " + E(x.t) + "</li>"; }).join("") + "</ol></div>" : "") +
+        '<div class="card"><h3 style="margin-top:0">Result — ' + E(RES.at) + " (" + RES.secs + " sec)</h3>" +
+        '<table class="table thdg-t"><tr><th>Status</th><th>Section</th><th>What</th><th>Result</th><th>How to fix</th></tr>' +
+        RES.rows.slice().sort(function (a, b) { var o = { err: 0, warn: 1, info: 2, ok: 3 }; return o[a.status] - o[b.status]; }).map(function (x) {
+          var s = x.status === "ok" ? '<span class="thdg-ok">✔ OK</span>' : x.status === "warn" ? '<span class="thdg-warn">⚠ Warning</span>' : x.status === "err" ? '<span class="thdg-err">✖ Error</span>' : "ℹ Info";
+          return "<tr><td>" + s + "</td><td>" + E(x.group) + "</td><td>" + E(x.area) + "</td><td>" + E(x.msg) + "</td><td>" + E(x.fix) + "</td></tr>";
+        }).join("") + "</table></div>";
+    }
+
+    var L = rd().slice().reverse();
+    h += '<div class="card"><div style="display:flex;align-items:center;gap:8px"><h3 style="margin:0;flex:1">Live error log (' + L.length + ")</h3>" +
+      '<button class="btn sm sec" type="button" onclick="thDiag.clear()">Clear log</button></div>' +
+      '<p style="font-size:12px;color:#64748b">Every error, freeze and slow button is recorded automatically while staff use the software — even if nobody runs the check.</p>';
+    if (!L.length) h += '<p class="thdg-ok">No errors recorded. 👍</p>';
+    else h += '<table class="table thdg-t"><tr><th>When</th><th>Type</th><th>Screen</th><th>After clicking</th><th>Message</th></tr>' +
+      L.slice(0, 100).map(function (x) {
+        var cl = x.type === "Error" ? "thdg-err" : x.type === "Slow" || x.type === "Console" ? "thdg-warn" : "";
+        return "<tr><td style='white-space:nowrap'>" + E(x.t) + '</td><td class="' + cl + '">' + E(x.type) + (x.n ? " ×" + x.n : "") + "</td><td>" + E(x.page) + "</td><td>" + E(x.click) +
+          "</td><td>" + E(x.msg) + (x.at ? '<div style="font-size:11px;color:#64748b">' + E(x.at) + "</div>" : "") + "</td></tr>";
+      }).join("") + "</table>";
+    return h + "</div></div>";
+  });
+
+  window.thDiag = {
+    copy: function () {
+      var t = reportText();
+      function fallback() { var a = document.createElement("textarea"); a.value = t; document.body.appendChild(a); a.select(); try { document.execCommand("copy"); } catch (e) {} a.remove(); }
+      try { navigator.clipboard.writeText(t).then(function () { toast("Report copied — paste it to True Hope support / Claude"); }, function () { fallback(); toast("Report copied"); }); }
+      catch (e) { fallback(); toast("Report copied"); }
+    },
+    download: function () {
+      var b = new Blob([reportText()], { type: "text/plain" }), a = document.createElement("a");
+      a.href = URL.createObjectURL(b);
+      a.download = "TrueHope_Health_Report_" + new Date().toISOString().slice(0, 10) + ".txt";
+      document.body.appendChild(a); a.click(); a.remove();
+    },
+    clear: function () { if (confirm("Clear the error log?")) { wr([]); try { localStorage.setItem("thDiagSeen", "0"); } catch (e) {} go("thDiag"); } },
+    fab: function (on) { try { localStorage.setItem("thDiagFab", on ? "1" : "0"); } catch (e) {} fab(); }
+  };
+})();
+/*TH-SIGN:a97e8122da6a134285e9f222f4bf9ede*/

@@ -1,0 +1,212 @@
+/*TRUEHOPE-UPDATE {"id":"unlimited-storage-idb","name":"Unlimited Storage (IndexedDB)","version":"1.3","date":"2026-11-19","description":"Moves all hospital data from the small 5 MB browser storage into Chrome's large IndexedDB database (hundreds of MB / GB). Adds a storage meter and early warning."} */
+
+if (typeof SERVER !== 'undefined' && SERVER) {   /* ---------- SERVER VERSION: data is on the main PC ---------- */
+  let st = null, stAt = 0;
+  const mbS = n => n >= 1073741824 ? (n / 1073741824).toFixed(1) + ' GB' : (n / 1048576).toFixed(2) + ' MB';
+  async function getStats() { try { st = await api('GET', '/api/stats'); } catch (e) { st = { error: 1 }; } stAt = Date.now(); }
+  TH.addMenuItem('set', 'storage', 'Storage & Data Size');
+  TH.page('storage', () => {
+    if (!st || Date.now() - stAt > 60000) getStats().then(() => { if (page === 'storage') go('storage'); });
+    const json = JSON.stringify(db).length; const sizeOf = k => JSON.stringify(db[k] || []).length;
+    const parts = [['Patients', 'patients', db.patients.length], ['OPD visits', 'visits', db.visits.length], ['IPD admissions (incl. charts)', 'admissions', db.admissions.length], ['Bills', 'bills', (db.bills || []).length], ['Forms & consents', 'templates', db.templates.length], ['Software updates', 'addons', (db.addons || []).length], ['Audit trail', 'audit', db.audit.length], ['Settings (logo, photos, lists)', 'settings', 1]];
+    const ok = st && !st.error; const pct = ok && st.diskTotal ? st.diskUsed * 100 / st.diskTotal : 0;
+    const perVisit = db.visits.length ? sizeOf('visits') / db.visits.length : 900, perAdm = db.admissions.length ? sizeOf('admissions') / db.admissions.length : 8000;
+    return `<h2>💾 Storage &amp; Data Size <span class="muted" style="font-size:14px">(Server version — all PCs share this data)</span></h2>
+    <div class="stats"><div class="stat"><div class="n">${mbS(json)}</div><div class="l">Hospital data size</div></div>
+     <div class="stat"><div class="n">${ok ? mbS(st.diskFree) : '…'}</div><div class="l">Free space on main PC disk</div></div>
+     <div class="stat"><div class="n">${ok ? st.backups : '…'}</div><div class="l">Backup files${ok ? ' (' + mbS(st.backupBytes) + ')' : ''}</div></div>
+     <div class="stat"><div class="n" style="font-size:16px">${ok ? (st.lastBackup || '—') : '…'}</div><div class="l">Last server backup</div></div></div>
+    ${ok ? `<div class="card"><h3 style="margin-top:0">Main PC disk (${mbS(st.diskTotal)})</h3>
+      <div style="background:var(--bd);border-radius:8px;height:22px;overflow:hidden"><div style="height:100%;width:${Math.max(1, pct).toFixed(1)}%;background:${pct >= 90 ? '#c0392b' : pct >= 75 ? '#e67e22' : 'var(--g)'}"></div></div>
+      <p style="margin-top:8px">Disk used <b>${pct.toFixed(1)}%</b> — free <b>${mbS(st.diskFree)}</b>. Room for about <b>${Math.floor(st.diskFree * 0.5 / perVisit).toLocaleString('en-IN')}</b> more OPD visits or <b>${Math.floor(st.diskFree * 0.5 / perAdm).toLocaleString('en-IN')}</b> more IPD admissions (keeping half the disk free for backups).</p>
+      <p class="muted" style="font-size:12px;margin:0">Data folder: ${esc(st.folder)}<br>Backup folder: ${esc(st.backupFolder)}</p></div>`
+     : st && st.error ? `<div class="warn">Disk details need the latest <b>th_server.py</b> on the main PC (replace the file in the TrueHopeServer folder and restart the server). Data size below is still correct.</div><br>` : '<p class="muted">Loading server details…</p>'}
+    <h3>What is using space</h3><table><tr><th>Data</th><th>Records</th><th>Size</th></tr>${parts.map(([l, k, n]) => `<tr><td>${l}</td><td>${n.toLocaleString('en-IN')}</td><td>${mbS(sizeOf(k))}</td></tr>`).join('')}<tr><th>Total</th><th></th><th>${mbS(json)}</th></tr></table>
+    <div class="row" style="margin-top:12px"><button class="btn" onclick="srvBackupNow().then(()=>{st=null;go('storage')})">Take server backup now</button><button class="btn sec" onclick="st=null;go('storage')">Refresh</button></div>
+    <div class="warn" style="margin-top:12px">In the server version there is no browser limit — data is saved on the main PC disk. Copy the <b>backups</b> folder to a pen drive / Google Drive every week.</div>`;
+  });
+  function topMeterS() { const sub = document.querySelector('header .brand .sub'); if (!sub || !cur) return; let m = document.getElementById('stMeter');
+    if (!m) { m = document.createElement('span'); m.id = 'stMeter'; m.style.cursor = 'pointer'; m.title = 'Data size — click for details'; m.onclick = () => go('storage'); sub.appendChild(m); }
+    const pct = st && !st.error && st.diskTotal ? st.diskUsed * 100 / st.diskTotal : null;
+    m.innerHTML = ` • 💾 Data <b style="color:#c8f7dc">${mbS(JSON.stringify(db).length)}</b>${pct !== null ? ' • Disk ' + pct.toFixed(0) + '%' : ''}`;
+    if (pct !== null && pct >= 90 && !window._dkWarn) { window._dkWarn = 1; setTimeout(() => alert('⚠ Main PC disk is ' + pct.toFixed(0) + '% full. Free some space and copy old backups to a pen drive.'), 500); } }
+  TH.after('hdr', () => { try { topMeterS(); } catch (e) { } });
+  getStats().then(() => { try { topMeterS(); } catch (e) { } });
+  setInterval(() => { if (cur) getStats().then(() => { try { topMeterS(); } catch (e) { } }); }, 300000);
+  return;
+}
+
+const MARK = 'th_store', MY_ID = 'unlimited-storage-idb';
+let mode = localStorage.getItem(MARK) === 'idb' ? 'idb' : 'ls';
+let ready = mode !== 'idb';
+let lastStub = '', warned = false;
+const origSave = window.save;
+
+/* ---------- small IndexedDB helper ---------- */
+const XDB = {
+  open() { return new Promise((res, rej) => { const r = indexedDB.open('truehope_data', 1); r.onupgradeneeded = () => r.result.createObjectStore('kv'); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); }); },
+  async get(k) { const d = await this.open(); return new Promise((res, rej) => { const q = d.transaction('kv').objectStore('kv').get(k); q.onsuccess = () => res(q.result); q.onerror = () => rej(q.error); }); },
+  async put(k, v) { const d = await this.open(); return new Promise((res, rej) => { const t = d.transaction('kv', 'readwrite'); t.objectStore('kv').put(v, k); t.oncomplete = () => res(true); t.onerror = () => rej(t.error); t.onabort = () => rej(t.error || new Error('aborted')); }); }
+};
+let xdbConn = null;
+function putNow(v) {   // store.put() copies the data immediately, so the save is captured at this moment
+  const go_ = d => new Promise((res, rej) => { try { const t = d.transaction('kv', 'readwrite'); t.objectStore('kv').put(v, 'db'); t.oncomplete = () => res(true); t.onerror = () => rej(t.error); t.onabort = () => rej(t.error || new Error('aborted')); } catch (e) { rej(e); } });
+  if (xdbConn) return go_(xdbConn);
+  return XDB.open().then(d => { xdbConn = d; return go_(d); });
+}
+
+/* ---------- small "pointer" kept in old storage (so updates & login screen load) ---------- */
+function stubJSON() { return JSON.stringify({ _idbStub: true, _sv: db._sv || 0, settings: db.settings, users: db.users, addons: db.addons, deletedAddons: db.deletedAddons || [], appVersion: db.appVersion }); }
+function writeStub() { const s = stubJSON(); if (s === lastStub) return; try { localStorage.setItem(KEY, s); lastStub = s; } catch (e) { /* stub too big — ignore, data is safe in IndexedDB */ } }
+
+/* ---------- loading overlay ---------- */
+function overlay(msg) { let o = document.getElementById('idbOv'); if (!msg) { if (o) o.remove(); return; }
+  if (!o) { o = document.createElement('div'); o.id = 'idbOv'; o.style.cssText = 'position:fixed;inset:0;z-index:99;background:rgba(255,255,255,.96);display:flex;align-items:center;justify-content:center;flex-direction:column;font-size:16px;color:#1f2a33'; document.body.appendChild(o); }
+  o.innerHTML = `<div style="font-size:34px">⏳</div><div style="margin-top:10px;font-weight:600">${msg}</div><div style="font-size:12px;color:#6b7780;margin-top:6px">Please wait — do not close the software.</div>`; }
+
+/* ---------- new save ---------- */
+window.save = function (keep) {
+  if (mode !== 'idb') return origSave(keep);
+  if (!ready) return;              // never write before real data is loaded
+  db._sv = Date.now();
+  putNow(db).catch(e => { if (!warned) { warned = true; alert('⚠ Could not save to storage: ' + (e && e.message) + '\nPlease take a backup now (SETTING MENU → Backup).'); } });
+  writeStub();
+  if (!keep) { try { if (DRAFT_PAGES.includes(page)) clearDraft(); } catch (e) { } }
+};
+
+/* ---------- after real data is loaded ---------- */
+function afterLoad(real) {
+  const ph = db;                                         // placeholder made at start-up
+  load(real);                                            // normal start-up checks on real data
+  if (ph && ph.settings) Object.keys(ph.settings).forEach(k => { if (db.settings[k] === undefined) db.settings[k] = ph.settings[k]; });
+  if (ph) Object.keys(ph).forEach(k => { if (db[k] === undefined && k !== '_idbStub') db[k] = ph[k]; });
+  delete db._idbStub;
+  /* v1.3: the quick copy (stub) is written instantly; the big database a moment later. If the software reloaded
+     before the big database finished (e.g. right after installing an update), the stub is newer — keep its
+     update list, settings and users so nothing installed or changed is lost. */
+  let fixed = 0;
+  if (ph && ph._idbStub && (ph._sv || 0) >= (real._sv || 0)) {
+    if (Array.isArray(ph.addons)) { const before = JSON.stringify((db.addons || []).map(a => a.id + a.version + a.enabled)); db.addons = ph.addons; if (JSON.stringify(db.addons.map(a => a.id + a.version + a.enabled)) !== before) fixed++; }
+    if (Array.isArray(ph.deletedAddons)) db.deletedAddons = ph.deletedAddons;
+    if (ph.settings) db.settings = { ...db.settings, ...ph.settings };
+    if (Array.isArray(ph.users) && ph.users.length) db.users = ph.users;
+    if (ph.appVersion && ph.appVersion > (db.appVersion || 0)) db.appVersion = ph.appVersion;
+  }
+  let merged = 0;
+  if (ph) {   // keep forms / charges / medicines that updates added while data was loading
+    const del = new Set(db.deletedTpl || []);
+    (ph.templates || []).forEach(t => { if (t && t.id && !del.has(t.id) && !db.templates.some(x => x.id === t.id)) { db.templates.push(t); merged++; } });
+    (ph.tariff || []).forEach(t => { if (t && t.name && !(db.tariff || []).some(x => x.name === t.name)) { (db.tariff = db.tariff || []).push(t); merged++; } });
+    (ph.meds || []).forEach(m => { if (m && m.name && !(db.meds || []).some(x => x.name.toLowerCase() === m.name.toLowerCase())) { (db.meds = db.meds || []).push(m); merged++; } });
+  }
+  try { migrateUsers(); } catch (e) { }
+  ready = true; overlay('');
+  if (merged || fixed) { db._sv = Date.now(); putNow(db).catch(() => { }); }
+  if (typeof applyUI === 'function') try { applyUI(); } catch (e) { }
+  if (typeof init_theme === 'function') init_theme();
+  if (typeof cur !== 'undefined' && cur) { const me = db.users.find(u => u.u === cur.u); if (me) cur = me; try { go(page, ctx); } catch (e) { } }
+  else try { loginBrand(); } catch (e) { }
+  writeStub();
+}
+
+async function startIDB() {
+  overlay('Loading hospital data…');
+  let stub = null; try { stub = JSON.parse(localStorage.getItem(KEY)); } catch (e) { }
+  try {
+    if (stub && !stub._idbStub && Array.isArray(stub.patients)) {   // full data found in old storage (e.g. after Restore) → it is newer
+      const d = clone(stub); await XDB.put('db', d); afterLoad(d); toast('Restored data moved to large storage'); return;
+    }
+    const real = await XDB.get('db');
+    if (real && Array.isArray(real.patients)) { afterLoad(real); return; }
+    overlay(''); ready = true;
+    alert('⚠ Hospital data was not found in the large storage on this computer.\n(This happens if Chrome data was cleared.)\n\nPlease go to SETTING MENU → Backup → Restore and choose your latest backup file.');
+  } catch (e) { overlay(''); ready = true; alert('⚠ Could not open large storage: ' + e.message + '\nPlease restore from your latest backup.'); }
+}
+
+async function migrate() {
+  if (!window.indexedDB) return;
+  overlay('Upgrading storage — moving your data to the large database (one time)…');
+  try {
+    // 1. safety copy
+    const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([JSON.stringify(db)], { type: 'application/json' }));
+    a.download = 'TrueHope_Backup_Before_Storage_Upgrade_' + today() + '.json'; document.body.appendChild(a); a.click(); setTimeout(() => a.remove(), 3000);
+    // 2. copy and verify
+    const snap = clone(db); await XDB.put('db', snap);
+    const back = await XDB.get('db');
+    if (!back || JSON.stringify(back).length !== JSON.stringify(snap).length) throw new Error('verification failed');
+    // 3. switch
+    localStorage.setItem(MARK, 'idb'); mode = 'idb'; ready = true; lastStub = ''; writeStub();
+    try { if (navigator.storage && navigator.storage.persist) await navigator.storage.persist(); } catch (e) { }
+    overlay('');
+    audit('Storage upgraded', 'Moved to IndexedDB (' + (JSON.stringify(snap).length / 1048576).toFixed(2) + ' MB)'); save(true);
+    setTimeout(() => alert('✓ Storage upgraded!\n\nAll your data (' + db.patients.length + ' patients, ' + db.visits.length + ' OPD visits, ' + db.admissions.length + ' admissions) is now in the large database.\nA safety backup file was also saved in your Downloads folder.\n\nSee SETTING MENU → Storage & Data Size.'), 300);
+  } catch (e) { overlay(''); mode = 'ls'; ready = true; alert('Storage upgrade could not be completed (' + e.message + ').\nYour data is unchanged and safe. Please contact support.'); }
+}
+
+if (mode === 'idb') startIDB(); else setTimeout(migrate, 300);
+
+/* ---------- Restore from backup (works with any size) ---------- */
+window.restore = function () {
+  const f = $('#rf') && $('#rf').files[0]; if (!f) { alert('Choose backup file'); return; }
+  if (!confirm('Replace ALL current data with this backup?')) return;
+  const r = new FileReader();
+  r.onload = async () => {
+    let d; try { d = JSON.parse(r.result); if (!d.patients || !d.visits) throw 0; } catch (e) { alert('Invalid backup file'); return; }
+    if (mode !== 'idb') { try { localStorage.setItem(KEY, JSON.stringify(d)); } catch (e) { alert('Backup is too big for old storage. It will be moved to large storage now.'); localStorage.setItem(MARK, 'idb'); } }
+    else { try { delete d._idbStub; await XDB.put('db', d); localStorage.setItem(KEY, JSON.stringify({ _idbStub: true, settings: d.settings, users: d.users, addons: d.addons, appVersion: d.appVersion })); } catch (e) { alert('Restore failed: ' + e.message); return; } }
+    if (localStorage.getItem(MARK) === 'idb' && mode !== 'idb') { await XDB.put('db', d); }
+    alert('Restore complete. The software will reload.'); sessionStorage.removeItem('opd_user'); location.reload();
+  };
+  r.readAsText(f);
+};
+
+/* ---------- protect against switching this update off ---------- */
+['toggleAddon', 'removeAddon'].forEach(fn => TH.wrap(fn, orig => function (id) {
+  if (id === MY_ID && mode === 'idb') {
+    const json = JSON.stringify(db);
+    if (!confirm('This will move your data back to the small 5 MB storage (' + (json.length / 1048576).toFixed(2) + ' MB). Continue?')) return;
+    try { localStorage.setItem(KEY, json); } catch (e) { alert('Your data is too big for the small storage — this update cannot be switched off.\nIt keeps your data safe in the large database.'); return; }
+    localStorage.removeItem(MARK);
+  }
+  return orig.apply(this, arguments);
+}));
+
+/* ---------- storage meter ---------- */
+TH.addMenuItem('set', 'storage', 'Storage & Data Size');
+let est = null;
+async function refreshEst() { const e0 = { quota: 0, usage: 0, persisted: false }; try { const e = navigator.storage && navigator.storage.estimate ? await navigator.storage.estimate() : null; est = e ? { quota: e.quota || 0, usage: e.usage || 0, persisted: false } : e0; try { est.persisted = navigator.storage.persisted ? await navigator.storage.persisted() : false; } catch (x) { } } catch (e) { est = e0; } }
+const mb = n => (n / 1048576).toFixed(2) + ' MB';
+TH.page('storage', () => {
+  if (!est) { refreshEst().then(() => { if (page === 'storage') go('storage'); }); }
+  const json = JSON.stringify(db).length, quota = est ? est.quota : 0, used = est ? est.usage : json;
+  const pct = mode === 'idb' ? (quota ? used * 100 / quota : 0) : json * 100 / (5 * 1048576);
+  const sizeOf = k => JSON.stringify(db[k] || []).length;
+  const parts = [['Patients', 'patients', db.patients.length], ['OPD visits', 'visits', db.visits.length], ['IPD admissions (incl. charts)', 'admissions', db.admissions.length], ['Bills', 'bills', (db.bills || []).length], ['Forms & consents', 'templates', db.templates.length], ['Software updates', 'addons', (db.addons || []).length], ['Audit trail', 'audit', db.audit.length], ['Settings (logo, photos, lists)', 'settings', 1]];
+  const perVisit = db.visits.length ? sizeOf('visits') / db.visits.length : 900, perAdm = db.admissions.length ? sizeOf('admissions') / db.admissions.length : 8000;
+  const room = (mode === 'idb' ? quota - used : 5 * 1048576 - json);
+  if (pct >= 80) setTimeout(() => toast('⚠ Storage above 80% — take a backup'), 300);
+  return `<h2>💾 Storage &amp; Data Size</h2>
+  <div class="card"><h3 style="margin-top:0">${mode === 'idb' ? '✓ Large storage (IndexedDB) is ON' : '⚠ Old small storage (5 MB)'}</h3>
+   <div style="background:var(--bd);border-radius:8px;height:22px;overflow:hidden"><div style="height:100%;width:${Math.min(100, Math.max(1, pct)).toFixed(1)}%;background:${pct >= 80 ? '#c0392b' : pct >= 60 ? '#e67e22' : 'var(--g)'}"></div></div>
+   <p style="margin-top:8px">Used <b>${mb(mode === 'idb' ? used : json)}</b> of <b>${mode === 'idb' ? (quota ? (quota / 1073741824).toFixed(1) + ' GB' : 'large') : '5 MB'}</b> — <b>${pct.toFixed(pct < 1 ? 3 : 1)}%</b></p>
+   <p class="muted" style="margin:0">Room left for about <b>${Math.max(0, Math.floor(room / perVisit)).toLocaleString('en-IN')}</b> more OPD visits or <b>${Math.max(0, Math.floor(room / perAdm)).toLocaleString('en-IN')}</b> more IPD admissions (based on your current average record size).</p>
+   ${mode === 'idb' ? `<p class="muted" style="font-size:12px;margin-bottom:0">Protected from automatic clearing by Chrome: <b>${est && est.persisted ? 'Yes ✓' : 'Not confirmed'}</b>${est && !est.persisted ? ' <button class="btn sm sec" onclick="navigator.storage.persist().then(r=>{toast(r?\'Protected ✓\':\'Chrome did not confirm — keep taking backups\');est=null;go(\'storage\')})">Request protection</button>' : ''}</p>` : `<br><button class="btn" onclick="location.reload()">Upgrade to large storage now</button>`}</div>
+  <h3>What is using space</h3><table><tr><th>Data</th><th>Records</th><th>Size</th></tr>${parts.map(([l, k, n]) => `<tr><td>${l}</td><td>${n.toLocaleString('en-IN')}</td><td>${mb(sizeOf(k))}</td></tr>`).join('')}<tr><th>Total</th><th></th><th>${mb(json)}</th></tr></table>
+  <div class="warn" style="margin-top:12px">Even with large storage, data lives inside Chrome on this computer. <b>Never clear Chrome "Cookies and site data"</b>, and keep the hourly auto-backup ON (SETTING MENU → Backup).</div>`;
+});
+
+/* ---------- small storage meter in the top bar ---------- */
+function topMeter() {
+  const sub = document.querySelector('header .brand .sub'); if (!sub || (typeof cur !== 'undefined' && !cur)) return;
+  let m = document.getElementById('stMeter');
+  if (!m) { m = document.createElement('span'); m.id = 'stMeter'; m.style.cssText = 'cursor:pointer;margin-left:2px'; m.title = 'Storage used — click for details'; m.onclick = () => go('storage'); sub.appendChild(m); }
+  const json = JSON.stringify(db).length;
+  const pct = mode === 'idb' ? (est && est.quota ? est.usage * 100 / est.quota : 0) : json * 100 / (5 * 1048576);
+  const col = pct >= 80 ? '#ffb3a7' : pct >= 60 ? '#ffd27a' : '#c8f7dc';
+  m.innerHTML = ` • 💾 Storage <b style="color:${col}">${pct < 1 ? pct.toFixed(2) : pct.toFixed(0)}%</b> <span style="display:inline-block;width:46px;height:7px;background:rgba(255,255,255,.3);border-radius:4px;vertical-align:middle;overflow:hidden"><span style="display:block;height:100%;width:${Math.min(100, Math.max(2, pct))}%;background:${col}"></span></span>`;
+  if (pct >= 80 && !window._stWarn) { window._stWarn = 1; setTimeout(() => alert('⚠ Storage is ' + pct.toFixed(0) + '% full. Please take a backup and contact support.'), 500); }
+}
+TH.after('hdr', () => { try { topMeter(); } catch (e) { } });
+refreshEst().then(() => { try { topMeter(); } catch (e) { } });
+setInterval(() => refreshEst().then(() => { try { topMeter(); } catch (e) { } }), 300000);
+/*TH-SIGN:0c4c7b9c0587e57ca93245f47e559c11*/

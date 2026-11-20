@@ -1,0 +1,497 @@
+/*TRUEHOPE-UPDATE {"id":"th-print-preview-20261120","name":"Print Preview","version":"2.1","date":"2026-11-20","description":"v2.1: page 2 keeps the header space blank by default (no hospital name repeated). v2.0: a section that does not fit continues in the SAME box on the next page (no repeated heading, no cut lines); page 2 starts below the hospital header (repeat header / blank space for letterhead / none). v1.9: no blank space at the page end — if the next section does not fit, the empty spacing inside the boxes on that page is tightened a little (font size unchanged) so its heading and first lines fit; the rest continues (contd.). v1.8: also splits sections whose lines are plain text lines (no <br>). v1.7: long sections split line-by-line at the page end (rest continues on the next page with (contd.) heading) so page 1 is filled; small blocks like doctor sign stay whole. v1.6: page break keeps every box closed (no empty box at the bottom of page 1, full top line on page 2). v1.5: clean page breaks (a section that would be cut moves whole to the next page) and One-page-at-a-time printing (waits for OK before the next page). v1.4: runs print hooks (NABH capital drug names / high-alert red). Preview now matches the printed page exactly (same margins), always fits the print on ONE page by default (shrinks to fit), shows page count and where page 2 would start. Print preview with printer list, copies and Direct Print (no Windows print dialog - fixes 0x8000ffff on old printer drivers)."} */
+(function () {
+  if (window.__thPrintPreview) return;
+  window.__thPrintPreview = true;
+
+  var nativePrint = window.print.bind(window);
+
+  TH.css([
+    ".thpp-ov{position:fixed;inset:0;z-index:2147483000;background:#525659;display:flex;flex-direction:column;font-family:'Segoe UI',Arial,sans-serif}",
+    ".thpp-bar{display:flex;align-items:center;gap:10px;padding:8px 14px;background:#1e293b;color:#fff;box-shadow:0 2px 8px rgba(0,0,0,.3);flex-wrap:wrap}",
+    ".thpp-bar b{font-size:15px;margin-right:auto;letter-spacing:.3px}",
+    ".thpp-bar select,.thpp-bar button{height:32px;border-radius:7px;border:1px solid #475569;background:#334155;color:#fff;padding:0 10px;font-size:13px;cursor:pointer}",
+    ".thpp-bar button.thpp-print{background:#16a34a;border-color:#16a34a;font-weight:700;padding:0 18px}",
+    ".thpp-bar button.thpp-close{background:#b91c1c;border-color:#b91c1c}",
+    ".thpp-bar .thpp-zoom{min-width:52px;text-align:center;font-size:13px}",
+    ".thpp-body{flex:1;overflow:auto;padding:24px 0;display:flex;justify-content:center;align-items:flex-start}",
+    ".thpp-page{background:#fff;box-shadow:0 4px 24px rgba(0,0,0,.5);transform-origin:top center;position:relative;box-sizing:border-box}",
+    ".thpp-brk{position:absolute;left:0;right:0;border-top:2px dashed #dc2626;pointer-events:none}",
+    ".thpp-brk span{position:absolute;right:6px;top:-20px;background:#dc2626;color:#fff;font-size:11px;padding:1px 8px;border-radius:10px}",
+    ".thpp-bar{flex-wrap:nowrap !important;overflow-x:auto}",
+    ".thpp-bar .thpp-pages{font-size:12px;padding:3px 9px;border-radius:12px;background:#16a34a;color:#fff;white-space:nowrap}",
+    ".thpp-bar .thpp-pages.two{background:#dc2626}",
+    ".thpp-sp{display:block}",
+    ".thpp-wait{position:fixed;inset:0;z-index:2147483600;background:rgba(15,23,42,.6);display:flex;align-items:center;justify-content:center}",
+    ".thpp-wait div{background:#fff;border-radius:16px;padding:22px 26px;max-width:420px;text-align:center;box-shadow:0 20px 60px rgba(0,0,0,.4);font-family:inherit}",
+    ".thpp-wait h3{margin:0 0 6px;color:#0b2545}.thpp-wait p{margin:0 0 16px;color:#334155;font-size:14px}",
+    ".thpp-wait button{height:42px;border-radius:10px;padding:0 20px;font-weight:700;font-size:15px;cursor:pointer;margin:0 5px;border:1px solid #cbd5e1;background:#fff}",
+    ".thpp-wait button.go{background:#16a34a;border-color:#16a34a;color:#fff}",
+    ".thpp-page iframe{border:0;display:block;width:100%;background:#fff}",
+    ".thpp-bar select,.thpp-bar input,.thpp-bar button{width:auto !important;flex:0 0 auto !important;margin:0 !important}",
+    ".thpp-bar select.thpp-prn{max-width:190px !important}",
+    ".thpp-bar span{color:#cbd5e1;font-size:13px}",
+    ".thpp-bar input.thpp-cp{width:52px;height:32px;border-radius:7px;border:1px solid #475569;background:#334155;color:#fff;text-align:center;font-size:13px}",
+    ".thpp-bar button.thpp-win{background:#475569}",
+    ".thpp-msg{font-size:12px;color:#fde68a;min-width:120px}"
+  ].join(""));
+
+  var DIRECT = !!(window.thDesktop && typeof window.thDesktop.directPrint === "function");
+  var LS_PRN = "thPrintPrinter";
+  function lsGet(k) { try { return localStorage.getItem(k) || ""; } catch (e) { return ""; } }
+  function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
+
+  var SIZES = { A4: [210, 297], A5: [148, 210], Letter: [216, 279], Legal: [216, 356] };
+  function mm(n) { return Math.round(n * 96 / 25.4); }
+
+  function collectStyles() {
+    var out = "";
+    var nodes = document.querySelectorAll("style,link[rel=stylesheet]");
+    for (var i = 0; i < nodes.length; i++) {
+      var n = nodes[i];
+      if (n.tagName === "STYLE") {
+        // make print-only rules visible in the preview
+        out += "<style>" + n.textContent.replace(/@media\s+print/gi, "@media all") + "</style>";
+      } else out += n.outerHTML;
+    }
+    return out;
+  }
+
+  function preview(contentHTML, bodyClass) {
+    var old = document.querySelector(".thpp-ov");
+    if (old) old.parentNode.removeChild(old);
+
+    var ov = document.createElement("div");
+    ov.className = "thpp-ov";
+    ov.innerHTML =
+      '<div class="thpp-bar"><b>🖨 Print Preview</b>' +
+      '<select class="thpp-size" title="Paper size"><option value="">Paper: as designed</option><option>A4</option><option>A5</option><option>Letter</option><option>Legal</option></select>' +
+      '<select class="thpp-ori" title="Orientation"><option value="portrait">Portrait</option><option value="landscape">Landscape</option></select>' +
+      '<select class="thpp-fit" title="Fit"><option value="one">Fit to 1 page</option><option value="auto">Auto-fit (small overflow)</option><option value="off">Actual size</option></select>' +
+      '<select class="thpp-head" title="Top of page 2, 3 …"><option value="space">Page 2: blank space (no name)</option><option value="repeat">Page 2: hospital header</option><option value="none">Page 2: no header</option></select>' +
+      '<span class="thpp-pages">1 page</span>' +
+      '<label class="thpp-pbp" title="Print page 1, wait, then click OK for page 2" style="display:none;align-items:center;gap:5px;font-size:12.5px;color:#e2e8f0;white-space:nowrap"><input type="checkbox" class="thpp-one" style="width:auto !important;margin:0"> One page at a time (front / back)</label>' +
+      '<button type="button" class="thpp-zm">−</button><span class="thpp-zoom">100%</span><button type="button" class="thpp-zp">+</button>' +
+      (DIRECT ? '<select class="thpp-prn" title="Printer"><option value="">Loading printers…</option></select>' +
+        '<span>Copies</span><input class="thpp-cp" type="number" min="1" max="20" value="1">' : '') +
+      '<button type="button" class="thpp-print">Print (Ctrl+P)</button>' +
+      (DIRECT ? '<button type="button" class="thpp-win" title="Old way: Windows print window">Windows dialog</button><span class="thpp-msg"></span>' : '') +
+      '<button type="button" class="thpp-close">Close (Esc)</button></div>' +
+      '<div class="thpp-body"><div class="thpp-page"><iframe></iframe></div></div>';
+    document.body.appendChild(ov);
+
+    var frame = ov.querySelector("iframe"), page = ov.querySelector(".thpp-page");
+    var selSize = ov.querySelector(".thpp-size"), selOri = ov.querySelector(".thpp-ori");
+    var zoom = 1, lastDoc = "";
+
+    var MARGIN = 8;                                   // mm — same in preview and on paper
+    var selFit = ov.querySelector(".thpp-fit"), selHead = ov.querySelector(".thpp-head");
+    try { selHead.value = localStorage.getItem("thPage2Head2") || "space"; } catch (e) {}
+    try { var oneBox = ov.querySelector(".thpp-one"); if (oneBox) oneBox.checked = localStorage.getItem("thPrintOneByOne") === "1"; } catch (e) {}
+    try { selFit.value = localStorage.getItem("thPrintFit") || "one"; } catch (e) {}
+    var scale = 1, measuring = true;
+    function dims() {
+      var s = SIZES[selSize.value || "A4"], land = selOri.value === "landscape";
+      return { w: land ? s[1] : s[0], h: land ? s[0] : s[1] };
+    }
+    function pageCSS() {
+      var s = selSize.value;
+      return "@page{" + (s ? "size:" + s + " " + selOri.value + ";" : "") + "margin:" + MARGIN + "mm}";
+    }
+    function render() {
+      var d = dims();
+      page.style.width = mm(d.w) + "px";
+      page.style.padding = mm(MARGIN) + "px";
+      frame.srcdoc = lastDoc = "<!DOCTYPE html><html><head><meta charset='utf-8'>" + collectStyles() +
+        "<style>html,body{margin:0 !important;background:#fff}body{padding:0 !important;box-sizing:border-box}#printArea{display:block !important;visibility:visible !important;position:static !important;margin:0 !important}" +
+        pageCSS() + (scale < 1 ? "body{zoom:" + scale + "}" : "") + "</style></head><body class='" + (bodyClass || "") + "'>" + contentHTML + "</body></html>";
+    }
+    function contentH() { var d = frame.contentDocument; return Math.ceil(d.documentElement.getBoundingClientRect().height); }
+    function rerender() { scale = 1; measuring = true; broke = false; render(); }
+    var broke = false, PAGES = 1, AREA = 0;
+    /* move a section that would be cut at the page end to the next page (same in preview and on paper) */
+
+    /* split a long text section line by line: lines that fit stay on this page, the rest continue on the next page */
+    function splitSection(d, hit, bnd, info) {
+      info = info || {};
+      var sy = d.documentElement.scrollTop;
+      var hs = d.defaultView.getComputedStyle(hit.tagName === "TR" && hit.cells[0] ? hit.cells[0] : hit);
+      var reserve = (parseFloat(hs.paddingBottom) || 0) + (parseFloat(hs.borderBottomWidth) || 0) + 3;
+      // lines typed in a box (text with line breaks shown as separate lines): turn each break into <br> so they can be split
+      [hit].concat(Array.prototype.slice.call(hit.querySelectorAll("div, td, p, span, pre"))).forEach(function (b) {
+        var ws = d.defaultView.getComputedStyle(b).whiteSpace;
+        if (!/pre/.test(ws)) return;
+        Array.prototype.slice.call(b.childNodes).forEach(function (n) {
+          if (n.nodeType !== 3 || n.nodeValue.indexOf("\n") < 0) return;
+          var parts = n.nodeValue.replace(/^\n+|\n+$/g, "").split("\n"), frag = d.createDocumentFragment();
+          parts.forEach(function (t, i) { if (i) frag.appendChild(d.createElement("br")); frag.appendChild(d.createTextNode(t)); });
+          b.replaceChild(frag, n);
+        });
+      });
+      // the element inside that holds the lines (text separated by <br>, or a list of short blocks)
+      var boxes = [hit].concat(Array.prototype.slice.call(hit.querySelectorAll("div, td, p, ul, ol, tbody, span, pre")));
+      var best = null, bestN = 0;
+      boxes.forEach(function (b) {
+        var r = b.getBoundingClientRect(); if (r.top + sy >= bnd || r.bottom + sy <= bnd) return;
+        var brs = Array.prototype.filter.call(b.childNodes, function (n) { return n.nodeName === "BR"; }).length;
+        var blocks = Array.prototype.filter.call(b.children, function (c) { return /^(DIV|P|LI|TR)$/.test(c.tagName) && c.getBoundingClientRect().height < 60; }).length;
+        var n = Math.max(brs, blocks >= 3 ? blocks : 0);
+        if (n > bestN) { best = b; bestN = n; }
+      });
+      if (!best || bestN < 3) return false;
+      var kids = Array.prototype.slice.call(best.childNodes);
+      var useBr = Array.prototype.some.call(kids, function (n) { return n.nodeName === "BR"; });
+      // line ends: index of the node that ends each line, and its bottom on the page
+      var ends = [];
+      if (useBr) {
+        kids.forEach(function (n, i) {
+          if (n.nodeName !== "BR") return;
+          var rg = d.createRange(); rg.setStart(best, 0); rg.setEndBefore(n);
+          var rs = rg.getClientRects(); var bt = rs.length ? rs[rs.length - 1].bottom : 0;
+          ends.push({ i: i, bottom: bt + sy });
+        });
+      } else {
+        kids.forEach(function (n, i) { if (n.nodeType === 1) ends.push({ i: i, bottom: n.getBoundingClientRect().bottom + sy }); });
+        ends.pop();
+      }
+      var fit = ends.filter(function (e) { return e.bottom <= bnd - reserve; });
+      var total = ends.length + 1;
+      if (total - fit.length < 2) fit = fit.slice(0, Math.max(0, total - 2));   // never leave a single line alone on the next page
+      if (fit.length < 2) { if (ends.length >= 3) info.need = Math.ceil(ends[1].bottom + reserve - bnd) + 2; return false; }   // keep at least 2 lines on each page
+      var cut = fit[fit.length - 1].i;                                       // last node that stays on this page
+      // build the continuation: a copy of the whole section, then trim both
+      var path = [], n2 = best; while (n2 && n2 !== hit) { path.unshift(Array.prototype.indexOf.call(n2.parentNode.childNodes, n2)); n2 = n2.parentNode; }
+      var copy = hit.cloneNode(true);
+      var cbest = copy; path.forEach(function (ix) { cbest = cbest.childNodes[ix]; });
+      var cKids = Array.prototype.slice.call(cbest.childNodes);
+      for (var a = 0; a <= cut; a++) cbest.removeChild(cKids[a]);
+      while (cbest.firstChild && (cbest.firstChild.nodeName === "BR" || (cbest.firstChild.nodeType === 3 && !cbest.firstChild.nodeValue.trim()))) cbest.removeChild(cbest.firstChild);
+      for (var z = kids.length - 1; z > cut; z--) best.removeChild(kids[z]);
+      if (useBr && best.lastChild && best.lastChild.nodeName === "BR") best.removeChild(best.lastChild);
+      // the same box simply continues: drop the heading (everything before the lines) from the copy
+      for (var pn = cbest; pn && pn !== copy; pn = pn.parentNode) {
+        while (pn.previousSibling) pn.parentNode.removeChild(pn.previousSibling);
+      }
+      copy.setAttribute("data-thpp-cont", "1");
+      copy.removeAttribute("data-thpp-brk");
+      hit.parentNode.insertBefore(copy, hit.nextSibling);
+      return copy;
+    }
+
+    /* tighten the empty spacing (padding / margins) of boxes on one page by up to 60% to win `need` px; font size is not changed */
+    function squeeze(d, from, to, need) {
+      var sy = d.documentElement.scrollTop, list = [], total = 0;
+      Array.prototype.forEach.call(d.querySelectorAll("#printArea *, body > *"), function (e) {
+        if (e.classList && e.classList.contains("thpp-sp")) return;
+        var r = e.getBoundingClientRect(); if (!r.height) return;
+        var t = r.top + sy; if (t < from - 1 || t + r.height > to + 1) return;
+        var cs = d.defaultView.getComputedStyle(e);
+        if (cs.display === "inline") return;
+        var v = { e: e, pt: parseFloat(cs.paddingTop) || 0, pb: parseFloat(cs.paddingBottom) || 0, mt: Math.max(0, parseFloat(cs.marginTop) || 0), mb: Math.max(0, parseFloat(cs.marginBottom) || 0) };
+        var sum = v.pt + v.pb + v.mt + v.mb; if (sum < 1) return;
+        list.push(v); total += sum;
+      });
+      if (!list.length || total * 0.6 < need) return false;
+      var f = Math.min(0.6, need / total + 0.02);
+      list.forEach(function (v) {
+        var s = v.e.style;
+        if (v.pt) s.setProperty("padding-top", (v.pt * (1 - f)).toFixed(1) + "px", "important");
+        if (v.pb) s.setProperty("padding-bottom", (v.pb * (1 - f)).toFixed(1) + "px", "important");
+        if (v.mt) s.setProperty("margin-top", (v.mt * (1 - f)).toFixed(1) + "px", "important");
+        if (v.mb) s.setProperty("margin-bottom", (v.mb * (1 - f)).toFixed(1) + "px", "important");
+      });
+      return true;
+    }
+    /* the hospital header at the top of page 1 (printed again at the top of page 2, 3 …) */
+    function headerInfo(d) {
+      var root = d.getElementById("printArea") || d.body;
+      var re = /(SUMMARY|FORM|BILL|RECEIPT|CERTIFICATE|RECORD|PRESCRIPTION|REPORT|SHEET|CONSENT|SLIP|CARD|REGISTER|VOUCHER|LETTER|NOTE|CHART|MAR\b)/i;
+      var t = Array.prototype.filter.call(root.querySelectorAll("h1,h2,h3,h4,div,p,b,strong,td,span"), function (e) {
+        var x = (e.textContent || "").trim();
+        return x.length > 3 && x.length < 90 && e.children.length < 4 && re.test(x) && x === x.toUpperCase();
+      })[0];
+      if (!t) return null;
+      var node = t; while (node.parentElement && node.parentElement !== root && !node.previousElementSibling) node = node.parentElement;
+      if (!node.previousElementSibling) return null;
+      var hs = [], p = node.previousElementSibling; while (p) { hs.unshift(p); p = p.previousElementSibling; }
+      var sy = d.documentElement.scrollTop, top = hs[0].getBoundingClientRect().top + sy, bot = node.getBoundingClientRect().top + sy;
+      if (bot - top < 20 || bot - top > area0 * 0.4) return null;
+      return { html: hs.map(function (h) { return h.outerHTML; }).join(""), h: Math.round(bot - top) };
+    }
+    var area0 = 1000;
+    function smartBreaks(area) {
+      var d = frame.contentDocument, changed = false, done = {};
+      area0 = area;
+      var mode = (selHead && selHead.value) || "space";
+      var HI = mode === "none" ? null : headerInfo(d);
+      var BLOCK = /^(DIV|SECTION|TR|LI|P|TABLE|FIELDSET|UL|OL|H1|H2|H3|H4|H5|H6|IMG|TBODY|THEAD)$/;
+      function sy0() { return d.documentElement.scrollTop; }
+      function topOf(e) { return e.getBoundingClientRect().top + sy0(); }
+      function crosses(e, bnd) { var r = e.getBoundingClientRect(), t = r.top + sy0(); return r.height > 0 && t < bnd - 2 && t + r.height > bnd + 2; }
+      function blockKids(e) { return Array.prototype.filter.call(e.children, function (c) { return BLOCK.test(c.tagName) && c.getBoundingClientRect().height > 0 && !c.classList.contains("thpp-sp"); }); }
+      for (var guard = 0; guard < 40; guard++) {
+        var H = contentH(), k, hit = null, bnd = 0, clean = false;
+        for (k = 1; k * area < H - 4; k++) {
+          if (done[k]) continue;
+          bnd = k * area;
+          var chain = [], cur = d.body;
+          while (cur) {
+            var nx = blockKids(cur).filter(function (c) { return crosses(c, bnd); })[0];
+            if (!nx) break;
+            chain.push(nx); cur = nx;
+          }
+          var last = chain[chain.length - 1] || d.getElementById("printArea") || d.body;
+          var kidsL = blockKids(last);
+          if (!chain.length || kidsL.length >= 2 && !kidsL.some(function (c) { return crosses(c, bnd); })) {
+            // page end falls between two sections: the first section of the next page
+            var nxt = kidsL.filter(function (c) { return topOf(c) >= bnd - 3; })[0];
+            if (!nxt) { done[k] = true; continue; }
+            hit = nxt; clean = true; break;
+          }
+          var sec = null;
+          for (var ci = chain.length - 1; ci >= 0; ci--) {
+            var e = chain[ci];
+            if (/^(TBODY|THEAD|TABLE)$/.test(e.tagName) && ci < chain.length - 1) continue;
+            if (e.getAttribute("data-thpp-skip") || e.id === "printArea") continue;
+            if (blockKids(e.parentElement).length >= 3 || e.tagName === "TR") { sec = e; break; }
+          }
+          var deep = chain[chain.length - 1];
+          if (!sec && deep && !blockKids(deep).length) sec = deep;
+          if (sec && (topOf(sec) > (k - 1) * area + 4)) { hit = sec; break; }
+          done[k] = true;
+        }
+        if (!hit) break;
+        if (!clean) {
+          // the section continues in the same box on the next page
+          var info = {}, cont = hit.getBoundingClientRect().height > 50 ? splitSection(d, hit, bnd, info) : false;
+          for (var tries = 0, need = info.need; !cont && tries < 3 && need > 0 && need < area * 0.12; tries++) {
+            if (!squeeze(d, (k - 1) * area, topOf(hit), need + 2 * tries)) break;
+            var info2 = {}; cont = splitSection(d, hit, bnd, info2); need = info2.need || 0;
+          }
+          if (cont) hit = cont;
+          else if (hit.getBoundingClientRect().height > area * 0.85) { hit.setAttribute("data-thpp-skip", "1"); continue; }
+        }
+        done[k] = true;
+        // a table row starts the next page: split the table in two, so page 2 gets its own clean table
+        var firstRow = null;
+        if (hit.tagName === "TR" && hit.parentNode) {
+          var tb = hit.parentNode, T = tb.closest ? tb.closest("table") : null;
+          if (T && T.parentNode) {
+            var T2 = T.cloneNode(false), tb2 = tb.cloneNode(false);
+            T2.removeAttribute("id"); T2.style.marginTop = "0";
+            var mv = hit; while (mv) { var nx2 = mv.nextSibling; tb2.appendChild(mv); mv = nx2; }
+            T2.appendChild(tb2);
+            var after = tb.nextSibling; while (after) { var nx3 = after.nextSibling; T2.appendChild(after); after = nx3; }
+            T.parentNode.insertBefore(T2, T.nextSibling);
+            T.style.marginBottom = "0";
+            firstRow = tb2.rows[0]; hit = T2;
+          }
+        }
+        // what starts the next page: the hospital header (or blank space), then the section
+        var isTR = hit.tagName === "TR", first = hit;
+        if (HI) {
+          var inner = mode === "space" ? '<div style="height:' + HI.h + 'px"></div>' : HI.html;
+          if (isTR) {
+            first = d.createElement("tr"); first.className = "thpp-h2";
+            first.innerHTML = '<td colspan="99" style="border:0 !important;padding:0 !important;background:transparent">' + inner + "</td>";
+          } else { first = d.createElement("div"); first.className = "thpp-h2"; first.style.border = "0"; first.innerHTML = inner; }
+          hit.parentNode.insertBefore(first, hit);
+        }
+        // spacer (preview only) + real page break (paper)
+        var sp;
+        if (isTR) { sp = d.createElement("tr"); sp.className = "thpp-sp"; sp.innerHTML = '<td colspan="99" style="height:1px;padding:0;border:0;background:transparent"></td>'; }
+        else { sp = d.createElement("div"); sp.className = "thpp-sp"; sp.style.height = "1px"; }
+        first.parentNode.insertBefore(sp, first);
+        first.style.breakBefore = "page"; first.style.pageBreakBefore = "always"; first.setAttribute("data-thpp-brk", "1");
+        // the section on the new page gets a top line if it had none
+        var rowEl = firstRow || (isTR ? hit : null);
+        var hs = d.defaultView.getComputedStyle(rowEl && rowEl.cells[0] ? rowEl.cells[0] : hit);
+        if (!parseFloat(hs.borderTopWidth) && (parseFloat(hs.borderBottomWidth) || parseFloat(hs.borderLeftWidth))) {
+          var bw = parseFloat(hs.borderBottomWidth) ? hs.borderBottomWidth + " " + hs.borderBottomStyle + " " + hs.borderBottomColor : hs.borderLeftWidth + " " + hs.borderLeftStyle + " " + hs.borderLeftColor;
+          if (rowEl) Array.prototype.forEach.call(rowEl.cells, function (c) { c.style.borderTop = bw; }); else hit.style.borderTop = bw;
+        }
+        // an outer box around the sections: give its side lines to each section (header block excluded)
+        for (var an = hit.parentElement; an && an !== d.body; an = an.parentElement) {
+          if (/^(TABLE|TBODY|TR)$/.test(an.tagName) || an.getAttribute("data-thpp-moved")) continue;
+          var cs = d.defaultView.getComputedStyle(an);
+          var L = parseFloat(cs.borderLeftWidth), R = parseFloat(cs.borderRightWidth);
+          if (!L && !R) continue;
+          var bl = cs.borderLeftWidth + " " + cs.borderLeftStyle + " " + cs.borderLeftColor, br = cs.borderRightWidth + " " + cs.borderRightStyle + " " + cs.borderRightColor;
+          var bt = parseFloat(cs.borderTopWidth) ? cs.borderTopWidth + " " + cs.borderTopStyle + " " + cs.borderTopColor : "";
+          var bb = parseFloat(cs.borderBottomWidth) ? cs.borderBottomWidth + " " + cs.borderBottomStyle + " " + cs.borderBottomColor : "";
+          var kids = Array.prototype.filter.call(an.children, function (c) { return !c.classList.contains("thpp-sp") && !c.classList.contains("thpp-h2") && d.defaultView.getComputedStyle(c).display !== "none"; });
+          if (!kids.length) continue;
+          kids.forEach(function (c, i) {
+            if (L) c.style.borderLeft = bl; if (R) c.style.borderRight = br;
+            if (i === 0 && bt) c.style.borderTop = bt;
+            if (i === kids.length - 1 && bb) c.style.borderBottom = bb;
+          });
+          an.style.border = "0"; an.setAttribute("data-thpp-moved", "1");
+          break;
+        }
+        // finally make the preview land exactly on the page start
+        for (var al = 0; al < 3; al++) {
+          var off = Math.round(bnd - topOf(first));
+          if (!off) break;
+          var cell = isTR ? sp.firstChild : sp, hh = Math.max(0, parseFloat(cell.style.height) + off);
+          cell.style.height = hh + "px";
+        }
+        changed = true;
+      }
+      if (changed) {
+        var st = d.createElement("style"); st.textContent = "@media print{.thpp-sp{display:none !important}}"; d.head.appendChild(st);
+        lastDoc = "<!DOCTYPE html>" + d.documentElement.outerHTML;
+      }
+      return changed;
+    }
+    function fit() {
+      var d = dims(), area = mm(d.h - 2 * MARGIN), h = 0;
+      try { h = contentH(); } catch (e) {}
+      if (measuring) {
+        measuring = false;
+        var mode = selFit.value, need = h > area + 2;
+        var want = need && (mode === "one" || (mode === "auto" && h <= area * 1.35));
+        if (want) {
+          scale = Math.max(0.4, Math.floor(area / h * 0.985 * 100) / 100);
+          render();                                    // load again with the shrink applied
+          return;
+        }
+      }
+      if (scale === 1 && h > area + 2 && !broke) { broke = true; if (smartBreaks(area)) { try { h = contentH(); } catch (e) {} } }
+      frame.style.height = Math.max(h, area) + "px";
+      Array.prototype.slice.call(page.querySelectorAll(".thpp-brk")).forEach(function (x) { x.remove(); });
+      var pages = Math.max(1, Math.ceil((h - 2) / area));
+      PAGES = pages; AREA = area;
+      var pbp = ov.querySelector(".thpp-pbp"); if (pbp) pbp.style.display = pages > 1 && DIRECT ? "inline-flex" : "none";
+      for (var i = 1; i < pages; i++) {
+        var ln = document.createElement("div"); ln.className = "thpp-brk";
+        ln.style.top = (mm(MARGIN) + i * area) + "px";
+        ln.innerHTML = "<span>Page " + (i + 1) + " starts here</span>";
+        page.appendChild(ln);
+      }
+      var pb = ov.querySelector(".thpp-pages");
+      pb.textContent = pages + (pages > 1 ? " pages" : " page") + (scale < 1 ? " · " + Math.round(scale * 100) + "%" : "");
+      pb.className = "thpp-pages" + (pages > 1 ? " two" : "");
+      pb.title = pages > 1 ? "Content goes to " + pages + " pages. Choose 'Fit to 1 page' to print on one page." : "";
+      page.style.transform = "scale(" + zoom + ")";
+      page.style.marginBottom = ((zoom - 1) * page.offsetHeight) + "px";
+      ov.querySelector(".thpp-zoom").textContent = Math.round(zoom * 100) + "%";
+    }
+    frame.addEventListener("load", function () { setTimeout(fit, 60); });
+
+    function close() {
+      document.removeEventListener("keydown", keys, true);
+      if (ov.parentNode) ov.parentNode.removeChild(ov);
+    }
+    function winPrint() {
+      try { frame.contentWindow.focus(); frame.contentWindow.print(); }
+      catch (e) { close(); nativePrint(); }
+    }
+    var busy = false;
+    function pageDoc(n) {      // the document cut to one page (n = 1, 2, …)
+      var a = Math.floor(AREA) - 2;
+      return lastDoc.replace(/<body([^>]*)>/i, '<body$1><div style="height:' + a + 'px;overflow:hidden"><div style="margin-top:-' + Math.round((n - 1) * AREA) + 'px">')
+        .replace(/<\/body>/i, "</div></div></body>")
+        .replace("</head>", "<style>.thpp-sp{display:block !important}[data-thpp-brk]{break-before:auto !important;page-break-before:auto !important;break-after:auto !important;page-break-after:auto !important}</style></head>");
+    }
+    function waitOK(n, total) {
+      return new Promise(function (res) {
+        var w = document.createElement("div"); w.className = "thpp-wait";
+        w.innerHTML = "<div><h3>🖨 Page " + (n - 1) + " of " + total + " printed</h3><p><b>Back side (मागे-पुढे):</b> turn the same sheet over and put it back in the tray.<br><b>New sheet:</b> put the next sheet / letterhead.<br>Then click <b>OK</b> to print <b>page " + n + "</b>.</p>" +
+          '<button type="button" class="cx">Stop</button><button type="button" class="go">OK — print page ' + n + "</button></div>";
+        document.body.appendChild(w);
+        w.querySelector(".go").onclick = function () { w.remove(); res(true); };
+        w.querySelector(".cx").onclick = function () { w.remove(); res(false); };
+        setTimeout(function () { w.querySelector(".go").focus(); }, 30);
+      });
+    }
+    async function printPages() {
+      var prn = ov.querySelector(".thpp-prn"), msg = ov.querySelector(".thpp-msg"), btn = ov.querySelector(".thpp-print");
+      busy = true; btn.disabled = true; msg.textContent = "";
+      var total = PAGES;
+      for (var n = 1; n <= total; n++) {
+        if (n > 1 && !(await waitOK(n, total))) break;
+        btn.textContent = "Printing page " + n + "…";
+        var r = null;
+        try { r = await window.thDesktop.directPrint({ html: pageDoc(n), deviceName: prn.value, pageSize: selSize.value || "A4", landscape: selOri.value === "landscape", copies: 1 }); } catch (e) { r = { ok: false, error: String(e) }; }
+        if (!r || !r.ok) { msg.textContent = "Page " + n + " not printed: " + ((r && r.error) || "error"); busy = false; btn.disabled = false; btn.textContent = "Print (Ctrl+P)"; return; }
+      }
+      busy = false; btn.disabled = false; btn.textContent = "Print (Ctrl+P)";
+      if (prn.value) lsSet(LS_PRN, prn.value);
+      try { toast("Printed ✔"); } catch (e) {}
+      close();
+    }
+    function doPrint() {
+      if (!DIRECT) return winPrint();
+      if (busy) return;
+      var one = ov.querySelector(".thpp-one");
+      if (one && one.checked && PAGES > 1) { try { localStorage.setItem("thPrintOneByOne", "1"); } catch (e) {} return printPages(); }
+      try { localStorage.setItem("thPrintOneByOne", one && one.checked ? "1" : "0"); } catch (e) {}
+      var prn = ov.querySelector(".thpp-prn"), msg = ov.querySelector(".thpp-msg"), btn = ov.querySelector(".thpp-print");
+      var cp = Math.min(20, Math.max(1, parseInt(ov.querySelector(".thpp-cp").value, 10) || 1));
+      busy = true; btn.disabled = true; btn.textContent = "Printing…"; msg.textContent = "";
+      window.thDesktop.directPrint({
+        html: lastDoc, deviceName: prn.value, pageSize: selSize.value || "A4",
+        landscape: selOri.value === "landscape", copies: cp
+      }).then(function (r) {
+        busy = false; btn.disabled = false; btn.textContent = "Print (Ctrl+P)";
+        if (r && r.ok) {
+          if (prn.value) lsSet(LS_PRN, prn.value);
+          if (typeof toast === "function") { try { toast("Sent to printer ✔"); } catch (e) {} }
+          close();
+        } else {
+          msg.textContent = "Not printed: " + ((r && r.error) || "error") + " — check printer / try Windows dialog";
+        }
+      }, function (e) {
+        busy = false; btn.disabled = false; btn.textContent = "Print (Ctrl+P)";
+        msg.textContent = "Not printed — try Windows dialog";
+      });
+    }
+    if (DIRECT) {
+      ov.querySelector(".thpp-win").onclick = winPrint;
+      window.thDesktop.printers().then(function (list) {
+        var sel = ov.querySelector(".thpp-prn"), saved = lsGet(LS_PRN), html = "", pick = "";
+        list = list || [];
+        list.forEach(function (p) { if (p.name === saved) pick = saved; });
+        if (!pick) list.forEach(function (p) { if (p.isSaved) pick = p.name; });
+        if (!pick) list.forEach(function (p) { if (p.isAuto) pick = p.name; });
+        if (!pick) list.forEach(function (p) { if (p.isDefault) pick = p.name; });
+        list.forEach(function (p) {
+          html += '<option value="' + String(p.name).replace(/&/g, "&amp;").replace(/"/g, "&quot;") + '"' + (p.name === pick ? " selected" : "") + ">" +
+            String(p.displayName).replace(/&/g, "&amp;").replace(/</g, "&lt;") + (p.isDefault ? " (default)" : "") + "</option>";
+        });
+        sel.innerHTML = html || '<option value="">Default printer</option>';
+      }, function () { ov.querySelector(".thpp-prn").innerHTML = '<option value="">Default printer</option>'; });
+    }
+    function keys(e) {
+      if (e.key === "Escape") { e.preventDefault(); close(); }
+      else if ((e.ctrlKey || e.metaKey) && (e.key === "p" || e.key === "P")) { e.preventDefault(); doPrint(); }
+    }
+    document.addEventListener("keydown", keys, true);
+
+    selSize.onchange = rerender;
+    selOri.onchange = rerender;
+    selHead.onchange = function () { try { localStorage.setItem("thPage2Head2", selHead.value); } catch (e) {} rerender(); };
+    selFit.onchange = function () { try { localStorage.setItem("thPrintFit", selFit.value); } catch (e) {} rerender(); };
+    ov.querySelector(".thpp-zp").onclick = function () { zoom = Math.min(2, zoom + 0.1); fit(); };
+    ov.querySelector(".thpp-zm").onclick = function () { zoom = Math.max(0.4, zoom - 0.1); fit(); };
+    ov.querySelector(".thpp-print").onclick = doPrint;
+    ov.querySelector(".thpp-close").onclick = close;
+
+    render();
+  }
+
+  window.print = function () {
+    try {
+      var pa = document.getElementById("printArea");
+      (window.thPrintHooks || []).forEach(function (f) { try { if (pa) f(pa); } catch (e) { console.warn("print hook", e); } });
+      // copy the page right now (the software may clear it straight after calling print)
+      var html = pa && pa.innerHTML.trim() ? '<div id="printArea">' + pa.innerHTML + "</div>" : "";
+      if (!html) return nativePrint();
+      preview(html, document.body.className);
+    } catch (e) {
+      console.error(e);
+      nativePrint();
+    }
+  };
+})();
+/*TH-SIGN:6bebedd2a3fc65de02d046294d10f9eb*/

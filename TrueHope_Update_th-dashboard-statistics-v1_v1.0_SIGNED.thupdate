@@ -1,0 +1,439 @@
+/*TRUEHOPE-UPDATE {"id":"th-dashboard-statistics-v1","name":"Dashboard - Graphs, Pie Charts & Statistics","version":"1.0","date":"2026-11-19","description":"New Dashboard menu with KPI tiles, trend graphs, pie/donut charts and hospital statistics (OPD, IPD, revenue, schemes, doctors, wards) - works fully offline"} */
+(function () {
+  /* ---------- state (kept in memory only, no db changes) ---------- */
+  var S = window.__THDash = window.__THDash || { range: '30', from: '', to: '' };
+  var PAL = ['#2563eb', '#16a34a', '#f59e0b', '#db2777', '#7c3aed', '#0891b2', '#ea580c', '#64748b', '#65a30d', '#dc2626'];
+  var gid = 0;
+
+  /* ---------- styles ---------- */
+  TH.css(`
+  .thd{font-family:inherit;color:#0f172a}
+  .thd-hero{background:linear-gradient(120deg,#0f3d91 0%,#2563eb 55%,#16a34a 100%);color:#fff;border-radius:14px;padding:18px 20px;margin-bottom:14px;box-shadow:0 6px 18px rgba(37,99,235,.25)}
+  .thd-hero h2{margin:0 0 4px;font-size:22px;letter-spacing:.3px}
+  .thd-hero .sub{opacity:.9;font-size:13px}
+  .thd-bar{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:12px}
+  .thd-chip{border:1px solid rgba(255,255,255,.55);background:rgba(255,255,255,.12);color:#fff;border-radius:20px;padding:5px 12px;font-size:12.5px;cursor:pointer}
+  .thd-chip:hover{background:rgba(255,255,255,.25)}
+  .thd-chip.on{background:#fff;color:#0f3d91;font-weight:700;border-color:#fff}
+  .thd-bar input[type=date]{border-radius:8px;border:0;padding:5px 8px;font-size:12.5px}
+  .thd-kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:14px}
+  .thd-kpi{background:#fff;border-radius:12px;padding:14px 14px 12px;box-shadow:0 2px 10px rgba(15,23,42,.07);border-left:5px solid var(--c);position:relative;overflow:hidden}
+  .thd-kpi .ic{position:absolute;right:10px;top:8px;font-size:26px;opacity:.18}
+  .thd-kpi .v{font-size:24px;font-weight:800;color:var(--c);line-height:1.15}
+  .thd-kpi .l{font-size:12.5px;color:#475569;margin-top:2px;font-weight:600}
+  .thd-kpi .d{font-size:11.5px;margin-top:4px;color:#64748b}
+  .thd-up{color:#16a34a!important;font-weight:700}.thd-dn{color:#dc2626!important;font-weight:700}
+  .thd-g{display:grid;gap:12px;margin-bottom:12px}
+  .thd-g21{grid-template-columns:2fr 1fr}.thd-g11{grid-template-columns:1fr 1fr}.thd-g111{grid-template-columns:1fr 1fr 1fr}
+  .thd-card{background:#fff;border-radius:12px;padding:14px 16px;box-shadow:0 2px 10px rgba(15,23,42,.07);min-width:0}
+  .thd-card h3{margin:0 0 2px;font-size:15px;color:#0f172a}
+  .thd-card .hint{font-size:11.5px;color:#64748b;margin-bottom:8px}
+  .thd-legend{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:12px;color:#334155;margin-top:6px}
+  .thd-legend i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:5px;vertical-align:-1px}
+  .thd-dwrap{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+  .thd-dwrap svg{flex:0 0 170px}
+  .thd-dleg{flex:1;min-width:130px;font-size:12.5px}
+  .thd-dleg div{display:flex;align-items:center;gap:6px;padding:3px 0;border-bottom:1px dashed #e2e8f0}
+  .thd-dleg i{width:10px;height:10px;border-radius:3px;flex:0 0 10px}
+  .thd-dleg span{flex:1;color:#334155;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .thd-dleg b{color:#0f172a}.thd-dleg em{color:#64748b;font-style:normal;width:42px;text-align:right}
+  .thd-hb{margin:6px 0}
+  .thd-hb .t{display:flex;justify-content:space-between;font-size:12.5px;color:#334155;margin-bottom:3px}
+  .thd-hb .t span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding-right:8px}
+  .thd-hb .tr{background:#f1f5f9;border-radius:6px;height:10px;overflow:hidden}
+  .thd-hb .fl{height:100%;border-radius:6px}
+  .thd-empty{color:#94a3b8;font-size:13px;text-align:center;padding:30px 0}
+  .thd-mini{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:6px}
+  .thd-mini div{background:#f8fafc;border-radius:10px;padding:10px;text-align:center}
+  .thd-mini b{display:block;font-size:19px;color:#0f3d91}.thd-mini span{font-size:11.5px;color:#64748b}
+  .thd svg text{font-family:inherit}
+  @media (max-width:1100px){.thd-kpis{grid-template-columns:repeat(2,1fr)}.thd-g21,.thd-g111{grid-template-columns:1fr}}
+  @media (max-width:700px){.thd-kpis,.thd-g11{grid-template-columns:1fr}}
+  @media print{.thd-noprint{display:none!important}.thd-card,.thd-kpi{box-shadow:none;border:1px solid #cbd5e1;break-inside:avoid}
+    .thd-hero{background:#fff!important;color:#000;box-shadow:none;border:1px solid #cbd5e1}
+    .thd *{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
+  `);
+
+  /* ---------- helpers ---------- */
+  function E(s) { try { return esc(s); } catch (e) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); } }
+  function pad(n) { return (n < 10 ? '0' : '') + n; }
+  function iso(d) { return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()); }
+  function toISO(x) {
+    if (x == null || x === '') return '';
+    if (typeof x === 'number') { var d0 = new Date(x); return isNaN(d0) ? '' : iso(d0); }
+    if (x instanceof Date) return isNaN(x) ? '' : iso(x);
+    if (typeof x !== 'string') return '';
+    x = x.trim();
+    var m = x.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/); if (m) return m[1] + '-' + pad(+m[2]) + '-' + pad(+m[3]);
+    m = x.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})/); if (m) return m[3] + '-' + pad(+m[2]) + '-' + pad(+m[1]);
+    var d = new Date(x); return isNaN(d) ? '' : iso(d);
+  }
+  function pick(o, keys) { if (!o) return undefined; for (var i = 0; i < keys.length; i++) { var v = o[keys[i]]; if (v !== undefined && v !== null && v !== '') return v; } return undefined; }
+  function num(x) { if (typeof x === 'number') return isNaN(x) ? 0 : x; var n = parseFloat(String(x == null ? '' : x).replace(/[^0-9.\-]/g, '')); return isNaN(n) ? 0 : n; }
+  function nameOf(x) { if (x && typeof x === 'object') return x.name || x.label || ''; return x == null ? '' : String(x); }
+  function addDays(s, n) { var d = new Date(s + 'T00:00:00'); d.setDate(d.getDate() + n); return iso(d); }
+  function diffDays(a, b) { return Math.round((new Date(b + 'T00:00:00') - new Date(a + 'T00:00:00')) / 864e5); }
+  function todayISO() { try { var t = toISO(today()); if (t) return t; } catch (e) { } return iso(new Date()); }
+  function fmt(n) { return Math.round(n).toLocaleString('en-IN'); }
+  function money(n) { return '₹' + fmt(n); }
+  function compact(n) { var a = Math.abs(n); if (a >= 1e7) return (n / 1e7).toFixed(1).replace(/\.0$/, '') + 'Cr'; if (a >= 1e5) return (n / 1e5).toFixed(1).replace(/\.0$/, '') + 'L'; if (a >= 1e3) return (n / 1e3).toFixed(1).replace(/\.0$/, '') + 'K'; return String(Math.round(n * 10) / 10); }
+  function niceMax(m) { if (m <= 0) return 4; if (m <= 4) return 4; if (m <= 8) return 8; var p = Math.pow(10, Math.floor(Math.log10(m))); var f = [1, 2, 2.5, 5, 10]; for (var i = 0; i < f.length; i++) if (f[i] * p >= m) return f[i] * p; return 10 * p; }
+  var MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  var WD = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+  /* ---------- field readers (tolerant of different field names) ---------- */
+  function patient(uhid) {
+    try { if (typeof getP === 'function') { var p = getP(uhid); if (p) return p; } } catch (e) { }
+    return (db.patients || []).find(function (p) { return p.uhid == uhid || p.id == uhid; }) || {};
+  }
+  function vUhid(v) { return pick(v, ['uhid', 'patientId', 'pid', 'UHID']); }
+  function vDate(v) { return toISO(pick(v, ['date', 'vdate', 'visitDate', 'dt', 'created', 'createdAt'])); }
+  function vFee(v) { return num(pick(v, ['fee', 'paid', 'amount', 'total', 'netAmount', 'charges'])); }
+  function vDoc(v) { return nameOf(pick(v, ['doctor', 'doc', 'consultant', 'drName', 'doctorName'])) || 'Not set'; }
+  function vDept(v) {
+    var d = nameOf(pick(v, ['dept', 'department', 'speciality']));
+    if (d) return d;
+    var dn = vDoc(v); var doc = (db.doctors || []).find(function (x) { return x.name === dn; });
+    return (doc && doc.dept) || 'General';
+  }
+  function pDate(p) { return toISO(pick(p, ['regDate', 'date', 'created', 'createdAt', 'registered'])); }
+  function gender(p) { var g = String(pick(p, ['gender', 'sex']) || '').trim().toLowerCase(); if (g[0] === 'm') return 'Male'; if (g[0] === 'f') return 'Female'; if (g) return 'Other'; return 'Not set'; }
+  function ageYears(p) {
+    var a = pick(p, ['age', 'ageY', 'ageYears']);
+    if (a != null) { var s = String(a).toLowerCase(); if (/m|d/.test(s) && !/y/.test(s)) return 0; return num(a); }
+    var dob = toISO(pick(p, ['dob', 'birthDate'])); if (dob) return Math.max(0, Math.floor(diffDays(dob, todayISO()) / 365.25));
+    return null;
+  }
+  function scheme(o1, o2) {
+    var s = String(nameOf(pick(o1, ['scheme', 'payer', 'category', 'payType', 'insurance', 'patientType'])) || nameOf(pick(o2, ['scheme', 'payer', 'category', 'payType', 'insurance', 'patientType'])) || '').toLowerCase();
+    if (/mjp/.test(s)) return 'MJPJAY';
+    if (/pmjay|pm-jay|ab.?pm|ayushman/.test(s)) return 'AB-PMJAY';
+    if (/cghs/.test(s)) return 'CGHS';
+    if (/echs/.test(s)) return 'ECHS';
+    if (/insur|tpa|mediclaim|cashless/.test(s)) return 'Insurance / TPA';
+    if (/free|charity/.test(s)) return 'Free / Charity';
+    return 'Cash / General';
+  }
+  function payMode(v) {
+    var s = String(pick(v, ['payMode', 'mode', 'paymentMode', 'pmode']) || '').toLowerCase();
+    if (!s) return 'Not set';
+    if (/upi|gpay|phonepe|paytm|online/.test(s)) return 'UPI / Online';
+    if (/card|debit|credit/.test(s)) return 'Card';
+    if (/cheq|chq|neft|rtgs|bank/.test(s)) return 'Bank / Cheque';
+    if (/cash/.test(s)) return 'Cash';
+    return s.charAt(0).toUpperCase() + s.slice(1);
+  }
+  function vType(v, firstDate) {
+    var t = String(pick(v, ['type', 'visitType', 'vtype', 'kind']) || '').toLowerCase();
+    if (/fu|follow|revisit|old|review/.test(t)) return 'Follow-up';
+    if (/new|first/.test(t)) return 'New';
+    var u = vUhid(v), d = vDate(v);
+    return (firstDate[u] && firstDate[u] < d) ? 'Follow-up' : 'New';
+  }
+  function diag(o) { return String(nameOf(pick(o, ['diagnosis', 'dx', 'provDx', 'provisionalDiagnosis', 'finalDiagnosis', 'complaint'])) || '').trim(); }
+  function aDate(a) { return toISO(pick(a, ['admDate', 'doa', 'admitDate', 'admissionDate', 'date', 'created'])); }
+  function dDate(a) { return toISO(pick(a, ['disDate', 'dod', 'dischargeDate', 'dischargedOn', 'dischargeDt'])); }
+  function isDis(a) { return !!dDate(a) || /dis|closed|lama|dama|expired|death|refer/i.test(String(a.status || '')); }
+  function ward(a) { return nameOf(pick(a, ['ward', 'wardName', 'bedWard'])) || 'Unassigned'; }
+  function aPays(a) { var p = pick(a, ['payments', 'receipts', 'advances', 'rcpts', 'deposits']); return Array.isArray(p) ? p : []; }
+  function payAmt(r) { return num(pick(r, ['amount', 'amt', 'paid', 'value', 'total'])); }
+  function bDate(b) { return toISO(pick(b, ['date', 'billDate', 'created', 'createdAt'])); }
+  function bAmt(b) { return num(pick(b, ['net', 'total', 'grand', 'grandTotal', 'netAmount', 'amount', 'paid'])); }
+
+  /* ---------- date range ---------- */
+  function minDataDate() {
+    var m = '';
+    function c(d) { if (d && (!m || d < m)) m = d; }
+    (db.visits || []).forEach(function (v) { c(vDate(v)); });
+    (db.admissions || []).forEach(function (a) { c(aDate(a)); });
+    (db.patients || []).forEach(function (p) { c(pDate(p)); });
+    (db.bills || []).forEach(function (b) { c(bDate(b)); });
+    return m || todayISO();
+  }
+  function getRange() {
+    var t = todayISO(), r = S.range, from = t, to = t, label = '';
+    var y = +t.slice(0, 4), mo = +t.slice(5, 7);
+    if (r === 'today') { label = 'Today'; }
+    else if (r === '7') { from = addDays(t, -6); label = 'Last 7 days'; }
+    else if (r === '30') { from = addDays(t, -29); label = 'Last 30 days'; }
+    else if (r === '90') { from = addDays(t, -89); label = 'Last 90 days'; }
+    else if (r === 'month') { from = t.slice(0, 8) + '01'; label = 'This month'; }
+    else if (r === 'lmonth') { var lm = new Date(y, mo - 2, 1); from = iso(lm); to = iso(new Date(y, mo - 1, 0)); label = 'Last month'; }
+    else if (r === 'fy') { var fy = mo >= 4 ? y : y - 1; from = fy + '-04-01'; to = t; label = 'Financial year ' + fy + '-' + String(fy + 1).slice(2); }
+    else if (r === 'year') { from = y + '-01-01'; label = 'This year'; }
+    else if (r === 'all') { from = minDataDate(); label = 'All time'; }
+    else if (r === 'custom') { from = S.from || addDays(t, -29); to = S.to || t; if (from > to) { var x = from; from = to; to = x; } label = 'Custom'; }
+    var prev = null;
+    if (r !== 'all') { var len = diffDays(from, to) + 1; prev = { from: addDays(from, -len), to: addDays(from, -1) }; }
+    return { from: from, to: to, label: label, prev: prev };
+  }
+
+  /* ---------- data collection ---------- */
+  function collect(from, to) {
+    function inR(d) { return d && d >= from && d <= to; }
+    var firstDate = {};
+    (db.visits || []).forEach(function (v) { var u = vUhid(v), d = vDate(v); if (u && d && (!firstDate[u] || d < firstDate[u])) firstDate[u] = d; });
+    var visits = (db.visits || []).filter(function (v) { return inR(vDate(v)); });
+    var adms = (db.admissions || []).filter(function (a) { return inR(aDate(a)); });
+    var dis = (db.admissions || []).filter(function (a) { return isDis(a) && inR(dDate(a)); });
+    var regs = (db.patients || []).filter(function (p) { return inR(pDate(p)); });
+    var bills = (db.bills || []).filter(function (b) { return inR(bDate(b)); });
+    var ipdPays = [];
+    (db.admissions || []).forEach(function (a) { aPays(a).forEach(function (r) { var d = toISO(pick(r, ['date', 'dt', 'created'])) || aDate(a); if (inR(d)) ipdPays.push({ d: d, amt: payAmt(r), a: a }); }); });
+    var opdRev = visits.reduce(function (s, v) { return s + vFee(v); }, 0);
+    var billRev = bills.reduce(function (s, b) { return s + bAmt(b); }, 0);
+    var ipdRev = ipdPays.reduce(function (s, r) { return s + r.amt; }, 0);
+    return { from: from, to: to, visits: visits, adms: adms, dis: dis, regs: regs, bills: bills, ipdPays: ipdPays, firstDate: firstDate, opdRev: opdRev, billRev: billRev, ipdRev: ipdRev, rev: opdRev + billRev + ipdRev };
+  }
+  function countBy(arr, fn) { var m = {}; arr.forEach(function (x) { var k = fn(x); if (k == null || k === '') return; m[k] = (m[k] || 0) + 1; }); return m; }
+  function sumBy(arr, fn, valFn) { var m = {}; arr.forEach(function (x) { var k = fn(x); m[k] = (m[k] || 0) + valFn(x); }); return m; }
+  function toItems(m, limit) {
+    var it = Object.keys(m).map(function (k) { return { label: k, value: m[k] }; }).filter(function (x) { return x.value > 0; }).sort(function (a, b) { return b.value - a.value; });
+    if (limit && it.length > limit) { var rest = it.slice(limit - 1).reduce(function (s, x) { return s + x.value; }, 0); it = it.slice(0, limit - 1); it.push({ label: 'Others', value: rest }); }
+    return it;
+  }
+
+  /* ---------- chart builders (pure SVG, offline) ---------- */
+  function empty(msg) { return '<div class="thd-empty">' + (msg || 'No data for this period') + '</div>'; }
+
+  function lineChart(labels, series, opt) {
+    opt = opt || {};
+    var n = labels.length; if (!n) return empty();
+    var all = []; series.forEach(function (s) { all = all.concat(s.values); });
+    if (!all.some(function (v) { return v > 0; })) return empty();
+    var W = 720, H = opt.h || 260, L = 50, R = 16, T = 16, B = 34, iw = W - L - R, ih = H - T - B;
+    var max = niceMax(Math.max.apply(null, all));
+    var x = function (i) { return L + (n === 1 ? iw / 2 : i * iw / (n - 1)); };
+    var y = function (v) { return T + ih - (v / max) * ih; };
+    var s = '<svg viewBox="0 0 ' + W + ' ' + H + '" width="100%" role="img"><defs>';
+    series.forEach(function (se, k) { se._g = 'thdg' + (++gid); s += '<linearGradient id="' + se._g + '" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="' + se.color + '" stop-opacity=".28"/><stop offset="1" stop-color="' + se.color + '" stop-opacity="0"/></linearGradient>'; });
+    s += '</defs>';
+    for (var g = 0; g <= 4; g++) { var gv = max * g / 4, gy = y(gv); s += '<line x1="' + L + '" x2="' + (W - R) + '" y1="' + gy + '" y2="' + gy + '" stroke="#e2e8f0" stroke-dasharray="' + (g ? '3 4' : '0') + '"/><text x="' + (L - 8) + '" y="' + (gy + 4) + '" font-size="11" fill="#64748b" text-anchor="end">' + (opt.money ? '₹' : '') + compact(gv) + '</text>'; }
+    var step = Math.ceil(n / 12);
+    labels.forEach(function (lb, i) { if (i % step === 0 || i === n - 1) s += '<text x="' + x(i) + '" y="' + (H - 12) + '" font-size="11" fill="#64748b" text-anchor="middle">' + E(lb) + '</text>'; });
+    series.forEach(function (se) {
+      var pts = se.values.map(function (v, i) { return x(i) + ',' + y(v); });
+      if (se.area !== false) s += '<path d="M' + x(0) + ',' + y(0) + ' L' + pts.join(' L') + ' L' + x(n - 1) + ',' + y(0) + ' Z" fill="url(#' + se._g + ')"/>';
+      s += '<polyline points="' + pts.join(' ') + '" fill="none" stroke="' + se.color + '" stroke-width="2.6" stroke-linejoin="round" stroke-linecap="round"/>';
+      if (n <= 45) se.values.forEach(function (v, i) { s += '<circle cx="' + x(i) + '" cy="' + y(v) + '" r="3.4" fill="#fff" stroke="' + se.color + '" stroke-width="2"><title>' + E(se.name + ' - ' + labels[i] + ': ' + (opt.money ? money(v) : fmt(v))) + '</title></circle>'; });
+    });
+    s += '</svg>';
+    if (series.length > 1) s += '<div class="thd-legend">' + series.map(function (se) { return '<span><i style="background:' + se.color + '"></i>' + E(se.name) + ' (' + (opt.money ? money(se.values.reduce(function (a, b) { return a + b; }, 0)) : fmt(se.values.reduce(function (a, b) { return a + b; }, 0))) + ')</span>'; }).join('') + '</div>';
+    return s;
+  }
+
+  function barChart(labels, series, opt) {
+    opt = opt || {};
+    var n = labels.length; if (!n) return empty();
+    var tot = labels.map(function (_, i) { return series.reduce(function (s, se) { return s + (se.values[i] || 0); }, 0); });
+    if (!tot.some(function (v) { return v > 0; })) return empty();
+    var W = 720, H = opt.h || 250, L = 50, R = 12, T = 18, B = 34, iw = W - L - R, ih = H - T - B;
+    var max = niceMax(Math.max.apply(null, tot));
+    var bw = iw / n, gap = Math.min(bw * 0.28, 14), w = Math.max(2, bw - gap);
+    var y = function (v) { return T + ih - (v / max) * ih; };
+    var s = '<svg viewBox="0 0 ' + W + ' ' + H + '" width="100%" role="img">';
+    for (var g = 0; g <= 4; g++) { var gv = max * g / 4, gy = y(gv); s += '<line x1="' + L + '" x2="' + (W - R) + '" y1="' + gy + '" y2="' + gy + '" stroke="#e2e8f0" stroke-dasharray="' + (g ? '3 4' : '0') + '"/><text x="' + (L - 8) + '" y="' + (gy + 4) + '" font-size="11" fill="#64748b" text-anchor="end">' + (opt.money ? '₹' : '') + compact(gv) + '</text>'; }
+    var step = Math.ceil(n / 14);
+    labels.forEach(function (lb, i) {
+      var bx = L + i * bw + gap / 2, base = 0;
+      series.forEach(function (se, k) {
+        var v = se.values[i] || 0; if (!v) return;
+        var y1 = y(base + v), y0 = y(base), h = y0 - y1;
+        var top = k === series.length - 1 || !series.slice(k + 1).some(function (z) { return z.values[i]; });
+        s += '<rect x="' + bx + '" y="' + y1 + '" width="' + w + '" height="' + Math.max(h, 0.5) + '" rx="' + (top ? Math.min(5, w / 3) : 0) + '" fill="' + se.color + '"><title>' + E(lb + ' - ' + se.name + ': ' + (opt.money ? money(v) : fmt(v))) + '</title></rect>';
+        base += v;
+      });
+      if (n <= 16 && tot[i] > 0) s += '<text x="' + (bx + w / 2) + '" y="' + (y(tot[i]) - 5) + '" font-size="11" font-weight="700" fill="#334155" text-anchor="middle">' + (opt.money ? compact(tot[i]) : fmt(tot[i])) + '</text>';
+      if (i % step === 0 || i === n - 1) s += '<text x="' + (bx + w / 2) + '" y="' + (H - 12) + '" font-size="11" fill="#64748b" text-anchor="middle">' + E(lb) + '</text>';
+    });
+    s += '</svg>';
+    if (series.length > 1) s += '<div class="thd-legend">' + series.map(function (se) { return '<span><i style="background:' + se.color + '"></i>' + E(se.name) + '</span>'; }).join('') + '</div>';
+    return s;
+  }
+
+  function donut(items, opt) {
+    opt = opt || {};
+    var total = items.reduce(function (s, x) { return s + x.value; }, 0);
+    if (!total) return empty();
+    var cx = 85, cy = 85, r = 62, C = 2 * Math.PI * r, off = 0;
+    var s = '<svg viewBox="0 0 170 170" width="170" height="170" role="img"><circle cx="' + cx + '" cy="' + cy + '" r="' + r + '" fill="none" stroke="#f1f5f9" stroke-width="24"/>';
+    items.forEach(function (it, i) {
+      var len = it.value / total * C, col = it.color || PAL[i % PAL.length];
+      var seg = items.length > 1 ? Math.max(len - 1.5, 0.5) : len;
+      s += '<circle cx="' + cx + '" cy="' + cy + '" r="' + r + '" fill="none" stroke="' + col + '" stroke-width="24" stroke-dasharray="' + seg + ' ' + (C - seg) + '" stroke-dashoffset="' + (-off) + '" transform="rotate(-90 ' + cx + ' ' + cy + ')"><title>' + E(it.label + ': ' + (opt.money ? money(it.value) : fmt(it.value)) + ' (' + (it.value / total * 100).toFixed(1) + '%)') + '</title></circle>';
+      off += len;
+    });
+    s += '<text x="' + cx + '" y="' + (cy - 2) + '" text-anchor="middle" font-size="' + (opt.money ? 17 : 22) + '" font-weight="800" fill="#0f172a">' + (opt.money ? '₹' + compact(total) : fmt(total)) + '</text><text x="' + cx + '" y="' + (cy + 16) + '" text-anchor="middle" font-size="11" fill="#64748b">' + E(opt.center || 'Total') + '</text></svg>';
+    var lg = '<div class="thd-dleg">' + items.map(function (it, i) { return '<div><i style="background:' + (it.color || PAL[i % PAL.length]) + '"></i><span title="' + E(it.label) + '">' + E(it.label) + '</span><b>' + (opt.money ? money(it.value) : fmt(it.value)) + '</b><em>' + (it.value / total * 100).toFixed(0) + '%</em></div>'; }).join('') + '</div>';
+    return '<div class="thd-dwrap">' + s + lg + '</div>';
+  }
+
+  function hbars(items, color, opt) {
+    opt = opt || {};
+    if (!items.length) return empty();
+    var max = Math.max.apply(null, items.map(function (x) { return x.value; })) || 1;
+    return items.map(function (it, i) {
+      var c = color || PAL[i % PAL.length];
+      return '<div class="thd-hb"><div class="t"><span title="' + E(it.label) + '">' + E(it.label) + '</span><b>' + (opt.money ? money(it.value) : fmt(it.value)) + (it.extra ? ' <small style="color:#64748b;font-weight:400">' + E(it.extra) + '</small>' : '') + '</b></div><div class="tr"><div class="fl" style="width:' + Math.max(2, it.value / max * 100) + '%;background:linear-gradient(90deg,' + c + ',' + c + 'cc)"></div></div></div>';
+    }).join('');
+  }
+
+  function card(title, hint, body) { return '<div class="thd-card"><h3>' + title + '</h3>' + (hint ? '<div class="hint">' + hint + '</div>' : '') + body + '</div>'; }
+
+  function kpi(icon, color, value, label, cur, prev) {
+    var d = '';
+    if (prev != null) {
+      if (!prev && !cur) d = 'No change vs previous period';
+      else if (!prev) d = '<span class="thd-up">▲ New</span> vs previous period';
+      else if (cur === prev) d = '● Same as previous period'; else { var p = (cur - prev) / prev * 100; d = '<span class="' + (p >= 0 ? 'thd-up' : 'thd-dn') + '">' + (p >= 0 ? '▲ ' : '▼ ') + Math.abs(p).toFixed(1) + '%</span> vs previous period'; }
+    }
+    return '<div class="thd-kpi" style="--c:' + color + '"><div class="ic">' + icon + '</div><div class="v">' + value + '</div><div class="l">' + label + '</div>' + (d ? '<div class="d">' + d + '</div>' : '') + '</div>';
+  }
+
+  /* ---------- actions ---------- */
+  S.set = function (r) { S.range = r; go('dashstats'); };
+  S.apply = function () { S.from = toISO(val('thdFrom')); S.to = toISO(val('thdTo')); S.range = 'custom'; go('dashstats'); };
+  S.print = function () {
+    var el = document.getElementById('thdRoot'), pa = document.getElementById('printArea');
+    if (!el) return;
+    if (!pa) { window.print(); return; }
+    var head = ''; try { head = typeof printHead === 'function' ? printHead() : ''; } catch (e) { }
+    pa.innerHTML = head + el.outerHTML;
+    setTimeout(function () { window.print(); }, 150);
+  };
+
+  /* ---------- main screen ---------- */
+  function render() {
+    var R = getRange(), D = collect(R.from, R.to), P = R.prev ? collect(R.prev.from, R.prev.to) : null;
+    var span = diffDays(R.from, R.to) + 1, daily = span <= 62;
+    var t = todayISO();
+
+    /* trend buckets */
+    var keys = [], labels = [];
+    if (daily) { for (var i = 0; i < span; i++) { var k = addDays(R.from, i); keys.push(k); labels.push(k.slice(8, 10) + '/' + k.slice(5, 7)); } }
+    else { var cur = R.from.slice(0, 7), end = R.to.slice(0, 7), guard = 0; while (cur <= end && guard++ < 240) { keys.push(cur); labels.push(MON[+cur.slice(5, 7) - 1] + ' ' + cur.slice(2, 4)); var yy = +cur.slice(0, 4), mm = +cur.slice(5, 7) + 1; if (mm > 12) { mm = 1; yy++; } cur = yy + '-' + pad(mm); } }
+    function bk(d) { return daily ? d : d.slice(0, 7); }
+    function series(arr, dfn, vfn) { var m = {}; arr.forEach(function (x) { var d = dfn(x); if (!d) return; var k = bk(d); m[k] = (m[k] || 0) + (vfn ? vfn(x) : 1); }); return keys.map(function (k) { return m[k] || 0; }); }
+
+    var opdS = series(D.visits, vDate), admS = series(D.adms, aDate), disS = series(D.dis, dDate);
+    var revOpd = series(D.visits, vDate, vFee), revBill = series(D.bills, bDate, bAmt), revIpd = series(D.ipdPays, function (r) { return r.d; }, function (r) { return r.amt; });
+
+    /* current IPD status (live, not range based) */
+    var admittedNow = (db.admissions || []).filter(function (a) { return !isDis(a) && aDate(a); });
+    var totalBeds = 0, wardBeds = {};
+    (db.wards || []).forEach(function (w) { var b = Array.isArray(w.beds) ? w.beds.length : num(pick(w, ['beds', 'bedCount', 'totalBeds', 'capacity', 'noOfBeds'])); var nm = nameOf(w.name || w.ward || w.label || w); wardBeds[nm] = b; totalBeds += b; });
+    var occ = totalBeds ? (admittedNow.length / totalBeds * 100) : null;
+
+    var los = D.dis.map(function (a) { var x = aDate(a), y = dDate(a); return x && y ? Math.max(1, diffDays(x, y)) : null; }).filter(function (v) { return v != null; });
+    var avgLos = los.length ? (los.reduce(function (a, b) { return a + b; }, 0) / los.length) : 0;
+
+    /* breakdowns */
+    var typeM = countBy(D.visits, function (v) { return vType(v, D.firstDate); });
+    var deptM = countBy(D.visits, vDept);
+    var docM = countBy(D.visits, vDoc), docRev = sumBy(D.visits, vDoc, vFee);
+    var genderM = {}; var ageM = { '0-1': 0, '1-5': 0, '6-12': 0, '13-18': 0, '19-30': 0, '31-45': 0, '46-60': 0, '60+': 0 };
+    var seen = {};
+    D.visits.map(vUhid).concat(D.adms.map(vUhid)).forEach(function (u) {
+      if (!u || seen[u]) return; seen[u] = 1; var p = patient(u);
+      var g = gender(p); genderM[g] = (genderM[g] || 0) + 1;
+      var a = ageYears(p); if (a == null) return;
+      var b = a < 1 ? '0-1' : a <= 5 ? '1-5' : a <= 12 ? '6-12' : a <= 18 ? '13-18' : a <= 30 ? '19-30' : a <= 45 ? '31-45' : a <= 60 ? '46-60' : '60+';
+      ageM[b]++;
+    });
+    var schM = {};
+    D.visits.forEach(function (v) { var k = scheme(v, patient(vUhid(v))); schM[k] = (schM[k] || 0) + 1; });
+    D.adms.forEach(function (a) { var k = scheme(a, patient(vUhid(a))); schM[k] = (schM[k] || 0) + 1; });
+    var ipdSch = countBy(D.adms, function (a) { return scheme(a, patient(vUhid(a))); });
+    var payM = sumBy(D.visits.filter(function (v) { return vFee(v) > 0; }), payMode, vFee);
+    var wdM = [0, 0, 0, 0, 0, 0, 0]; D.visits.forEach(function (v) { var d = vDate(v); if (d) wdM[new Date(d + 'T00:00:00').getDay()]++; });
+    var dxM = {}; D.visits.concat(D.adms).forEach(function (o) { var d = diag(o); if (!d) return; d = d.split(/[,;\n]/)[0].trim(); if (!d) return; d = d.charAt(0).toUpperCase() + d.slice(1).toLowerCase(); dxM[d] = (dxM[d] || 0) + 1; });
+    var wardNow = countBy(admittedNow, ward);
+
+    var gColors = { 'Male': '#2563eb', 'Female': '#db2777', 'Other': '#7c3aed', 'Not set': '#94a3b8' };
+    var schColors = { 'MJPJAY': '#ea580c', 'AB-PMJAY': '#16a34a', 'Cash / General': '#2563eb', 'Insurance / TPA': '#7c3aed', 'CGHS': '#0891b2', 'ECHS': '#65a30d', 'Free / Charity': '#64748b' };
+    function colorize(items, map) { return items.map(function (x, i) { x.color = map[x.label] || PAL[i % PAL.length]; return x; }); }
+
+    var hosp = (db.settings && (db.settings.hospitalName || db.settings.name || db.settings.hospital)) || 'TRUE HOPE DIGITAL SOLUTIONS';
+    var chips = [['today', 'Today'], ['7', '7 Days'], ['30', '30 Days'], ['month', 'This Month'], ['lmonth', 'Last Month'], ['90', '90 Days'], ['fy', 'Financial Year'], ['year', 'This Year'], ['all', 'All Time']];
+
+    var h = '<div class="thd" id="thdRoot">';
+    h += '<div class="thd-hero"><h2>📊 Hospital Statistics Dashboard</h2><div class="sub">' + E(hosp) + ' &nbsp;•&nbsp; ' + E(R.label) + ': <b>' + E(dmyS(R.from)) + '</b> to <b>' + E(dmyS(R.to)) + '</b>' + (P ? ' &nbsp;•&nbsp; compared with ' + E(dmyS(R.prev.from)) + ' – ' + E(dmyS(R.prev.to)) : '') + '</div>';
+    h += '<div class="thd-bar thd-noprint">' + chips.map(function (c) { return '<button class="thd-chip' + (S.range === c[0] ? ' on' : '') + '" onclick="__THDash.set(\'' + c[0] + '\')">' + c[1] + '</button>'; }).join('');
+    h += '<span style="margin-left:8px;font-size:12px">From</span><input type="date" id="thdFrom" value="' + E(R.from) + '"><span style="font-size:12px">To</span><input type="date" id="thdTo" value="' + E(R.to) + '"><button class="thd-chip' + (S.range === 'custom' ? ' on' : '') + '" onclick="__THDash.apply()">Apply</button><button class="thd-chip" onclick="__THDash.print()">🖨 Print</button></div></div>';
+
+    /* KPI tiles */
+    h += '<div class="thd-kpis">';
+    h += kpi('🧑‍⚕️', '#2563eb', fmt(D.visits.length), 'OPD Visits', D.visits.length, P && P.visits.length);
+    h += kpi('🆕', '#0891b2', fmt(D.regs.length), 'New Registrations (UHID)', D.regs.length, P && P.regs.length);
+    h += kpi('🛏️', '#7c3aed', fmt(D.adms.length), 'IPD Admissions', D.adms.length, P && P.adms.length);
+    h += kpi('✅', '#16a34a', fmt(D.dis.length), 'Discharges', D.dis.length, P && P.dis.length);
+    h += kpi('💰', '#ea580c', money(D.rev), 'Total Collection', D.rev, P && P.rev);
+    h += kpi('📈', '#db2777', (Math.round(D.visits.length / span * 10) / 10).toLocaleString('en-IN'), 'Avg OPD per Day', null, null);
+    h += kpi('🏥', '#65a30d', fmt(admittedNow.length) + (totalBeds ? ' / ' + fmt(totalBeds) : ''), 'Currently Admitted' + (totalBeds ? ' / Beds' : ''), null, null);
+    h += kpi('📊', '#f59e0b', occ == null ? '—' : occ.toFixed(0) + '%', 'Bed Occupancy (now)', null, null);
+    h += '</div>';
+
+    /* Row 1 - patient flow trend + revenue split */
+    h += '<div class="thd-g thd-g21">' +
+      card('Patient Flow Trend', (daily ? 'Daily' : 'Monthly') + ' OPD visits, IPD admissions and discharges — hover points for values',
+        lineChart(labels, [{ name: 'OPD Visits', color: '#2563eb', values: opdS }, { name: 'IPD Admissions', color: '#7c3aed', values: admS, area: false }, { name: 'Discharges', color: '#16a34a', values: disS, area: false }])) +
+      card('Revenue Split', 'Where the collection came from',
+        donut(colorize([{ label: 'OPD Fees', value: D.opdRev }, { label: 'Other Bills', value: D.billRev }, { label: 'IPD Receipts', value: D.ipdRev }].filter(function (x) { return x.value > 0; }), { 'OPD Fees': '#2563eb', 'Other Bills': '#0891b2', 'IPD Receipts': '#7c3aed' }), { money: true, center: 'Collection' })) +
+      '</div>';
+
+    /* Row 2 - revenue trend + scheme */
+    h += '<div class="thd-g thd-g21">' +
+      card('Collection Trend', (daily ? 'Daily' : 'Monthly') + ' collection (stacked by source)',
+        barChart(labels, [{ name: 'OPD Fees', color: '#2563eb', values: revOpd }, { name: 'Other Bills', color: '#0891b2', values: revBill }, { name: 'IPD Receipts', color: '#7c3aed', values: revIpd }], { money: true })) +
+      card('Scheme-wise Patients', 'MJPJAY / AB-PMJAY / Cash / Insurance (OPD + IPD)', donut(colorize(toItems(schM), schColors), { center: 'Patients' })) +
+      '</div>';
+
+    /* Row 3 - three donuts */
+    h += '<div class="thd-g thd-g111">' +
+      card('Department-wise OPD', 'Share of OPD visits', donut(toItems(deptM, 8), { center: 'Visits' })) +
+      card('Gender Ratio', 'Unique patients seen', donut(colorize(toItems(genderM), gColors), { center: 'Patients' })) +
+      card('New vs Follow-up', 'OPD visit type', donut(colorize(toItems(typeM), { 'New': '#16a34a', 'Follow-up': '#f59e0b' }), { center: 'Visits' })) +
+      '</div>';
+
+    /* Row 4 - doctors + age */
+    var docItems = toItems(docM).slice(0, 10).map(function (x) { x.extra = docRev[x.label] ? '(' + money(docRev[x.label]) + ')' : ''; return x; });
+    h += '<div class="thd-g thd-g11">' +
+      card('Doctor-wise OPD', 'Top consultants by OPD visits (consultation collection in brackets)', hbars(docItems)) +
+      card('Age Group Distribution', 'Unique patients by age (years)', barChart(Object.keys(ageM), [{ name: 'Patients', color: '#0891b2', values: Object.keys(ageM).map(function (k) { return ageM[k]; }) }], { h: 240 })) +
+      '</div>';
+
+    /* Row 5 - weekday + payment mode */
+    h += '<div class="thd-g thd-g21">' +
+      card('Busiest Days of the Week', 'Total OPD visits by weekday — helps duty roster planning', barChart([1, 2, 3, 4, 5, 6, 0].map(function (d) { return WD[d]; }), [{ name: 'OPD Visits', color: '#7c3aed', values: [1, 2, 3, 4, 5, 6, 0].map(function (d) { return wdM[d]; }) }], { h: 220 })) +
+      card('OPD Payment Mode', 'Consultation collection by mode', donut(toItems(payM), { money: true, center: 'OPD Fees' })) +
+      '</div>';
+
+    /* Row 6 - IPD + wards + diagnoses */
+    var wardItems = Object.keys(wardBeds).length
+      ? Object.keys(wardBeds).map(function (w) { var o = wardNow[w] || 0, b = wardBeds[w]; return { label: w, value: o, extra: b ? '/ ' + b + ' beds (' + Math.round(o / b * 100) + '%)' : '' }; }).concat(Object.keys(wardNow).filter(function (w) { return !(w in wardBeds); }).map(function (w) { return { label: w, value: wardNow[w] }; }))
+      : toItems(wardNow);
+    h += '<div class="thd-g thd-g111">' +
+      card('IPD Summary', 'Selected period',
+        '<div class="thd-mini"><div><b>' + fmt(D.adms.length) + '</b><span>Admitted</span></div><div><b>' + fmt(D.dis.length) + '</b><span>Discharged</span></div><div><b>' + (avgLos ? avgLos.toFixed(1) : '0') + '</b><span>Avg stay (days)</span></div></div>' +
+        '<div style="margin-top:10px">' + donut(colorize(toItems(ipdSch), schColors), { center: 'Admissions' }) + '</div>') +
+      card('Ward Occupancy (live)', 'Patients currently admitted per ward', wardItems.length ? hbars(wardItems, '#16a34a') : empty('No patient admitted right now')) +
+      card('Top Diagnoses', 'Most common in OPD + IPD', hbars(toItems(dxM).slice(0, 8), '#ea580c')) +
+      '</div>';
+
+    h += '<div style="font-size:11px;color:#94a3b8;text-align:right;margin:4px 2px 10px">Generated ' + E(dmyS(t)) + ' • TRUE HOPE DIGITAL SOLUTIONS</div></div>';
+    return h;
+  }
+  function dmyS(d) { try { var r = dmy(d); if (r) return r; } catch (e) { } return d ? d.slice(8, 10) + '-' + d.slice(5, 7) + '-' + d.slice(0, 4) : ''; }
+
+  function safeRender() {
+    try { return render(); }
+    catch (e) { console.error('Dashboard update error', e); return '<div class="card"><h3>📊 Dashboard</h3><p>Could not build the dashboard: ' + E(e.message) + '</p></div>'; }
+  }
+
+  /* ---------- register menu + screen ---------- */
+  TH.page('dashstats', safeRender);
+  TH.addMenu('dash', 'Dashboard', '📊');
+  TH.addMenuItem('dash', 'dashstats', 'Statistics Dashboard');
+  TH.addMenuItem('rep', 'dashstats', 'Graphs & Statistics');
+})();
+/*TH-SIGN:0c943446145b29c63137512cfccac275*/

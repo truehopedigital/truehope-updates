@@ -1,0 +1,569 @@
+/*TRUEHOPE-UPDATE {"id":"th-tpa-schemes-20261120","name":"TPA / MJPJAY / PMJAY / Insurance Module","version":"1.1","date":"2026-11-20","description":"v1.1: neat hospital header on prints, Plain paper / Letterhead option. TPA & scheme cases for IPD and Day Care patients: beneficiary/policy details, package, pre-auth & enhancement tracking, claim submission, query log, settlement with TDS/deduction/UTR, scheme-wise document checklist, dashboard with aging, register, CSV and prints."} */
+(function () {
+  if (window.__thTPA) return;
+  window.__thTPA = true;
+
+  /* ================= helpers ================= */
+  function E(s) { try { return esc(String(s == null ? "" : s)); } catch (e) { return String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;"); } }
+  function V(v) { return v == null ? "" : String(v); }
+  function iso(d) { d = d || new Date(); return d.getFullYear() + "-" + ("0" + (d.getMonth() + 1)).slice(-2) + "-" + ("0" + d.getDate()).slice(-2); }
+  function show(s) { if (!s) return ""; var p = String(s).split("-"); return p.length === 3 ? p[2] + "-" + p[1] + "-" + p[0] : s; }
+  function money(n) { n = Math.round((+n || 0) * 100) / 100; return "₹ " + n.toLocaleString("en-IN", { minimumFractionDigits: n % 1 ? 2 : 0, maximumFractionDigits: 2 }); }
+  function monthStart() { var d = new Date(); return iso(new Date(d.getFullYear(), d.getMonth(), 1)); }
+  function yearStart() { var d = new Date(); return iso(new Date(d.getMonth() >= 3 ? d.getFullYear() : d.getFullYear() - 1, 3, 1)); }
+  function days(a, b) { if (!a) return 0; var x = new Date(a + "T00:00:00"), y = new Date((b || iso()) + "T00:00:00"); return Math.round((y - x) / 864e5); }
+  function uid() { return "tp" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
+  function who() { try { if (window.curUser && (curUser.name || curUser.u)) return curUser.name || curUser.u; var h = document.querySelector("header"); var m = h && h.innerText.match(/([\w.]+)\s*•\s*\w+/); return m ? m[1] : ""; } catch (e) { return ""; } }
+  function g(id) { var el = document.getElementById(id); return el ? String(el.value).trim() : ""; }
+  function opts(list, sel, blank) { return (blank != null ? '<option value="">' + E(blank) + "</option>" : "") + list.map(function (c) { return "<option" + (String(c) === String(sel) ? " selected" : "") + ">" + E(c) + "</option>"; }).join(""); }
+  function normDate(v) {
+    if (!v) return ""; var s = String(v);
+    var m = s.match(/^(\d{4})-(\d{2})-(\d{2})/); if (m) return m[1] + "-" + m[2] + "-" + m[3];
+    m = s.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})/); if (m) return m[3] + "-" + ("0" + m[2]).slice(-2) + "-" + ("0" + m[1]).slice(-2);
+    var d = new Date(s); return isNaN(d) ? "" : iso(d);
+  }
+  function printHTML(body) {
+    var pa = document.getElementById("printArea");
+    if (!pa) { pa = document.createElement("div"); pa.id = "printArea"; document.body.appendChild(pa); }
+    pa.innerHTML = '<div class="thtp-pr">' + hdrHTML() + body + ftrHTML() + "</div>";
+    window.print();
+  }
+  /* ---------- print header: plain paper (hospital header) or pre-printed letterhead ---------- */
+  function paper() {
+    db.settings = db.settings || {};
+    var p = db.settings.thPaper;
+    if (!p || typeof p !== "object") p = db.settings.thPaper = { mode: "plain", top: 40, bottom: 25 };
+    return p;
+  }
+  function hdrHTML() {
+    var p = paper();
+    if (p.mode === "letterhead") return '<div style="height:' + (+p.top || 0) + 'mm"></div>';
+    var raw = ""; try { raw = printHead() || ""; } catch (e) {}
+    var t = document.createElement("div"); t.innerHTML = raw;
+    var img = t.querySelector("img");
+    Array.prototype.slice.call(t.querySelectorAll("img,style,script")).forEach(function (n) { if (n !== img) n.remove(); });
+    if (img) img.remove();
+    var txt = t.innerHTML.replace(/<br\s*\/?>/gi, "\n").replace(/<\/(div|p|h\d|tr|li|table)>/gi, "\n").replace(/<[^>]+>/g, "");
+    var ta = document.createElement("textarea"); ta.innerHTML = txt; txt = ta.value;
+    var lines = txt.split(/\n/).map(function (s) { return s.replace(/\s+/g, " ").trim(); }).filter(Boolean);
+    if (!img && !lines.length) return raw;                       // software's own letterhead spacer — keep it
+    return '<div class="thph"><div class="thph-s">' + (img ? '<img src="' + E(img.getAttribute("src")) + '">' : "") + '</div><div class="thph-c">' +
+      (lines.length ? '<div class="thph-n">' + E(lines[0]) + "</div>" + lines.slice(1).map(function (l) { return "<div>" + E(l) + "</div>"; }).join("") : "") +
+      '</div><div class="thph-s"></div></div>';
+  }
+  function ftrHTML() { var p = paper(); return p.mode === "letterhead" ? '<div style="height:' + (+p.bottom || 0) + 'mm"></div>' : ""; }
+  function paperSel() {
+    var p = paper();
+    return '<select title="Print on" onchange="window.__thPaperSet(this.value)" style="width:auto;border-radius:8px;padding:6px 8px;font-weight:700;color:#0b2545">' +
+      '<option value="plain"' + (p.mode !== "letterhead" ? " selected" : "") + '>🖨 Plain paper (with header)</option><option value="letterhead"' + (p.mode === "letterhead" ? " selected" : "") + ">🖨 Letterhead (blank top)</option></select>";
+  }
+  function paperSettings() {
+    var p = paper();
+    return '<div class="card"><h3 style="margin-top:0">Print paper (Day Care &amp; TPA prints)</h3><div style="display:flex;gap:14px;flex-wrap:wrap;align-items:end">' +
+      '<div><label style="font-size:12px">Print on</label><br>' + paperSel() + "</div>" +
+      '<div><label style="font-size:12px">Letterhead top space (mm)</label><br><input type="number" id="thpp_top" value="' + E(p.top) + '" style="width:120px"></div>' +
+      '<div><label style="font-size:12px">Letterhead bottom space (mm)</label><br><input type="number" id="thpp_bot" value="' + E(p.bottom) + '" style="width:120px"></div>' +
+      '<button class="btn sec" type="button" onclick="window.__thPaperSave()">Save paper settings</button></div>' +
+      '<p style="font-size:12px;color:#64748b;margin-bottom:0">Plain paper prints the hospital name, address and logo at the top. Letterhead leaves the top and bottom blank for your printed letterhead.</p></div>';
+  }
+  if (!window.__thPaperSet) {
+    window.__thPaperSet = function (v) { paper().mode = v === "letterhead" ? "letterhead" : "plain"; save(); try { toast("Print on: " + (v === "letterhead" ? "Letterhead" : "Plain paper")); } catch (e) {} };
+    window.__thPaperSave = function () {
+      var p = paper(), t = document.getElementById("thpp_top"), b = document.getElementById("thpp_bot");
+      if (t) p.top = Math.max(0, Math.min(120, +t.value || 0)); if (b) p.bottom = Math.max(0, Math.min(80, +b.value || 0));
+      save(); try { toast("Paper settings saved"); } catch (e) {}
+    };
+  }
+  function csv(name, rows) {
+    var t = rows.map(function (r) { return r.map(function (c) { c = V(c); return /[",\n]/.test(c) ? '"' + c.replace(/"/g, '""') + '"' : c; }).join(","); }).join("\r\n");
+    var a = document.createElement("a"); a.href = URL.createObjectURL(new Blob(["﻿" + t], { type: "text/csv" })); a.download = name; document.body.appendChild(a); a.click(); setTimeout(function () { a.remove(); }, 500);
+  }
+  function refresh(p) { try { go(p || "thTPACase"); } catch (e) {} }
+  function audit2(a, b) { try { audit(a, b); } catch (e) {} }
+
+  /* ================= data (new keys only) ================= */
+  var SCHEMES = ["MJPJAY", "AB-PMJAY", "MJPJAY + AB-PMJAY", "Insurance (cashless)", "Insurance (reimbursement)", "CGHS", "ECHS", "ESIC", "Corporate", "Other"];
+  var STAGES = ["Pre-auth pending", "Pre-auth query", "Approved", "Enhancement pending", "Pre-auth rejected", "Discharged – claim to submit", "Claim submitted", "Claim query", "Settled", "Partially settled", "Claim rejected", "Closed"];
+  var OPEN_CLAIM = ["Claim submitted", "Claim query"];
+  var DONE = ["Settled", "Partially settled", "Claim rejected", "Pre-auth rejected", "Closed"];
+  var DEF_INS = ["Star Health", "Niva Bupa", "Care Health", "HDFC ERGO", "ICICI Lombard", "Bajaj Allianz", "New India Assurance", "United India", "National Insurance", "Oriental Insurance", "Aditya Birla Health", "ManipalCigna", "SBI General", "Tata AIG", "Reliance General", "Future Generali", "IFFCO Tokio", "Universal Sompo", "Cholamandalam MS", "Go Digit"];
+  var DEF_TPA = ["Medi Assist", "MD India", "Paramount Health", "Health India", "Vidal Health", "FHPL (Family Health Plan)", "Raksha Health", "Heritage Health", "Ericson", "Safeway", "Park Mediclaim", "Genins", "Vipul MedCorp", "East West Assist", "Good Health", "Anmol Medicare", "Direct (no TPA)"];
+  var DEF_DOCS = {
+    "MJPJAY / AB-PMJAY": ["Ration card / PMJAY e-card (Ayushman card)", "Aadhaar card", "Beneficiary photo at admission (with Arogyamitra)", "Domicile / identity proof (if needed)", "Pre-authorization form / e-request", "Admission & clinical notes (indoor case paper)", "Investigation reports supporting diagnosis", "Clinical / radiology photographs (if package needs)", "Approval (pre-auth) letter", "OT notes / procedure notes (surgical)", "Implant sticker / invoice (if used)", "Discharge summary (signed)", "Final bill & break-up (zero bill to patient)", "Discharge photo with patient", "Patient satisfaction / feedback letter", "Follow-up / post-op photo (if needed)", "Death summary + certificate (if death)"],
+    "Insurance": ["Policy copy / health e-card", "Patient Aadhaar + PAN (KYC)", "Claim form Part A (patient)", "Claim form Part B (hospital)", "Pre-auth request form (signed by doctor)", "Approval / authorization letter", "First consultation paper", "Indoor case papers", "Investigation reports", "OT notes / procedure notes", "Implant invoice + sticker", "Discharge summary", "Final bill with detailed break-up", "Pharmacy bills", "MLC / FIR copy (if accident)", "Cancelled cheque (reimbursement)", "Previous claim / policy history (if asked)"],
+    "CGHS / ECHS / ESIC / Corporate": ["Beneficiary card (CGHS / ECHS / ESIC / employee ID)", "Referral / permission letter", "Aadhaar card", "Indoor case papers", "Investigation reports", "OT / procedure notes", "Implant invoice + sticker", "Discharge summary", "Final bill as per approved rates", "Medicine bills", "Emergency certificate (if no referral)"]
+  };
+  function docGroup(s) { return /MJPJAY|PMJAY/i.test(s || "") ? "MJPJAY / AB-PMJAY" : /insur|^other$/i.test(s || "") ? "Insurance" : "CGHS / ECHS / ESIC / Corporate"; }
+  function TP() { if (!Array.isArray(db.thTPA)) db.thTPA = []; return db.thTPA; }
+  function live() { return TP().filter(function (x) { return !x.deleted; }); }
+  function CFG() {
+    db.settings = db.settings || {};
+    var c = db.settings.thTPA;
+    if (!c || typeof c !== "object") c = db.settings.thTPA = {};
+    if (!Array.isArray(c.insurers) || !c.insurers.length) c.insurers = DEF_INS.slice();
+    if (!Array.isArray(c.tpas) || !c.tpas.length) c.tpas = DEF_TPA.slice();
+    if (!c.docs || typeof c.docs !== "object") c.docs = {};
+    Object.keys(DEF_DOCS).forEach(function (k) { if (!Array.isArray(c.docs[k]) || !c.docs[k].length) c.docs[k] = DEF_DOCS[k].slice(); });
+    return c;
+  }
+  function byId(id) { return TP().filter(function (x) { return String(x.id) === String(id); })[0] || null; }
+  function nextNo() {
+    var y = new Date().getFullYear(), max = 0, re = new RegExp("^TPA/" + y + "/(\\d+)$");
+    TP().forEach(function (x) { var m = re.exec(x.no || ""); if (m) max = Math.max(max, +m[1]); });
+    return "TPA/" + y + "/" + ("000" + (max + 1)).slice(-4);
+  }
+  function adms() { return Array.isArray(db.admissions) ? db.admissions : (db.admissions && typeof db.admissions === "object" ? Object.keys(db.admissions).map(function (k) { return db.admissions[k]; }) : []); }
+  function patients() { var p = db.patients; if (Array.isArray(p)) return p; if (p && typeof p === "object") return Object.keys(p).map(function (k) { return p[k]; }); return []; }
+  function patBy(u) { var p = null; try { p = getP(u); } catch (e) {} if (!p) p = patients().filter(function (x) { return String(x.uhid || x.id) === String(u); })[0]; return p || {}; }
+  function pinfo(p) {
+    p = p || {}; var age = ""; try { age = ageText(p); } catch (e) {} if (!age) age = V(p.age || p.ageText);
+    return { uhid: V(p.uhid || p.id), name: V(p.name || p.pname || p.fullName || p.patientName), age: age, sex: V(p.sex || p.gender), mobile: V(p.mobile || p.phone || p.mob || p.contact), address: V(p.address || p.addr || p.city) };
+  }
+  function admInfo(A) {
+    var p = patBy(A.uhid), pi = pinfo(p);
+    return { uhid: V(A.uhid || pi.uhid), name: pi.name || V(A.name || A.pname), age: pi.age, sex: pi.sex, mobile: pi.mobile, address: pi.address,
+      ipd: V(A.ipdNo || A.ipd || A.ipdno || A.no || A.id), ward: V(A.ward || A.wardName), bed: V(A.bed || A.bedNo || A.bedName),
+      doa: normDate(A.doa || A.admDate || A.date || A.admitDate || A.dateOfAdmission || A.created), dod: normDate(A.dod || A.disDate || A.dischargeDate || (A.discharge && A.discharge.date)),
+      doctor: V(A.doctor || A.consultant || A.drName), diag: V(A.diagnosis || A.provDiag || A.diag) };
+  }
+  function isDis(A) { return !!(A.dod || A.disDate || A.dischargeDate || A.discharged || /discharg/i.test(A.status || "")); }
+  function pend(x) {   // amount still to be received from scheme / insurer
+    var exp = +x.claimAmt || +x.apprAmt || 0;
+    return DONE.indexOf(x.stage) >= 0 ? 0 : exp;
+  }
+  function stBadge(s) { var c = DONE.indexOf(s) >= 0 ? (/rejected/i.test(s) ? "r" : "g") : /query/i.test(s) ? "r" : /pending|submit/i.test(s) ? "a" : ""; return '<span class="thtp-badge ' + c + '">' + E(s) + "</span>"; }
+
+  var ST = window.__thTPS = window.__thTPS || { id: null, from: yearStart(), to: iso(), sch: "", stg: "", q: "", src: "IPD", pq: "" };
+
+  /* ================= style ================= */
+  TH.css([
+    ".thph{display:flex;align-items:center;gap:12px;border-bottom:2px solid #0b2545;padding-bottom:6px;margin-bottom:10px}",
+    ".thph-s{width:95px;flex:none}.thph-s img{max-width:95px;max-height:80px;display:block}",
+    ".thph-c{flex:1;text-align:center;font-size:11.5px;line-height:1.35;color:#111}.thph-n{font-size:20px;font-weight:800;color:#0b2545;letter-spacing:.3px;text-transform:uppercase}",
+    ".thtp input[type=checkbox]{width:auto !important;height:auto !important;margin:0 !important;flex:none;accent-color:#6d28d9;transform:scale(1.15)}",
+    ".thtp-hero{background:linear-gradient(135deg,#4c1d95,#6d28d9 55%,#a78bfa);color:#fff;border-radius:16px;padding:16px 20px;margin-bottom:12px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;box-shadow:0 6px 18px rgba(109,40,217,.25)}",
+    ".thtp-hero h2{margin:0;color:#fff;font-size:22px;flex:1}.thtp-hero small{display:block;opacity:.9;font-size:12.5px;font-weight:400}",
+    ".thtp-hero .btn{background:#fff !important;color:#5b21b6 !important;border-color:#fff !important;font-weight:700}",
+    ".thtp-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(165px,1fr));gap:10px;margin-bottom:12px}",
+    ".thtp-kpi{background:#fff;border:1px solid #e4e0f5;border-radius:12px;padding:10px 14px;border-left:5px solid #7c3aed;cursor:default}",
+    ".thtp-kpi small{display:block;color:#64748b;font-size:12px}.thtp-kpi b{font-size:21px;color:#1e1b4b}",
+    ".thtp-kpi.o{border-left-color:#f59e0b}.thtp-kpi.g{border-left-color:#16a34a}.thtp-kpi.r{border-left-color:#dc2626}.thtp-kpi.b{border-left-color:#0284c7}",
+    ".thtp-form{display:grid;grid-template-columns:repeat(4,1fr);gap:8px 12px}",
+    ".thtp-form label{display:block;font-size:12px;color:#475569;margin-bottom:2px}.thtp-form .w2{grid-column:span 2}.thtp-form .w4{grid-column:1/-1}",
+    ".thtp-form input,.thtp-form select,.thtp-form textarea{width:100%;box-sizing:border-box}.thtp-form textarea{min-height:54px}",
+    ".thtp-sec{background:#fff;border:1px solid #e4e0f5;border-radius:14px;padding:12px 16px;margin-bottom:12px}",
+    ".thtp-sec h3{margin:0 0 10px;font-size:15.5px;color:#4c1d95;display:flex;align-items:center;gap:8px}",
+    ".thtp-sec h3 i{font-style:normal;background:#ede9fe;color:#5b21b6;border-radius:50%;width:24px;height:24px;display:inline-flex;align-items:center;justify-content:center;font-size:12px}",
+    ".thtp-badge{display:inline-block;font-size:11px;font-weight:700;border-radius:20px;padding:2px 9px;background:#ede9fe;color:#5b21b6;white-space:nowrap}",
+    ".thtp-badge.g{background:#dcfce7;color:#166534}.thtp-badge.r{background:#fee2e2;color:#991b1b}.thtp-badge.a{background:#fef3c7;color:#92400e}",
+    ".thtp-t td,.thtp-t th{font-size:13px}.thtp-t .r{text-align:right}",
+    ".thtp-docs{display:grid;grid-template-columns:1fr 1fr;gap:4px 18px}.thtp-docs label{display:flex !important;align-items:center;gap:8px;font-size:13px;padding:4px 6px;border-radius:8px;cursor:pointer}",
+    ".thtp-docs label:hover{background:#f5f3ff}.thtp-docs label.ok{color:#166534}",
+    ".thtp-prog{height:8px;background:#ede9fe;border-radius:10px;overflow:hidden;margin:4px 0 10px}.thtp-prog div{height:100%;background:linear-gradient(90deg,#7c3aed,#16a34a)}",
+    ".thtp-flow{display:flex;gap:4px;flex-wrap:wrap;margin:0 0 12px}.thtp-flow span{font-size:11.5px;padding:4px 10px;border-radius:20px;background:#f1f5f9;color:#64748b}.thtp-flow span.on{background:#6d28d9;color:#fff;font-weight:700}.thtp-flow span.done{background:#dcfce7;color:#166534}",
+    ".thtp-tabs{display:flex;gap:6px;margin-bottom:10px}.thtp-tabs button{border:1px solid #cbd5e1;background:#fff;border-radius:20px;padding:6px 14px;cursor:pointer;font-size:13px}.thtp-tabs button.on{background:#6d28d9;color:#fff;border-color:#6d28d9;font-weight:700}",
+    ".thtp-pr table{width:100%;border-collapse:collapse;margin:6px 0}.thtp-pr td,.thtp-pr th{border:1px solid #333;padding:4px 6px;font-size:12px;vertical-align:top;text-align:left}",
+    ".thtp-pr th{background:#f1f5f9}.thtp-pr h3{text-align:center;margin:6px 0;font-size:16px}.thtp-pr .r{text-align:right}.thtp-pr .sig{display:flex;justify-content:space-between;margin-top:40px;font-size:12px}",
+    "@media(max-width:900px){.thtp-form{grid-template-columns:1fr 1fr}.thtp-docs{grid-template-columns:1fr}}"
+  ].join(""));
+
+  /* ================= menu ================= */
+  try { TH.addMenu("tpa", "TPA / SCHEMES", "🛡"); } catch (e) {}
+  try {
+    TH.addMenuItem("tpa", "thTPADash", "TPA Dashboard");
+    TH.addMenuItem("tpa", "thTPANew", "New TPA / Scheme Case");
+    TH.addMenuItem("tpa", "thTPAList", "TPA Register & Claims");
+    TH.addMenuItem("tpa", "thTPASet", "TPA Settings (insurers, documents)");
+    TH.addMenuItem("ipd", "thTPANew", "TPA / Scheme Case");
+    TH.addMenuItem("rep", "thTPAList", "TPA / Scheme Claims Report");
+  } catch (e) {}
+
+  /* ================= 1. dashboard ================= */
+  TH.page("thTPADash", function () {
+    var L = live(), t = iso(), ms = monthStart();
+    var active = L.filter(function (x) { return DONE.indexOf(x.stage) < 0; });
+    var preP = L.filter(function (x) { return /^Pre-auth (pending|query)$|Enhancement pending/.test(x.stage); });
+    var toSub = L.filter(function (x) { return x.stage === "Discharged – claim to submit"; });
+    var sub = L.filter(function (x) { return OPEN_CLAIM.indexOf(x.stage) >= 0; });
+    var qOpen = L.filter(function (x) { return (x.queries || []).some(function (q) { return !q.replyDate; }); });
+    var setM = L.filter(function (x) { return x.settleDate >= ms && x.settleDate <= t; });
+    var setAmt = setM.reduce(function (s, x) { return s + (+x.settleAmt || 0); }, 0), dedAmt = setM.reduce(function (s, x) { return s + (+x.deduction || 0); }, 0);
+    var subAmt = sub.reduce(function (s, x) { return s + (+x.claimAmt || 0); }, 0);
+    var buckets = [["0–30 days", 0, 30], ["31–60 days", 31, 60], ["61–90 days", 61, 90], ["Above 90 days", 91, 99999]].map(function (b) {
+      var l = sub.filter(function (x) { var d = days(x.claimDate); return d >= b[1] && d <= b[2]; });
+      return { k: b[0], n: l.length, a: l.reduce(function (s, x) { return s + (+x.claimAmt || 0); }, 0) };
+    });
+    var bySch = {};
+    L.forEach(function (x) {
+      var k = x.scheme || "—", o = bySch[k] = bySch[k] || { n: 0, appr: 0, claim: 0, set: 0, ded: 0, pend: 0 };
+      o.n++; o.appr += +x.apprAmt || 0; o.claim += +x.claimAmt || 0; o.set += +x.settleAmt || 0; o.ded += +x.deduction || 0; o.pend += pend(x);
+    });
+    var action = [];
+    preP.forEach(function (x) { if (days(x.preDate || x.doa) >= 1) action.push([x, "Pre-auth not approved for " + days(x.preDate || x.doa) + " day(s)"]); });
+    qOpen.forEach(function (x) { action.push([x, "Query not answered"]); });
+    toSub.forEach(function (x) { var d = days(x.dod); if (d >= 3) action.push([x, "Discharged " + d + " days ago — claim not submitted"]); });
+    L.filter(function (x) { return DONE.indexOf(x.stage) < 0 && x.dod && docPct(x) < 100; }).forEach(function (x) { action.push([x, "Documents " + docPct(x) + "% complete"]); });
+    var h = '<div class="thtp"><div class="thtp-hero"><h2>🛡 TPA / MJPJAY / PMJAY / Insurance<small>Pre-auth → approval → discharge → claim → query → settlement</small></h2>' +
+      '<button class="btn" type="button" onclick="go(\'thTPANew\')">+ New case</button><button class="btn" type="button" onclick="go(\'thTPAList\')">Register & claims</button></div>' +
+      '<div class="thtp-kpis"><div class="thtp-kpi"><small>Active cases</small><b>' + active.length + '</b></div><div class="thtp-kpi o"><small>Pre-auth / enhancement pending</small><b>' + preP.length + "</b></div>" +
+      '<div class="thtp-kpi b"><small>Discharged — claim to submit</small><b>' + toSub.length + '</b></div><div class="thtp-kpi o"><small>Claims submitted (pending)</small><b>' + sub.length + "</b><small>" + money(subAmt) + "</small></div>" +
+      '<div class="thtp-kpi r"><small>Open queries</small><b>' + qOpen.length + '</b></div><div class="thtp-kpi g"><small>Settled this month</small><b>' + money(setAmt) + "</b><small>Deduction " + money(dedAmt) + "</small></div></div>";
+    h += '<div style="display:grid;grid-template-columns:1fr 1.4fr;gap:12px"><div class="card"><h3 style="margin-top:0">Claim aging (submitted, not settled)</h3><table class="table thtp-t"><tr><th>Since submission</th><th class="r">Claims</th><th class="r">Amount</th></tr>' +
+      buckets.map(function (b, i) { return "<tr><td>" + (i === 3 ? "<b style='color:#b91c1c'>" + b.k + "</b>" : b.k) + '</td><td class="r">' + b.n + '</td><td class="r">' + money(b.a) + "</td></tr>"; }).join("") + "</table></div>" +
+      '<div class="card"><h3 style="margin-top:0">Scheme-wise</h3><table class="table thtp-t"><tr><th>Scheme</th><th class="r">Cases</th><th class="r">Approved</th><th class="r">Claimed</th><th class="r">Settled</th><th class="r">Deduction</th><th class="r">Pending</th></tr>' +
+      (Object.keys(bySch).length ? Object.keys(bySch).map(function (k) { var o = bySch[k]; return "<tr><td>" + E(k) + '</td><td class="r">' + o.n + '</td><td class="r">' + money(o.appr) + '</td><td class="r">' + money(o.claim) + '</td><td class="r">' + money(o.set) + '</td><td class="r">' + money(o.ded) + '</td><td class="r"><b>' + money(o.pend) + "</b></td></tr>"; }).join("") : '<tr><td colspan="7" style="color:#64748b">No case yet.</td></tr>') + "</table></div></div>";
+    h += '<div class="card"><h3 style="margin-top:0">⚠ Action needed <span class="thtp-badge ' + (action.length ? "r" : "g") + '">' + action.length + "</span></h3>" +
+      (action.length ? '<table class="table thtp-t"><tr><th>Case</th><th>Patient</th><th>Scheme</th><th>Stage</th><th>What to do</th><th></th></tr>' + action.slice(0, 40).map(function (a) { var x = a[0]; return "<tr><td>" + E(x.no) + "</td><td>" + E(x.ptName) + "<br><small>" + E(x.uhid) + " · " + E(x.refNo) + "</small></td><td>" + E(x.scheme) + "</td><td>" + stBadge(x.stage) + "</td><td>" + E(a[1]) + '</td><td><button class="btn sm" type="button" onclick="thTPA.open(\'' + x.id + "')\">Open</button></td></tr>"; }).join("") + "</table>"
+        : '<p style="color:#15803d;margin:0">Everything is up to date. ✔</p>') + "</div></div>";
+    return h;
+  });
+
+  /* ================= 2. new case: pick IPD / Day Care / patient ================= */
+  TH.page("thTPANew", function () {
+    var h = '<div class="thtp"><div class="thtp-hero"><h2>🛡 New TPA / Scheme Case<small>Choose the patient — details fill automatically. Next case no.: <b>' + nextNo() + "</b></small></h2>" +
+      '<button class="btn" type="button" onclick="go(\'thTPADash\')">◀ TPA dashboard</button></div>' +
+      '<div class="thtp-tabs">' + [["IPD", "IPD admissions"], ["DC", "Day Care"], ["PT", "Search patient (UHID)"]].map(function (t) { return '<button type="button" class="' + (ST.src === t[0] ? "on" : "") + '" onclick="thTPA.src(\'' + t[0] + "')\">" + t[1] + "</button>"; }).join("") + "</div>" +
+      '<div class="card"><input id="thtp_pq" placeholder="Filter by name, UHID, IPD / DC no…" value="' + E(ST.pq) + '" oninput="thTPA.pq(this.value)" style="max-width:480px;margin-bottom:8px">';
+    var q = (ST.pq || "").toLowerCase();
+    function has(x) { return !q || JSON.stringify(x).toLowerCase().indexOf(q) >= 0; }
+    function linked(src, id) { return live().filter(function (x) { return x.src === src && String(x.refId) === String(id); })[0]; }
+    if (ST.src === "IPD") {
+      var L = adms().slice().reverse().filter(function (A) { return !A.cancelled && !A.deleted; }).map(function (A) { return [A, admInfo(A)]; }).filter(function (r) { return has(r[1]); }).slice(0, 80);
+      h += L.length ? '<table class="table thtp-t"><tr><th>IPD No.</th><th>UHID</th><th>Patient</th><th>Admitted</th><th>Ward / bed</th><th>Doctor</th><th>Status</th><th></th></tr>' + L.map(function (r) {
+        var A = r[0], i = r[1], ex = linked("IPD", A.id);
+        return "<tr><td><b>" + E(i.ipd) + "</b></td><td>" + E(i.uhid) + "</td><td>" + E(i.name) + "<br><small>" + E([i.age, i.sex].filter(Boolean).join(" / ")) + "</small></td><td>" + show(i.doa) + "</td><td>" + E([i.ward, i.bed].filter(Boolean).join(" / ")) + "</td><td>" + E(i.doctor) + "</td><td>" + (isDis(A) ? "Discharged" : "<b>Admitted</b>") + "</td><td>" +
+          (ex ? '<button class="btn sm sec" type="button" onclick="thTPA.open(\'' + ex.id + "')\">Open " + E(ex.no) + "</button>" : '<button class="btn sm" type="button" onclick="thTPA.openFor(\'IPD\',\'' + E(String(A.id)).replace(/'/g, "\\'") + "')\">+ Create case</button>") + "</td></tr>";
+      }).join("") + "</table>" : '<p style="color:#64748b">No IPD admission found.</p>';
+    } else if (ST.src === "DC") {
+      var D = window.thDC && thDC.list ? thDC.list().slice().reverse().filter(function (x) { return x.status !== "Cancelled" && has(x); }).slice(0, 80) : null;
+      if (!D) h += '<p style="color:#b91c1c">Day Care module is not installed.</p>';
+      else h += D.length ? '<table class="table thtp-t"><tr><th>DC No.</th><th>UHID</th><th>Patient</th><th>Date</th><th>Procedure</th><th>Payer</th><th>Status</th><th></th></tr>' + D.map(function (x) {
+        var ex = linked("DC", x.id);
+        return "<tr><td><b>" + E(x.no) + "</b></td><td>" + E(x.uhid) + "</td><td>" + E(x.ptName) + "</td><td>" + show(x.date) + "</td><td>" + E(x.procedure) + "</td><td>" + E(x.payer) + "</td><td>" + E(x.status) + "</td><td>" +
+          (ex ? '<button class="btn sm sec" type="button" onclick="thTPA.open(\'' + ex.id + "')\">Open " + E(ex.no) + "</button>" : '<button class="btn sm" type="button" onclick="thTPA.openFor(\'DC\',\'' + x.id + "')\">+ Create case</button>") + "</td></tr>";
+      }).join("") + "</table>" : '<p style="color:#64748b">No Day Care case found.</p>';
+    } else {
+      var P = q.length >= 2 ? patients().filter(function (p) { var i = pinfo(p); return (i.uhid + " " + i.name + " " + i.mobile).toLowerCase().indexOf(q) >= 0; }).slice(-40).reverse() : [];
+      h += q.length < 2 ? '<p style="color:#64748b">Type at least 2 letters to search (for OPD / other cases without IPD or Day Care admission).</p>'
+        : P.length ? '<table class="table thtp-t"><tr><th>UHID</th><th>Patient</th><th>Age / Sex</th><th>Mobile</th><th></th></tr>' + P.map(function (p) { var i = pinfo(p); return "<tr><td><b>" + E(i.uhid) + "</b></td><td>" + E(i.name) + "</td><td>" + E([i.age, i.sex].filter(Boolean).join(" / ")) + "</td><td>" + E(i.mobile) + '</td><td><button class="btn sm" type="button" onclick="thTPA.openFor(\'PT\',\'' + E(i.uhid).replace(/'/g, "\\'") + "')\">+ Create case</button></td></tr>"; }).join("") + "</table>"
+          : '<p style="color:#b91c1c">No patient found.</p>';
+    }
+    return h + "</div></div>";
+  });
+
+  /* ================= 3. case file ================= */
+  var FLOW = ["Pre-auth", "Approved", "Discharged", "Claim submitted", "Settled"];
+  function flowIdx(s) { return /^Pre-auth (pending|query)|Enhancement/.test(s) ? 0 : s === "Approved" ? 1 : /^Discharged/.test(s) ? 2 : /^Claim (submitted|query)/.test(s) ? 3 : /Settled|Closed/.test(s) ? 4 : -1; }
+  function docList(x) { return CFG().docs[docGroup(x.scheme)] || []; }
+  function docPct(x) { var l = docList(x), d = x.docs || {}; if (!l.length) return 100; return Math.round(l.filter(function (k) { return d[k]; }).length / l.length * 100); }
+  TH.page("thTPACase", function () {
+    var x = byId(ST.id);
+    if (!x) return '<div class="card">Case not found. <button class="btn sm" onclick="go(\'thTPADash\')">TPA dashboard</button></div>';
+    var c = CFG(), fi = flowIdx(x.stage), ins = /insur|corporate|other/i.test(x.scheme || ""), pct = docPct(x);
+    var docs = (Array.isArray(db.doctors) ? db.doctors : []).map(function (d) { return d && d.name; }).filter(Boolean);
+    function inp(id, lab, val, type, cls, extra) { return '<div class="' + (cls || "") + '"><label>' + lab + '</label><input id="' + id + '"' + (type ? ' type="' + type + '"' : "") + ' value="' + E(val) + '"' + (extra || "") + "></div>"; }
+    var h = '<div class="thtp"><div class="thtp-hero"><h2>' + E(x.no) + " — " + E(x.ptName) + "<small>UHID " + E(x.uhid) + " · " + E(x.src === "DC" ? "Day Care " : x.src === "IPD" ? "IPD " : "") + E(x.refNo || "") + " · " + E(x.scheme || "Scheme not set") + "</small></h2>" + stBadge(x.stage) + paperSel() +
+      '<button class="btn" type="button" onclick="thTPA.pSum()">🖨 Case summary</button><button class="btn" type="button" onclick="thTPA.pDocs()">🖨 Document checklist</button><button class="btn" type="button" onclick="thTPA.pLetter()">🖨 Covering letter</button>' +
+      (x.src === "DC" && window.thDC ? '<button class="btn" type="button" onclick="thDC.open(\'' + x.refId + "')\">Day Care file</button>" : "") +
+      '<button class="btn" type="button" onclick="go(\'thTPADash\')">◀ Back</button></div>' +
+      '<div class="thtp-flow">' + FLOW.map(function (f, i) { return '<span class="' + (i < fi ? "done" : i === fi ? "on" : "") + '">' + (i < fi ? "✔ " : "") + f + "</span>"; }).join("") + "</div>";
+    // A patient / admission
+    h += '<div class="thtp-sec"><h3><i>A</i>Patient & admission</h3><div class="thtp-form">' +
+      inp("tp_name", "Patient name", x.ptName) + inp("tp_uhid", "UHID", x.uhid) + inp("tp_age", "Age / Sex", [x.age, x.sex].filter(Boolean).join(" / ")) + inp("tp_mob", "Mobile", x.mobile) +
+      inp("tp_ref", x.src === "DC" ? "Day Care No." : "IPD No.", x.refNo) + inp("tp_doa", "Date of admission", x.doa, "date") + inp("tp_dod", "Date of discharge", x.dod, "date") + inp("tp_ward", "Ward / bed", x.ward) +
+      inp("tp_doc", "Treating doctor", x.doctor, "", "", ' list="tp_docs"') + inp("tp_diag", "Diagnosis", x.diag, "", "w2") +
+      '<div><label>Case type</label><select id="tp_type">' + opts(["Medical", "Surgical", "Day Care", "Emergency", "Maternity", "ICU"], x.ctype || (x.src === "DC" ? "Day Care" : "Medical")) + "</select></div></div>" +
+      '<datalist id="tp_docs">' + docs.map(function (d) { return '<option value="' + E(d) + '">'; }).join("") + "</datalist></div>";
+    // B scheme
+    h += '<div class="thtp-sec"><h3><i>B</i>Scheme / insurance & beneficiary</h3><div class="thtp-form">' +
+      '<div><label>Scheme / payer</label><select id="tp_sch" onchange="thTPA.saveAll(1)">' + opts(SCHEMES, x.scheme, "— select —") + "</select></div>" +
+      (ins ? '<div><label>Insurance company</label><input id="tp_ins" list="tp_insl" value="' + E(x.insurer) + '"></div><div><label>TPA</label><input id="tp_tpa" list="tp_tpal" value="' + E(x.tpa) + '"></div>' + inp("tp_pol", "Policy no.", x.policyNo) +
+        inp("tp_card", "Health card / member ID", x.cardNo) + inp("tp_holder", "Policy holder / employee", x.holder) + '<div><label>Relation to holder</label><select id="tp_rel">' + opts(["Self", "Spouse", "Son", "Daughter", "Father", "Mother", "Other"], x.relation || "Self") + "</select></div>" +
+        inp("tp_emp", "Employer / corporate", x.employer) + inp("tp_si", "Sum insured (₹)", x.sumInsured, "number") + inp("tp_bal", "Balance sum insured (₹)", x.balanceSI, "number") + inp("tp_from", "Policy valid from", x.polFrom, "date") + inp("tp_to", "Policy valid to", x.polTo, "date")
+        : inp("tp_card", /CGHS|ECHS|ESIC/.test(x.scheme || "") ? "Beneficiary card no." : "Ration card / PMJAY ID (Ayushman)", x.cardNo) + inp("tp_ben", "Beneficiary ID / URN", x.benId) + inp("tp_aad", "Aadhaar (last 4 digits)", x.aadhaar4, "", "", ' maxlength="4"') +
+        inp("tp_head", "Head of family", x.holder) + inp("tp_case", "Scheme case / registration no.", x.schemeCaseNo) + inp("tp_amitra", "Arogyamitra / desk person", x.arogyamitra) + inp("tp_dist", "District", x.district)) +
+      "</div>" + '<datalist id="tp_insl">' + c.insurers.map(function (d) { return '<option value="' + E(d) + '">'; }).join("") + '</datalist><datalist id="tp_tpal">' + c.tpas.map(function (d) { return '<option value="' + E(d) + '">'; }).join("") + "</datalist></div>";
+    // C package
+    h += '<div class="thtp-sec"><h3><i>C</i>Package / treatment</h3><div class="thtp-form">' +
+      inp("tp_spec", "Speciality", x.speciality) + inp("tp_pcode", "Package / procedure code", x.pkgCode) + inp("tp_pname", "Package / procedure name", x.pkgName, "", "w2") +
+      inp("tp_pamt", "Package rate (₹)", x.pkgAmt, "number") + inp("tp_bill", "Hospital bill amount (₹)", x.billAmt, "number") + inp("tp_copay", "Patient co-pay / non-payable (₹)", x.copay, "number") + inp("tp_imp", "Implant / stent details", x.implant) + "</div></div>";
+    // D pre-auth
+    h += '<div class="thtp-sec"><h3><i>D</i>Pre-authorization & enhancement</h3><div class="thtp-form">' +
+      inp("tp_preno", "Pre-auth no.", x.preNo) + inp("tp_predt", "Pre-auth sent on", x.preDate, "date") + inp("tp_req", "Amount requested (₹)", x.reqAmt, "number") + '<div><label>Pre-auth status</label><select id="tp_pst">' + opts(["Pending", "Query", "Approved", "Rejected"], x.preStatus || "Pending") + "</select></div>" +
+      inp("tp_appr", "Approved amount (₹)", x.apprAmt, "number") + inp("tp_apprdt", "Approved on", x.apprDate, "date") + inp("tp_apprby", "Approval ref / letter no.", x.apprRef, "", "w2") + "</div>" +
+      '<h4 style="margin:12px 0 6px;color:#4c1d95">Enhancements</h4>' +
+      ((x.enh || []).length ? '<table class="table thtp-t"><tr><th>#</th><th>Date</th><th class="r">Requested</th><th class="r">Approved</th><th>Status</th><th>Reason</th><th></th></tr>' + x.enh.map(function (e, i) { return "<tr><td>" + (i + 1) + "</td><td>" + show(e.date) + '</td><td class="r">' + money(e.req) + '</td><td class="r">' + money(e.appr) + "</td><td>" + E(e.status) + "</td><td>" + E(e.reason) + '</td><td><button class="btn sm sec" type="button" onclick="thTPA.enhSet(' + i + ')">Update</button></td></tr>'; }).join("") + "</table>" : "") +
+      '<div class="thtp-form"><div><label>Enhancement amount (₹)</label><input id="tp_eamt" type="number"></div><div class="w2"><label>Reason</label><input id="tp_ers" placeholder="Extended stay / additional procedure / ICU"></div><div style="display:flex;align-items:end"><button class="btn sm" type="button" onclick="thTPA.enhAdd()">+ Add enhancement</button></div></div></div>';
+    // E claim
+    h += '<div class="thtp-sec"><h3><i>E</i>Claim submission</h3><div class="thtp-form">' +
+      inp("tp_cno", "Claim no.", x.claimNo) + inp("tp_cdt", "Claim submitted on", x.claimDate, "date") + inp("tp_camt", "Claim amount (₹)", x.claimAmt, "number") + inp("tp_cmode", "Submitted via", x.claimVia || "", "", "", ' placeholder="Portal / courier / email"') +
+      inp("tp_cour", "Courier / docket no.", x.courier) + inp("tp_crem", "Remarks", x.claimRem, "", "w2") + '<div style="display:flex;align-items:end">' + (x.claimDate ? '<span class="thtp-badge">' + days(x.claimDate) + " days since submission</span>" : "") + "</div></div></div>";
+    // F queries
+    h += '<div class="thtp-sec"><h3><i>F</i>Query log ' + ((x.queries || []).some(function (q) { return !q.replyDate; }) ? '<span class="thtp-badge r">open</span>' : "") + "</h3>" +
+      ((x.queries || []).length ? '<table class="table thtp-t"><tr><th>#</th><th>Stage</th><th>Raised on</th><th>Query</th><th>Reply</th><th>Replied on</th><th></th></tr>' + x.queries.map(function (q, i) {
+        return "<tr><td>" + (i + 1) + "</td><td>" + E(q.stage) + "</td><td>" + show(q.date) + "</td><td>" + E(q.text) + "</td><td>" + (q.reply ? E(q.reply) : '<input id="tp_qr' + i + '" placeholder="Type reply…">') + "</td><td>" + (q.replyDate ? show(q.replyDate) : '<span class="thtp-badge r">' + days(q.date) + " d open</span>") + "</td><td>" + (q.replyDate ? "" : '<button class="btn sm" type="button" onclick="thTPA.qReply(' + i + ')">Save reply</button>') + "</td></tr>";
+      }).join("") + "</table>" : '<p style="color:#64748b;font-size:13px;margin:0 0 6px">No query.</p>') +
+      '<div class="thtp-form"><div><label>Query on</label><select id="tp_qs">' + opts(["Pre-auth", "Enhancement", "Claim"], OPEN_CLAIM.indexOf(x.stage) >= 0 || /Discharged/.test(x.stage) ? "Claim" : "Pre-auth") + '</select></div><div><label>Date</label><input type="date" id="tp_qd" value="' + iso() + '"></div><div class="w2"><label>Query text</label><input id="tp_qt" placeholder="e.g. Send indoor case papers and HPE report"></div></div>' +
+      '<button class="btn sm" type="button" style="margin-top:6px" onclick="thTPA.qAdd()">+ Add query</button></div>';
+    // G settlement
+    h += '<div class="thtp-sec"><h3><i>G</i>Settlement / payment received</h3><div class="thtp-form">' +
+      inp("tp_sdt", "Settlement date", x.settleDate, "date") + inp("tp_samt", "Amount received (₹)", x.settleAmt, "number") + inp("tp_tds", "TDS (₹)", x.tds, "number") + inp("tp_ded", "Deduction / disallowed (₹)", x.deduction, "number") +
+      inp("tp_dres", "Reason for deduction", x.dedReason, "", "w2") + inp("tp_utr", "UTR / transaction no.", x.utr) + inp("tp_bank", "Bank / mode", x.bank) + "</div>" +
+      ((+x.claimAmt || 0) ? '<p style="font-size:12.5px;margin:6px 0 0">Claimed ' + money(x.claimAmt) + " − received " + money(x.settleAmt) + " − TDS " + money(x.tds) + " − deduction " + money(x.deduction) + " = <b>difference " + money((+x.claimAmt || 0) - (+x.settleAmt || 0) - (+x.tds || 0) - (+x.deduction || 0)) + "</b></p>" : "") + "</div>";
+    // stage + save
+    h += '<div class="thtp-sec" style="display:flex;gap:12px;align-items:end;flex-wrap:wrap"><div><label style="font-size:12px;color:#475569">Current stage</label><br><select id="tp_stage" style="min-width:250px">' + opts(STAGES, x.stage) + "</select></div>" +
+      '<div style="flex:1;min-width:220px"><label style="font-size:12px;color:#475569">Remarks</label><input id="tp_rem" value="' + E(x.remarks) + '" style="width:100%"></div>' +
+      '<label style="font-size:12px;display:flex;align-items:center;gap:6px"><input type="checkbox" id="tp_auto" checked> Set stage automatically from dates</label>' +
+      '<button class="btn" type="button" onclick="thTPA.saveAll()">💾 Save case</button></div>';
+    // H documents
+    var dl = docList(x), dd = x.docs || {};
+    h += '<div class="thtp-sec"><h3><i>H</i>Documents checklist — ' + E(docGroup(x.scheme)) + ' <span class="thtp-badge ' + (pct === 100 ? "g" : "a") + '">' + pct + "%</span></h3>" +
+      '<div class="thtp-prog"><div style="width:' + pct + '%"></div></div><div class="thtp-docs">' +
+      dl.map(function (k, i) { return '<label class="' + (dd[k] ? "ok" : "") + '"><input type="checkbox" class="tp_dk" data-i="' + i + '"' + (dd[k] ? " checked" : "") + ' onchange="thTPA.doc(' + i + ',this.checked)"> ' + E(k) + "</label>"; }).join("") + "</div></div>";
+    // history
+    if ((x.log || []).length) h += '<div class="thtp-sec"><h3>History</h3><table class="table thtp-t">' + x.log.slice().reverse().slice(0, 30).map(function (l) { return "<tr><td style='white-space:nowrap'>" + E(l.at) + "</td><td>" + E(l.by) + "</td><td>" + E(l.what) + "</td></tr>"; }).join("") + "</table></div>";
+    h += '<div style="text-align:right"><button class="btn sec sm" type="button" onclick="thTPA.del()">Delete case</button></div></div>';
+    return h;
+  });
+
+  /* ================= 4. register ================= */
+  function regList() {
+    var q = (ST.q || "").toLowerCase();
+    return live().filter(function (x) { var d = x.doa || x.created; return (!d || (d >= ST.from && d <= ST.to)) && (!ST.sch || x.scheme === ST.sch) && (!ST.stg || x.stage === ST.stg) && (!q || JSON.stringify(x).toLowerCase().indexOf(q) >= 0); })
+      .sort(function (a, b) { return (a.doa || "") < (b.doa || "") ? 1 : -1; });
+  }
+  TH.page("thTPAList", function () {
+    var L = regList(), sum = function (k) { return L.reduce(function (s, x) { return s + (+x[k] || 0); }, 0); };
+    var pendAmt = L.reduce(function (s, x) { return s + pend(x); }, 0);
+    var h = '<div class="thtp"><div class="thtp-hero"><h2>📋 TPA / Scheme Register & Claims<small>Admission date ' + show(ST.from) + " to " + show(ST.to) + "</small></h2>" +
+      paperSel() + '<button class="btn" type="button" onclick="thTPA.pReg()">🖨 Print</button><button class="btn" type="button" onclick="thTPA.csv()">⬇ Excel (CSV)</button></div>' +
+      '<div class="card" style="display:flex;gap:10px;flex-wrap:wrap;align-items:end"><div><label style="font-size:12px">From</label><input type="date" id="tpf_f" value="' + ST.from + '"></div><div><label style="font-size:12px">To</label><input type="date" id="tpf_t" value="' + ST.to + '"></div>' +
+      '<div><label style="font-size:12px">Scheme</label><select id="tpf_s">' + opts(SCHEMES, ST.sch, "All") + '</select></div><div><label style="font-size:12px">Stage</label><select id="tpf_g">' + opts(STAGES, ST.stg, "All") + "</select></div>" +
+      '<div><label style="font-size:12px">Search</label><input id="tpf_q" value="' + E(ST.q) + '" placeholder="name / UHID / claim no"></div><button class="btn" type="button" onclick="thTPA.filter()">Show</button></div>' +
+      '<div class="thtp-kpis"><div class="thtp-kpi"><small>Cases</small><b>' + L.length + '</b></div><div class="thtp-kpi b"><small>Approved</small><b>' + money(sum("apprAmt")) + '</b></div><div class="thtp-kpi o"><small>Claimed</small><b>' + money(sum("claimAmt")) + "</b></div>" +
+      '<div class="thtp-kpi g"><small>Received</small><b>' + money(sum("settleAmt")) + '</b></div><div class="thtp-kpi r"><small>Deduction + TDS</small><b>' + money(sum("deduction") + sum("tds")) + '</b></div><div class="thtp-kpi o"><small>Still to receive</small><b>' + money(pendAmt) + "</b></div></div>" +
+      '<div class="card">' + (L.length ? '<table class="table thtp-t"><tr><th>Case</th><th>Patient</th><th>IPD / DC</th><th>DOA–DOD</th><th>Scheme</th><th>Package</th><th class="r">Approved</th><th class="r">Claimed</th><th class="r">Received</th><th>Stage</th><th>Docs</th><th></th></tr>' +
+        L.map(function (x) {
+          return "<tr><td><b>" + E(x.no) + "</b>" + (x.claimNo ? "<br><small>" + E(x.claimNo) + "</small>" : "") + "</td><td>" + E(x.ptName) + "<br><small>" + E(x.uhid) + "</small></td><td>" + E(x.refNo) + "</td><td>" + show(x.doa) + (x.dod ? "<br>" + show(x.dod) : "") + "</td><td>" + E(x.scheme) + (x.insurer ? "<br><small>" + E(x.insurer) + "</small>" : "") +
+            "</td><td>" + E(x.pkgName || "") + '</td><td class="r">' + money(x.apprAmt) + '</td><td class="r">' + money(x.claimAmt) + '</td><td class="r">' + money(x.settleAmt) + "</td><td>" + stBadge(x.stage) + "</td><td>" + docPct(x) + '%</td><td><button class="btn sm" type="button" onclick="thTPA.open(\'' + x.id + "')\">Open</button></td></tr>";
+        }).join("") + "</table>" : '<p style="color:#64748b">No case in this period.</p>') + "</div></div>";
+    return h;
+  });
+
+  /* ================= 5. settings ================= */
+  TH.page("thTPASet", function () {
+    var c = CFG();
+    return '<div class="thtp"><div class="thtp-hero"><h2>⚙ TPA Settings</h2><button class="btn" type="button" onclick="go(\'thTPADash\')">◀ TPA dashboard</button></div>' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px"><div class="card"><h3 style="margin-top:0">Insurance companies (one per line)</h3><textarea id="tps_i" style="width:100%;min-height:220px">' + E(c.insurers.join("\n")) + "</textarea></div>" +
+      '<div class="card"><h3 style="margin-top:0">TPAs (one per line)</h3><textarea id="tps_t" style="width:100%;min-height:220px">' + E(c.tpas.join("\n")) + "</textarea></div></div>" +
+      Object.keys(DEF_DOCS).map(function (k, i) { return '<div class="card"><h3 style="margin-top:0">Document checklist — ' + E(k) + '</h3><textarea id="tps_d' + i + '" style="width:100%;min-height:200px">' + E(c.docs[k].join("\n")) + "</textarea></div>"; }).join("") +
+      '<button class="btn" type="button" onclick="thTPA.saveSet()">Save settings</button>' + paperSettings() + "</div>";
+  });
+
+  /* ================= prints ================= */
+  function ptRows(x) {
+    return "<table><tr><th>Case no.</th><td><b>" + E(x.no) + "</b></td><th>Scheme</th><td><b>" + E(x.scheme) + "</b>" + (x.insurer ? " — " + E(x.insurer) : "") + (x.tpa ? " / " + E(x.tpa) : "") + "</td></tr>" +
+      "<tr><th>Patient</th><td>" + E(x.ptName) + "</td><th>UHID / " + (x.src === "DC" ? "DC" : "IPD") + " no.</th><td>" + E(x.uhid) + " / " + E(x.refNo) + "</td></tr>" +
+      "<tr><th>Age / Sex</th><td>" + E([x.age, x.sex].filter(Boolean).join(" / ")) + "</td><th>Card / policy no.</th><td>" + E([x.cardNo, x.policyNo].filter(Boolean).join(" / ")) + "</td></tr>" +
+      "<tr><th>DOA / DOD</th><td>" + show(x.doa) + " / " + (show(x.dod) || "—") + "</td><th>Doctor</th><td>" + E(x.doctor) + "</td></tr>" +
+      "<tr><th>Diagnosis</th><td colspan='3'>" + E(x.diag) + "</td></tr><tr><th>Package</th><td colspan='3'>" + E([x.pkgCode, x.pkgName].filter(Boolean).join(" — ")) + (x.pkgAmt ? " (" + money(x.pkgAmt) + ")" : "") + "</td></tr></table>";
+  }
+  function pSum(x) {
+    printHTML("<h3>TPA / SCHEME CASE SUMMARY</h3>" + ptRows(x) +
+      "<table><tr><th>Pre-auth no.</th><td>" + E(x.preNo) + "</td><th>Sent on</th><td>" + show(x.preDate) + "</td></tr><tr><th>Requested</th><td>" + money(x.reqAmt) + "</td><th>Approved</th><td>" + money(x.apprAmt) + " " + (x.apprDate ? "on " + show(x.apprDate) : "") + "</td></tr>" +
+      ((x.enh || []).length ? "<tr><th>Enhancements</th><td colspan='3'>" + x.enh.map(function (e) { return show(e.date) + ": " + money(e.req) + " → " + money(e.appr) + " (" + E(e.status) + ")"; }).join("<br>") + "</td></tr>" : "") +
+      "<tr><th>Claim no.</th><td>" + E(x.claimNo) + "</td><th>Submitted</th><td>" + show(x.claimDate) + "</td></tr><tr><th>Bill amount</th><td>" + money(x.billAmt) + "</td><th>Claim amount</th><td>" + money(x.claimAmt) + "</td></tr>" +
+      "<tr><th>Received</th><td>" + money(x.settleAmt) + " " + (x.settleDate ? "on " + show(x.settleDate) : "") + "</td><th>TDS / deduction</th><td>" + money(x.tds) + " / " + money(x.deduction) + "</td></tr>" +
+      "<tr><th>UTR</th><td>" + E(x.utr) + "</td><th>Stage</th><td><b>" + E(x.stage) + "</b></td></tr>" + (x.dedReason ? "<tr><th>Deduction reason</th><td colspan='3'>" + E(x.dedReason) + "</td></tr>" : "") + "</table>" +
+      ((x.queries || []).length ? "<table><tr><th>#</th><th>Query</th><th>Raised</th><th>Reply</th><th>Replied</th></tr>" + x.queries.map(function (q, i) { return "<tr><td>" + (i + 1) + "</td><td>" + E(q.text) + "</td><td>" + show(q.date) + "</td><td>" + E(q.reply || "") + "</td><td>" + show(q.replyDate) + "</td></tr>"; }).join("") + "</table>" : "") +
+      '<div class="sig"><span>Prepared by: ' + E(who()) + "</span><span>TPA / scheme desk in-charge</span></div>");
+  }
+  function pDocs(x) {
+    var dl = docList(x), dd = x.docs || {};
+    printHTML("<h3>DOCUMENT CHECKLIST — " + E(docGroup(x.scheme)).toUpperCase() + "</h3>" + ptRows(x) +
+      "<table><tr><th style='width:6%'>#</th><th>Document</th><th style='width:14%'>Attached</th><th style='width:20%'>Remark</th></tr>" + dl.map(function (k, i) { return "<tr><td>" + (i + 1) + "</td><td>" + E(k) + "</td><td style='text-align:center'>" + (dd[k] ? "✔ Yes" : "☐") + "</td><td></td></tr>"; }).join("") + "</table>" +
+      '<div class="sig"><span>Checked by</span><span>Arogyamitra / TPA desk</span><span>Medical superintendent</span></div>');
+  }
+  function pLetter(x) {
+    var sc = x.scheme || "";
+    var to = !sc ? "The Claims Department" : /insur|corporate|other/i.test(sc) ? (x.tpa && !/direct/i.test(x.tpa) ? E(x.tpa) : E(x.insurer || "The Claims Department")) + (x.insurer && x.tpa && !/direct/i.test(x.tpa) ? "<br>(for " + E(x.insurer) + ")" : "") : /MJPJAY|PMJAY/i.test(sc) ? "The District Coordinator / Insurance Company<br>" + E(sc) : "The Competent Authority, " + E(sc);
+    var dl = docList(x).filter(function (k) { return (x.docs || {})[k]; });
+    printHTML("<p style='font-size:13px'>Date: " + show(iso()) + "</p><p style='font-size:13px'>To,<br><b>" + to + "</b></p>" +
+      "<p style='font-size:13px'><b>Subject: Submission of claim documents — " + E(x.ptName) + " (" + E(x.claimNo || x.preNo || x.no) + ")</b></p>" +
+      "<p style='font-size:13px'>Respected Sir / Madam,<br>We are submitting the claim documents of the following patient for settlement:</p>" + ptRows(x) +
+      "<table><tr><th>Pre-auth / approval no.</th><td>" + E([x.preNo, x.apprRef].filter(Boolean).join(" / ")) + "</td><th>Approved amount</th><td>" + money(x.apprAmt) + "</td></tr><tr><th>Bill amount</th><td>" + money(x.billAmt) + "</td><th>Claim amount</th><td><b>" + money(x.claimAmt) + "</b></td></tr></table>" +
+      (dl.length ? "<p style='font-size:13px;margin-bottom:2px'>Enclosures:</p><ol style='font-size:12.5px;margin-top:2px'>" + dl.map(function (k) { return "<li>" + E(k) + "</li>"; }).join("") + "</ol>" : "") +
+      "<p style='font-size:13px'>Kindly process the claim at the earliest.</p><p style='font-size:13px;margin-top:40px'>Yours faithfully,<br><br>Authorised signatory<br>(Hospital seal)</p>");
+  }
+
+  /* ================= IPD patient page: TPA button ================= */
+  function findAdmByText(t) { t = String(t || "").trim(); return adms().filter(function (a) { return [a.ipdNo, a.ipd, a.no, a.id].some(function (v) { return v != null && String(v) === t; }); })[0] || null; }
+  var busy = false, tm = null;
+  function inject() {
+    if (busy) return;
+    var chartLbl = Array.prototype.filter.call(document.querySelectorAll("b,strong,span,div,label"), function (e) { return /^Patient Chart:?$/i.test((e.textContent || "").trim()); })[0];
+    if (!chartLbl) return;
+    var bar = chartLbl.parentElement;
+    if (bar.querySelector("[data-thtp-btn]")) return;
+    var h = Array.prototype.filter.call(document.querySelectorAll("h1,h2"), function (x) { return /IPD/i.test(x.textContent || ""); })[0];
+    var A = findAdmByText(h ? (h.textContent || "").split(/\s[—–-]\s/)[0].trim() : "");
+    if (!A && h) { var m = (h.textContent || "").match(/IPD[-\w\/]*\d/); A = findAdmByText(m ? m[0] : ""); }
+    if (!A) return;
+    busy = true;
+    try {
+      var ex = live().filter(function (x) { return x.src === "IPD" && String(x.refId) === String(A.id); })[0];
+      var sample = Array.prototype.filter.call(bar.querySelectorAll("button"), function (b) { return !b.hasAttribute("data-thq-btn"); })[0];
+      bar.insertAdjacentHTML("beforeend", '<button type="button" data-thtp-btn="1" class="' + E(sample ? sample.className : "btn sm sec") + '" style="border-color:#6d28d9;color:#5b21b6;font-weight:700" onclick="thTPA.openFor(\'IPD\',\'' + E(String(A.id)).replace(/'/g, "\\'") + '\')">🛡 TPA / Scheme' + (ex ? " (" + E(ex.stage) + ")" : "") + "</button>");
+    } catch (e) { console.warn("TPA button:", e); }
+    setTimeout(function () { busy = false; }, 0);
+  }
+  new MutationObserver(function () { if (busy) return; clearTimeout(tm); tm = setTimeout(inject, 200); }).observe(document.documentElement, { childList: true, subtree: true });
+
+  /* ================= actions ================= */
+  function cur() { return byId(ST.id); }
+  function log(x, what) { (x.log = x.log || []).push({ at: new Date().toLocaleString("en-IN"), by: who(), what: what }); }
+  function autoStage(x) {
+    var openQ = (x.queries || []).filter(function (q) { return !q.replyDate; });
+    if (x.settleDate && (+x.settleAmt || 0) > 0) return (+x.deduction || 0) > 0 || ((+x.claimAmt || 0) - (+x.settleAmt || 0) - (+x.tds || 0)) > 1 ? "Partially settled" : "Settled";
+    if (/rejected|Closed/i.test(x.stage)) return x.stage;
+    if (x.claimDate) return openQ.some(function (q) { return q.stage === "Claim"; }) ? "Claim query" : "Claim submitted";
+    if (x.dod) return "Discharged – claim to submit";
+    if ((x.enh || []).some(function (e) { return e.status === "Pending"; })) return "Enhancement pending";
+    if (x.preStatus === "Rejected") return "Pre-auth rejected";
+    if (x.preStatus === "Approved" || (+x.apprAmt || 0) > 0) return "Approved";
+    if (x.preStatus === "Query" || openQ.some(function (q) { return q.stage === "Pre-auth"; })) return "Pre-auth query";
+    return "Pre-auth pending";
+  }
+  function newCase(src, ref) {
+    var x = { id: uid(), no: nextNo(), src: src, refId: "", stage: "Pre-auth pending", preStatus: "Pending", docs: {}, enh: [], queries: [], log: [], created: iso(), createdBy: who() };
+    if (src === "IPD") {
+      var A = adms().filter(function (a) { return String(a.id) === String(ref); })[0]; if (!A) return null;
+      var i = admInfo(A);
+      x.refId = A.id; x.refNo = i.ipd; x.uhid = i.uhid; x.ptName = i.name; x.age = i.age; x.sex = i.sex; x.mobile = i.mobile; x.doa = i.doa; x.dod = i.dod; x.ward = [i.ward, i.bed].filter(Boolean).join(" / "); x.doctor = i.doctor; x.diag = i.diag;
+      var pay = V(A.payer || A.payType || A.scheme || A.insurance || A.category);
+      if (/mjpjay|mpjay/i.test(pay)) x.scheme = /pmjay/i.test(pay.replace(/mjpjay/i, "")) ? "MJPJAY + AB-PMJAY" : "MJPJAY"; else if (/pmjay|ayushman/i.test(pay)) x.scheme = "AB-PMJAY"; else if (/insur|tpa|mediclaim/i.test(pay)) x.scheme = "Insurance (cashless)"; else if (/cghs/i.test(pay)) x.scheme = "CGHS"; else if (/echs/i.test(pay)) x.scheme = "ECHS";
+    } else if (src === "DC") {
+      var D = window.thDC && thDC.get(ref); if (!D) return null;
+      x.refId = D.id; x.refNo = D.no; x.uhid = D.uhid; x.ptName = D.ptName; x.age = D.age; x.sex = D.sex; x.mobile = D.mobile; x.doa = D.date; x.dod = D.disDate || ""; x.ward = D.bed; x.doctor = D.doctor; x.diag = D.diagnosis; x.ctype = "Day Care"; x.pkgName = D.procedure;
+      try { x.billAmt = thDC.totals(D).net; } catch (e) {}
+      x.scheme = /^MJPJAY$/.test(D.payer) ? "MJPJAY" : /PMJAY/.test(D.payer) ? "AB-PMJAY" : /Insurance/.test(D.payer) ? "Insurance (cashless)" : /CGHS|ECHS|ESIC|Corporate/.test(D.payer) ? D.payer : "";
+    } else {
+      var p = pinfo(patBy(ref)); if (!p.uhid) return null;
+      x.refId = p.uhid; x.uhid = p.uhid; x.ptName = p.name; x.age = p.age; x.sex = p.sex; x.mobile = p.mobile; x.doa = iso();
+    }
+    x.stage = autoStage(x);
+    log(x, "Case created from " + (src === "PT" ? "patient " + x.uhid : src + " " + x.refNo));
+    TP().push(x); save(); audit2("TPA case created", x.no + " " + x.ptName + " (" + (x.scheme || "scheme not set") + ")");
+    return x;
+  }
+  var NUMS = { tp_si: "sumInsured", tp_bal: "balanceSI", tp_pamt: "pkgAmt", tp_bill: "billAmt", tp_copay: "copay", tp_req: "reqAmt", tp_appr: "apprAmt", tp_camt: "claimAmt", tp_samt: "settleAmt", tp_tds: "tds", tp_ded: "deduction" };
+  var TXT = { tp_name: "ptName", tp_uhid: "uhid", tp_mob: "mobile", tp_ref: "refNo", tp_doa: "doa", tp_dod: "dod", tp_ward: "ward", tp_doc: "doctor", tp_diag: "diag", tp_type: "ctype", tp_sch: "scheme",
+    tp_ins: "insurer", tp_tpa: "tpa", tp_pol: "policyNo", tp_card: "cardNo", tp_holder: "holder", tp_rel: "relation", tp_emp: "employer", tp_from: "polFrom", tp_to: "polTo",
+    tp_ben: "benId", tp_aad: "aadhaar4", tp_head: "holder", tp_case: "schemeCaseNo", tp_amitra: "arogyamitra", tp_dist: "district",
+    tp_spec: "speciality", tp_pcode: "pkgCode", tp_pname: "pkgName", tp_imp: "implant", tp_preno: "preNo", tp_predt: "preDate", tp_pst: "preStatus", tp_apprdt: "apprDate", tp_apprby: "apprRef",
+    tp_cno: "claimNo", tp_cdt: "claimDate", tp_cmode: "claimVia", tp_cour: "courier", tp_crem: "claimRem", tp_sdt: "settleDate", tp_dres: "dedReason", tp_utr: "utr", tp_bank: "bank", tp_rem: "remarks" };
+  function readForm(x) {
+    Object.keys(TXT).forEach(function (id) { var el = document.getElementById(id); if (el) x[TXT[id]] = String(el.value).trim(); });
+    Object.keys(NUMS).forEach(function (id) { var el = document.getElementById(id); if (el) x[NUMS[id]] = el.value === "" ? "" : +el.value || 0; });
+    var as = g("tp_age").split("/"); if (document.getElementById("tp_age")) { x.age = (as[0] || "").trim(); x.sex = (as[1] || "").trim(); }
+    if (x.aadhaar4) x.aadhaar4 = x.aadhaar4.replace(/\D/g, "").slice(-4);   // never store full Aadhaar
+  }
+
+  window.thTPA = {
+    open: function (id) { ST.id = id; refresh("thTPACase"); },
+    src: function (s) { ST.src = s; ST.pq = ""; refresh("thTPANew"); },
+    pq: function (v) { ST.pq = v; clearTimeout(window.__thtpT); window.__thtpT = setTimeout(function () { refresh("thTPANew"); setTimeout(function () { var i = document.getElementById("thtp_pq"); if (i) { i.focus(); i.setSelectionRange(i.value.length, i.value.length); } }, 30); }, 350); },
+    openFor: function (src, ref) {
+      var ex = live().filter(function (x) { return x.src === src && String(x.refId) === String(ref); })[0];
+      if (!ex) { ex = newCase(src, ref); if (!ex) return toast("Patient / admission not found"); toast("TPA case " + ex.no + " created"); }
+      ST.id = ex.id; refresh("thTPACase");
+    },
+    saveAll: function (quiet) {
+      var x = cur(); if (!x) return;
+      var before = x.stage, oldSch = x.scheme;
+      readForm(x);
+      if ((+x.apprAmt || 0) > 0 && (!x.preStatus || x.preStatus === "Pending" || x.preStatus === "Query")) { x.preStatus = "Approved"; if (!x.apprDate) x.apprDate = iso(); }
+      var chosen = g("tp_stage");
+      var auto = (document.getElementById("tp_auto") || {}).checked;
+      if (chosen && chosen !== before) x.stage = chosen;          // stage changed by hand wins
+      else if (auto) x.stage = autoStage(x);
+      if (x.stage !== before) log(x, "Stage: " + before + " → " + x.stage);
+      if (!quiet) log(x, "Case saved");
+      if (oldSch !== x.scheme) log(x, "Scheme set: " + x.scheme);
+      save(); if (!quiet) { audit2("TPA case saved", x.no + " — " + x.stage); toast("Saved — " + x.stage); }
+      refresh("thTPACase");
+    },
+    enhAdd: function () {
+      var x = cur(); if (!x) return;
+      var a = +g("tp_eamt"); if (!(a > 0)) return toast("Enter enhancement amount");
+      readForm(x);
+      (x.enh = x.enh || []).push({ date: iso(), req: a, appr: 0, status: "Pending", reason: g("tp_ers") });
+      x.stage = autoStage(x); log(x, "Enhancement requested " + money(a)); save(); refresh("thTPACase");
+    },
+    enhSet: function (i) {
+      var x = cur(); if (!x || !x.enh[i]) return;
+      var v = prompt("Approved amount for enhancement " + (i + 1) + " (₹). Enter 0 if rejected:", x.enh[i].appr || "");
+      if (v == null) return;
+      readForm(x);
+      var n = +v || 0; x.enh[i].appr = n; x.enh[i].status = n > 0 ? "Approved" : "Rejected"; x.enh[i].apprDate = iso();
+      if (n > 0) x.apprAmt = (+x.apprAmt || 0) + n;
+      x.stage = autoStage(x); log(x, "Enhancement " + (i + 1) + " " + x.enh[i].status + " " + money(n)); save(); refresh("thTPACase");
+    },
+    qAdd: function () {
+      var x = cur(); if (!x) return;
+      var t = g("tp_qt"); if (!t) return toast("Type the query");
+      readForm(x);
+      (x.queries = x.queries || []).push({ stage: g("tp_qs"), date: g("tp_qd") || iso(), text: t });
+      if (g("tp_qs") === "Pre-auth") x.preStatus = "Query";
+      x.stage = autoStage(x); log(x, g("tp_qs") + " query: " + t); save(); audit2("TPA query added", x.no); refresh("thTPACase");
+    },
+    qReply: function (i) {
+      var x = cur(); if (!x || !x.queries[i]) return;
+      var r = g("tp_qr" + i); if (!r) return toast("Type the reply");
+      readForm(x);
+      x.queries[i].reply = r; x.queries[i].replyDate = iso(); x.queries[i].by = who();
+      if (x.queries[i].stage === "Pre-auth" && x.preStatus === "Query") x.preStatus = "Pending";
+      x.stage = autoStage(x); log(x, "Query " + (i + 1) + " answered"); save(); refresh("thTPACase");
+    },
+    doc: function (i, on) {
+      var x = cur(); if (!x) return;
+      var k = docList(x)[i]; if (!k) return;
+      x.docs = x.docs || {}; if (on) x.docs[k] = iso(); else delete x.docs[k];
+      save();
+      var lb = document.querySelector('.tp_dk[data-i="' + i + '"]'); if (lb && lb.parentElement) lb.parentElement.className = on ? "ok" : "";
+      var p = docPct(x), bar = document.querySelector(".thtp-prog div"); if (bar) bar.style.width = p + "%";
+      var bd = document.querySelector(".thtp-sec h3 .thtp-badge:last-child"); if (bd && /%$/.test(bd.textContent)) { bd.textContent = p + "%"; bd.className = "thtp-badge " + (p === 100 ? "g" : "a"); }
+    },
+    del: function () {
+      var x = cur(); if (!x) return;
+      if (!confirm("Delete TPA case " + x.no + " (" + x.ptName + ")?")) return;
+      x.deleted = true; x.deletedBy = who(); x.deletedAt = new Date().toISOString(); save(); audit2("TPA case deleted", x.no); refresh("thTPADash");
+    },
+    pSum: function () { var x = cur(); if (x) pSum(x); },
+    pDocs: function () { var x = cur(); if (x) pDocs(x); },
+    pLetter: function () { var x = cur(); if (x) pLetter(x); },
+    filter: function () { ST.from = g("tpf_f") || ST.from; ST.to = g("tpf_t") || ST.to; ST.sch = g("tpf_s"); ST.stg = g("tpf_g"); ST.q = g("tpf_q"); refresh("thTPAList"); },
+    pReg: function () {
+      var L = regList();
+      printHTML("<h3>TPA / SCHEME CLAIMS REGISTER</h3><p style='text-align:center;font-size:12px'>" + show(ST.from) + " to " + show(ST.to) + (ST.sch ? " · " + E(ST.sch) : "") + "</p>" +
+        "<table><tr><th>#</th><th>Case</th><th>Patient / UHID</th><th>IPD/DC</th><th>DOA</th><th>DOD</th><th>Scheme</th><th>Package</th><th class='r'>Approved</th><th class='r'>Claimed</th><th>Claim date</th><th class='r'>Received</th><th class='r'>Ded.</th><th>Stage</th></tr>" +
+        L.map(function (x, i) { return "<tr><td>" + (i + 1) + "</td><td>" + E(x.no) + "</td><td>" + E(x.ptName) + "<br>" + E(x.uhid) + "</td><td>" + E(x.refNo) + "</td><td>" + show(x.doa) + "</td><td>" + show(x.dod) + "</td><td>" + E(x.scheme) + "</td><td>" + E(x.pkgName || "") + "</td><td class='r'>" + money(x.apprAmt) + "</td><td class='r'>" + money(x.claimAmt) + "</td><td>" + show(x.claimDate) + "</td><td class='r'>" + money(x.settleAmt) + "</td><td class='r'>" + money(x.deduction) + "</td><td>" + E(x.stage) + "</td></tr>"; }).join("") + "</table>");
+    },
+    csv: function () {
+      var rows = [["Case no", "Source", "IPD/DC no", "UHID", "Patient", "Age", "Sex", "Mobile", "DOA", "DOD", "Doctor", "Diagnosis", "Scheme", "Insurer", "TPA", "Policy no", "Card / ID", "Beneficiary ID", "Package code", "Package", "Package rate", "Bill amount", "Pre-auth no", "Pre-auth date", "Requested", "Approved", "Approved on", "Claim no", "Claim date", "Claim amount", "Days since claim", "Queries", "Open queries", "Settlement date", "Received", "TDS", "Deduction", "Deduction reason", "UTR", "Stage", "Docs %"]];
+      regList().forEach(function (x) {
+        rows.push([x.no, x.src, x.refNo, x.uhid, x.ptName, x.age, x.sex, x.mobile, x.doa, x.dod, x.doctor, x.diag, x.scheme, x.insurer, x.tpa, x.policyNo, x.cardNo, x.benId, x.pkgCode, x.pkgName, x.pkgAmt, x.billAmt, x.preNo, x.preDate, x.reqAmt, x.apprAmt, x.apprDate,
+          x.claimNo, x.claimDate, x.claimAmt, x.claimDate && !x.settleDate ? days(x.claimDate) : "", (x.queries || []).length, (x.queries || []).filter(function (q) { return !q.replyDate; }).length, x.settleDate, x.settleAmt, x.tds, x.deduction, x.dedReason, x.utr, x.stage, docPct(x)]);
+      });
+      csv("TPA_Claims_" + ST.from + "_to_" + ST.to + ".csv", rows);
+    },
+    saveSet: function () {
+      var c = CFG(), lines = function (id) { return g(id).split(/\n/).map(function (s) { return s.trim(); }).filter(Boolean); };
+      var i = lines("tps_i"), t = lines("tps_t"); if (i.length) c.insurers = i; if (t.length) c.tpas = t;
+      Object.keys(DEF_DOCS).forEach(function (k, n) { var l = lines("tps_d" + n); if (l.length) c.docs[k] = l; });
+      save(); audit2("TPA settings saved", c.insurers.length + " insurers, " + c.tpas.length + " TPAs"); toast("Settings saved");
+    },
+    list: function () { return live(); }
+  };
+})();
+/*TH-SIGN:3303e05a01c2bf2d3bc655892e875029*/

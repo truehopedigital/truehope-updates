@@ -1,0 +1,528 @@
+/*TRUEHOPE-UPDATE {"id":"ipd-clinical-mrd-registers","name":"IPD Clinical Chart, MRD, Registers, Quality, Admin & Stickers","version":"1.0","date":"2026-11-18","description":"Doctor/Nursing assessment, daily notes, drug chart, vitals, handover, RBS, investigations, one-click pharmacy order, MRD, quality indicators, hospital registers, admin data editor, A4 stickers, clinical master lists, ownership note."} */
+
+/* =========================================================
+   COMMON HELPERS
+   ========================================================= */
+const dtNow = () => today() + 'T' + nowTime();
+const fdt = s => s ? dmy(String(s).slice(0, 10)) + (String(s).length > 10 ? ' ' + t12(String(s).slice(11, 16)) : '') : '';
+const inR = (d, f, t) => d && String(d).slice(0, 10) >= f && String(d).slice(0, 10) <= t;
+const YN = ['No', 'Yes'];
+function C(a) { a.clin = a.clin || {}; const c = a.clin; ['notes', 'drugs', 'mar', 'vitals', 'hand', 'rbs', 'inv', 'indents'].forEach(k => c[k] = c[k] || []); c.qi = c.qi || {}; return c; }
+function canDel() { return typeof isM === 'function' && isM(); }
+function needMaster() { if (canDel()) return true; alert('Only Master can delete. Use 🔑 Master Key.'); if (typeof masterKey === 'function') masterKey(); return false; }
+const card = (t, b, x) => `<div class="card" ${x || ''}>${t ? `<h3 style="margin-top:0">${t}</h3>` : ''}${b}</div>`;
+TH.css(`
+.ictabs{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px}
+.ictabs button{border:1px solid var(--bd);background:#fff;color:var(--tx);padding:7px 12px;border-radius:20px;cursor:pointer;font:inherit;font-size:13px}
+.ictabs button.on{background:var(--g);color:#fff;border-color:var(--g);font-weight:600}
+.ictabs button .dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:#2ecc71;margin-left:5px;vertical-align:middle}
+.clpick{margin-top:4px;font-size:12px;padding:4px 8px!important;background:#f7fbf9!important}
+#thLegal{margin-top:26px;padding-top:10px;border-top:1px solid var(--bd);font-size:11px;color:var(--mut);text-align:center}
+.lgbox{font-size:13px;line-height:1.7}
+`);
+
+/* =========================================================
+   1. CLINICAL MASTER LISTS (auto dropdown + auto learn)
+   ========================================================= */
+const CL_NAMES = { complaints: 'Chief complaints', findings: 'Clinical findings', diagnosis: 'Diagnosis', advice: 'Advice', investigations: 'Investigations', procedures: 'Procedures', allergies: 'Allergies', notes: 'Note phrases' };
+TH.setting('clin', {
+  complaints: ['Fever', 'Cough', 'Cold', 'Headache', 'Body ache', 'Vomiting', 'Loose motions', 'Abdominal pain', 'Chest pain', 'Breathlessness', 'Giddiness', 'Burning micturition', 'Weakness', 'Joint pain', 'Back pain', 'Sore throat'],
+  findings: ['Chest clear', 'B/L air entry equal', 'S1 S2 heard, no murmur', 'Abdomen soft, non-tender', 'Conscious, oriented', 'Pallor present', 'Crepitations present', 'Wheeze present'],
+  diagnosis: ['Viral fever', 'Acute gastroenteritis', 'Upper respiratory tract infection', 'Lower respiratory tract infection', 'Urinary tract infection', 'Hypertension', 'Type 2 diabetes mellitus', 'Acute febrile illness', 'Dengue fever', 'Malaria', 'Enteric fever', 'Anaemia', 'Bronchial asthma', 'COPD exacerbation', 'Acute coronary syndrome'],
+  advice: ['Plenty of oral fluids', 'Soft bland diet', 'Rest for 3 days', 'Review after 5 days', 'Review if fever persists', 'Avoid oily & spicy food', 'Monitor sugar regularly'],
+  investigations: ['CBC', 'ESR', 'CRP', 'RBS', 'FBS / PPBS', 'HbA1c', 'LFT', 'RFT', 'Serum electrolytes', 'Urine routine', 'Dengue NS1 / IgM', 'Malaria antigen', 'Widal', 'X-Ray chest PA', 'ECG', 'USG abdomen', '2D Echo', 'Lipid profile', 'TSH'],
+  procedures: ['IV cannulation', 'Ryle\'s tube insertion', 'Foley catheterisation', 'Nebulisation', 'Dressing', 'Suturing', 'Blood transfusion'],
+  allergies: ['No known drug allergy', 'Penicillin', 'Sulfa drugs', 'NSAIDs', 'Iodine contrast'],
+  notes: ['Patient stable', 'Vitals stable', 'Afebrile', 'Tolerating orally', 'Continue same treatment', 'Plan for discharge', 'Relatives explained', 'Shifted to ward']
+});
+const CLL = k => { const c = db.settings.clin || (db.settings.clin = {}); return c[k] || (c[k] = []); };
+function clLearn(list, text) {
+  if (!text || !list) return;
+  const arr = CLL(list);
+  String(text).split(/[\n,;]+/).map(x => x.trim()).filter(x => x.length > 1 && x.length < 80).forEach(x => {
+    if (!arr.some(y => y.toLowerCase() === x.toLowerCase())) arr.push(x);
+  });
+  if (arr.length > 800) arr.splice(0, arr.length - 800);
+}
+const CORE_MAP = { v_cc: 'complaints', v_find: 'findings', v_dx: 'diagnosis', v_adv: 'advice', a_cc: 'complaints', a_dx: 'diagnosis', e_cc: 'complaints', e_dx: 'diagnosis', d_dx: 'diagnosis', d_hx: 'complaints', d_ex: 'findings', d_inv: 'investigations', d_proc: 'procedures', d_adv: 'advice', d_course: 'notes' };
+function clDatalists() {
+  Object.keys(CL_NAMES).forEach(k => {
+    let dl = document.getElementById('cl_' + k);
+    if (!dl) { dl = document.createElement('datalist'); dl.id = 'cl_' + k; document.body.appendChild(dl); }
+    dl.innerHTML = CLL(k).map(x => `<option value="${esc(x)}">`).join('');
+  });
+}
+window.clEnhance = function () {
+  clDatalists();
+  Object.entries(CORE_MAP).forEach(([id, l]) => { const e = document.getElementById(id); if (e && !e.dataset.cl) e.dataset.cl = l; });
+  document.querySelectorAll('#main [data-cl]').forEach(e => {
+    const l = e.dataset.cl; if (!l || e.dataset.clDone) return; e.dataset.clDone = 1;
+    if (e.tagName === 'INPUT') { e.setAttribute('list', 'cl_' + l); e.setAttribute('autocomplete', 'off'); return; }
+    const pk = document.createElement('input'); pk.className = 'clpick'; pk.setAttribute('list', 'cl_' + l); pk.placeholder = '▾ Pick from ' + CL_NAMES[l] + ' list (or type new) and press Enter';
+    const add = () => { const v = pk.value.trim(); if (!v) return; e.value = (e.value.trim() ? e.value.trim() + (l === 'complaints' || l === 'diagnosis' || l === 'allergies' ? ', ' : '\n') : '') + v; pk.value = ''; e.dispatchEvent(new Event('input', { bubbles: true })); };
+    pk.addEventListener('keydown', ev => { if (ev.key === 'Enter') { ev.preventDefault(); add(); } });
+    pk.addEventListener('change', () => { if (CLL(l).includes(pk.value.trim())) add(); });
+    e.after(pk);
+  });
+};
+function learnFrom(map) { let ch = false; Object.entries(map).forEach(([id, l]) => { const e = document.getElementById(id); if (e && e.value.trim()) { clLearn(l, e.value); ch = true; } }); }
+['saveVisit', 'saveAdmission', 'saveDischarge', 'saveAdmEdit'].forEach(fn => TH.before(fn, (...a) => { learnFrom(CORE_MAP); return a; }));
+
+TH.addMenuItem('set', 'clinmaster', 'Clinical Master Lists (dropdowns)');
+TH.page('clinmaster', () => `<h2>Clinical Master Lists</h2>
+ <p class="muted">Write each item <b>one time</b> (one per line). These appear as <b>auto drop-down lists</b> in OPD visit, admission, discharge and all IPD forms. New words you type in those forms are <b>added automatically</b> for next time.</p>
+ <div class="grid">${Object.entries(CL_NAMES).map(([k, l]) => `<div class="card"><h3 style="margin-top:0">${l} <span class="muted" style="font-size:12px">(${CLL(k).length})</span></h3><textarea id="clm_${k}" style="min-height:180px">${esc(CLL(k).join('\n'))}</textarea></div>`).join('')}</div>
+ <button class="btn" onclick="clSave()">Save all lists</button>`, 'clinmaster');
+window.clSave = function () { Object.keys(CL_NAMES).forEach(k => { db.settings.clin[k] = [...new Set(val('clm_' + k).split('\n').map(x => x.trim()).filter(Boolean))]; }); audit('Clinical master lists saved', ''); save(); toast('Lists saved'); go('clinmaster'); };
+
+/* =========================================================
+   2. IPD PATIENT CHART (forms)
+   ========================================================= */
+const PAIN = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10'];
+const DOC_IA = [
+  ['h', 'History'], ['cc', 'Presenting complaints & duration', 'area', 'complaints'], ['hpi', 'History of present illness', 'area'],
+  ['pmh', 'Past history (DM / HTN / IHD / Asthma / TB / Surgery)', 'area'], ['drug', 'Current medications', 'area'], ['allergy', 'Known allergies', 'text', 'allergies'],
+  ['fam', 'Family history', 'text'], ['pers', 'Personal history (diet, sleep, bowel/bladder, addiction)', 'text'],
+  ['h', 'General examination'], ['gc', 'General condition', 'sel', ['Fair', 'Moderate', 'Poor', 'Critical']], ['cons', 'Consciousness', 'sel', ['Conscious & oriented', 'Drowsy', 'Confused', 'Unconscious']],
+  ['gcs', 'GCS', 'text'], ['bp', 'BP (mmHg)', 'text'], ['pulse', 'Pulse (/min)', 'text'], ['temp', 'Temperature', 'text'], ['rr', 'RR (/min)', 'text'], ['spo2', 'SpO₂ (%)', 'text'],
+  ['wt', 'Weight (kg)', 'text'], ['ht', 'Height (cm)', 'text'], ['pain', 'Pain score (0–10)', 'sel', PAIN], ['ge', 'Pallor / Icterus / Cyanosis / Clubbing / Lymph nodes / Oedema', 'text', 'findings'],
+  ['h', 'Systemic examination'], ['cvs', 'CVS', 'text', 'findings'], ['rs', 'RS', 'text', 'findings'], ['cns', 'CNS', 'text', 'findings'], ['pa', 'Per abdomen', 'text', 'findings'], ['local', 'Local examination', 'area', 'findings'],
+  ['h', 'Diagnosis & plan of care'], ['dx', 'Provisional diagnosis', 'text', 'diagnosis'], ['inv', 'Investigations advised', 'area', 'investigations'], ['plan', 'Treatment plan', 'area'],
+  ['care', 'Plan of care / goals (incl. preventive & rehabilitative)', 'area'], ['nutri', 'Nutritional needs / diet', 'text'], ['los', 'Expected length of stay (days)', 'text'],
+  ['risk', 'Special risks / needs (fall, DVT, pressure sore, isolation)', 'text'], ['doc', 'Assessing doctor', 'doc'], ['dt', 'Date & time of assessment', 'dt']];
+const NUR_IA = [
+  ['h', 'Arrival'], ['mode', 'Mode of arrival', 'sel', ['Walking', 'Wheelchair', 'Stretcher', 'Ambulance', 'Carried']], ['acc', 'Accompanied by', 'text'],
+  ['cons', 'Consciousness', 'sel', ['Conscious & oriented', 'Drowsy', 'Confused', 'Unconscious']], ['bp', 'BP (mmHg)', 'text'], ['pulse', 'Pulse (/min)', 'text'], ['temp', 'Temperature', 'text'],
+  ['rr', 'RR (/min)', 'text'], ['spo2', 'SpO₂ (%)', 'text'], ['wt', 'Weight (kg)', 'text'], ['ht', 'Height (cm)', 'text'], ['pain', 'Pain score (0–10)', 'sel', PAIN], ['allergy', 'Known allergies', 'text', 'allergies'],
+  ['h', 'Risk screening'], ['fall', 'Fall risk (Morse)', 'sel', ['Low (0–24)', 'Moderate (25–44)', 'High (45+)']], ['braden', 'Pressure sore risk (Braden)', 'sel', ['No risk (19–23)', 'Mild (15–18)', 'Moderate (13–14)', 'High (10–12)', 'Very high (≤9)']],
+  ['nut', 'Nutritional screening', 'sel', ['Normal', 'At risk', 'Malnourished']], ['mob', 'Mobility', 'sel', ['Independent', 'Needs assistance', 'Bedridden']],
+  ['skin', 'Skin condition', 'sel', ['Intact', 'Pressure sore present', 'Wound / ulcer', 'Rash']], ['skinr', 'Skin remarks', 'text'],
+  ['h', 'Lines, tubes & needs'], ['iv', 'IV cannula (site / date)', 'text'], ['tubes', 'Catheter / RT / drains', 'text'], ['diet', 'Diet', 'text'], ['elim', 'Elimination (bowel / bladder)', 'text'],
+  ['psy', 'Psychological status', 'sel', ['Calm', 'Anxious', 'Agitated', 'Depressed']], ['belong', 'Valuables / belongings handed to', 'text'],
+  ['orient', 'Orientation to ward & call bell given', 'sel', YN], ['edu', 'Patient / relative education given (topics)', 'text'],
+  ['h', 'Nursing care plan'], ['ndx', 'Nursing diagnosis', 'area'], ['ncp', 'Nursing care plan', 'area'], ['nurse', 'Nurse name', 'text'], ['dt', 'Date & time of assessment', 'dt']];
+const LOGS = {
+  notes: { t: 'Daily Progress Notes', p: 'DAILY PROGRESS NOTES', cols: [['dt', 'Date & time', 'dt'], ['type', 'By', 'sel', ['Doctor', 'Consultant', 'Nursing', 'Dietician', 'Physiotherapist']], ['note', 'Notes / orders', 'area', 'notes']] },
+  vitals: { t: 'Vitals Chart', p: 'VITALS / TPR CHART', cols: [['dt', 'Date & time', 'dt'], ['bp', 'BP'], ['pulse', 'Pulse'], ['temp', 'Temp'], ['rr', 'RR'], ['spo2', 'SpO₂'], ['pain', 'Pain', 'sel', PAIN], ['intake', 'Intake ml'], ['output', 'Output ml'], ['rem', 'Remarks']] },
+  hand: { t: 'Nursing Handover (SBAR)', p: 'NURSING HANDOVER (SBAR)', cols: [['dt', 'Date & time', 'dt'], ['shift', 'Shift', 'sel', ['Morning', 'Evening', 'Night']], ['from', 'Handed over by'], ['to', 'Taken over by'], ['s', 'Situation', 'area'], ['b', 'Background', 'area'], ['as', 'Assessment', 'area'], ['r', 'Recommendation / pending work', 'area']] },
+  rbs: { t: 'RBS / Sugar Chart', p: 'BLOOD SUGAR (RBS) CHART', cols: [['dt', 'Date & time', 'dt'], ['when', 'Timing', 'sel', ['Random', 'Fasting', 'Pre-breakfast', 'Post-breakfast', 'Pre-lunch', 'Post-lunch', 'Pre-dinner', 'Post-dinner', 'Bedtime', '3 AM']], ['val', 'Sugar (mg/dl)'], ['ins', 'Insulin given (type & units)'], ['rem', 'Remarks']] },
+  inv: { t: 'Investigation Chart', p: 'INVESTIGATION CHART', cols: [['dt', 'Date & time', 'dt'], ['test', 'Test', 'text', 'investigations'], ['res', 'Result'], ['unit', 'Unit / normal range'], ['rem', 'Remarks']] }
+};
+const TABS = [['dia', 'Doctor Assessment'], ['nia', 'Nursing Assessment'], ['notes', 'Daily Notes'], ['drugs', 'Drug Chart'], ['vitals', 'Vitals'], ['hand', 'Nursing Handover'], ['rbs', 'RBS Chart'], ['inv', 'Investigations'], ['pharm', 'Pharmacy Order'], ['qi', 'Quality Indicators'], ['mrd', 'MRD'], ['stk', 'Stickers']];
+
+function fld(f, v, pre) {
+  const [k, l, t, o] = f; const id = pre + k; v = v ?? '';
+  if (k === 'h') return `<div class="full" style="margin-top:8px;font-weight:700;color:var(--gd);border-bottom:1px solid var(--bd);padding-bottom:3px">${l}</div>`;
+  if (t === 'area') return `<div class="full"><label>${l}</label><textarea id="${id}" ${typeof o === 'string' ? `data-cl="${o}"` : ''}>${esc(v)}</textarea></div>`;
+  if (t === 'sel') return `<div><label>${l}</label><select id="${id}"><option></option>${o.map(x => `<option ${String(x) === String(v) ? 'selected' : ''}>${esc(x)}</option>`).join('')}</select></div>`;
+  if (t === 'doc') return `<div><label>${l}</label><select id="${id}"><option></option>${db.doctors.map(d => `<option ${d.name === v ? 'selected' : ''}>${esc(d.name)}</option>`).join('')}</select></div>`;
+  if (t === 'dt') return `<div><label>${l}</label><input id="${id}" type="datetime-local" value="${esc(v || dtNow())}"></div>`;
+  return `<div><label>${l}</label><input id="${id}" value="${esc(v)}" ${typeof o === 'string' ? `data-cl="${o}"` : ''}></div>`;
+}
+function rdF(fields, pre) { const o = {}; fields.forEach(f => { if (f[0] === 'h') return; const e = document.getElementById(pre + f[0]); if (e) { o[f[0]] = e.value.trim(); if (typeof f[3] === 'string' && e.value.trim()) clLearn(f[3], e.value); } }); return o; }
+function prtA(a, title, body, sig) {
+  const p = getP(a.uhid) || {};
+  $('#printArea').innerHTML = `<div class="pf">${printHead()}<div class="tt">${title}</div>${ipdPatientBlock(a, p)}<div style="margin-top:8px">${body}</div>
+   <div class="sign"><div style="font-size:11px">Printed: ${new Date().toLocaleString('en-IN')} by ${esc(cur.u)}</div><div style="text-align:center">______________________<br>${sig || 'Signature'}</div></div></div>`;
+  audit('Printed', title + ' — ' + a.ipdNo); save(true); setTimeout(() => window.print(), 100);
+}
+function iaPrintBody(fields, d) {
+  let h = '<table class="it">', row = [];
+  const flush = () => { if (row.length) { h += '<tr>' + row.map(([l, v]) => `<td style="width:22%"><b>${l}</b></td><td>${esc(v || '')}</td>`).join('') + (row.length === 1 ? '<td></td><td></td>' : '') + '</tr>'; row = []; } };
+  fields.forEach(f => {
+    if (f[0] === 'h') { flush(); h += `<tr><th colspan="4" style="text-align:left;background:#eee">${f[1]}</th></tr>`; return; }
+    let v = d[f[0]]; if (f[2] === 'dt') v = fdt(v);
+    if (f[2] === 'area') { flush(); h += `<tr><td style="width:22%"><b>${f[1]}</b></td><td colspan="3" style="white-space:pre-wrap">${esc(v || '')}</td></tr>`; return; }
+    row.push([f[1], v]); if (row.length === 2) flush();
+  });
+  flush(); return h + '</table>';
+}
+
+TH.addMenuItem('ipd', 'ipdchartlist', 'IPD Patient Chart (all forms)');
+TH.addMenuItem('dis', 'ipdchartlist', 'IPD Patient Chart (all forms)');
+TH.page('ipdchartlist', () => { const L = db.admissions.filter(a => a.status === 'Admitted').sort((a, b) => a.ward.localeCompare(b.ward) || a.bed.localeCompare(b.bed));
+  return `<h2>IPD Patient Chart</h2><p class="muted">Click a patient to open all forms: assessments, notes, drug chart, vitals, handover, RBS, investigations, pharmacy order, quality, MRD and stickers.</p>
+  <div class="tiles">${L.map(a => { const p = getP(a.uhid) || {}; const c = C(a); return `<div class="tile sm" style="text-align:left" onclick="go('ipdchart',{id:'${a.id}'})"><div class="tl">${esc(a.bed)} — ${esc(p.name)}</div>
+   <div class="ts">${esc(a.ipdNo)} • ${esc(a.ward)} • Day ${los(a)}<br>${esc(a.doctor)}<br>${c.docIA ? '✔ Dr IA' : '✖ Dr IA'} &nbsp; ${c.nurIA ? '✔ Nurse IA' : '✖ Nurse IA'} &nbsp; Active drugs: ${c.drugs.filter(x => x.status === 'Active').length}</div></div>`; }).join('') || '<p class="muted">No admitted patients.</p>'}</div>`; }, 'ipdlist');
+
+TH.page('ipdchart', () => {
+  const a = getA(ctx.id); if (!a) return '<p>Admission not found.</p>';
+  const p = getP(a.uhid) || {}; const c = C(a); const tab = ctx.tab || 'dia';
+  const done = { dia: !!c.docIA, nia: !!c.nurIA, notes: c.notes.length, drugs: c.drugs.length, vitals: c.vitals.length, hand: c.hand.length, rbs: c.rbs.length, inv: c.inv.length, pharm: c.indents.length, qi: Object.keys(c.qi).length, mrd: !!a.mrd };
+  return `<h2>IPD Chart — ${esc(p.name)} <span class="muted" style="font-size:14px">${esc(a.ipdNo)} • ${esc(a.ward)} / ${esc(a.bed)} • ${a.status}</span></h2>
+  <div class="pinfo"><span><b>UHID:</b> ${esc(a.uhid)}</span><span><b>Age/Sex:</b> ${ageText(p)} / ${esc(p.gender)}</span><span><b>Doctor:</b> ${esc(a.doctor)}</span><span><b>Admitted:</b> ${dmy(a.admDate)} ${t12(a.admTime)}</span><span><b>Day:</b> ${los(a)}</span><span><b>Dx:</b> ${esc(a.dx)}</span>
+  <span><a href="#" onclick="go('adm',{id:'${a.id}'});return false">Open admission / billing →</a></span></div>
+  <div class="ictabs">${TABS.map(([k, l]) => `<button class="${tab === k ? 'on' : ''}" onclick="go('ipdchart',{id:'${a.id}',tab:'${k}'})">${l}${done[k] ? '<span class="dot"></span>' : ''}</button>`).join('')}</div>
+  ${ICT[tab] ? ICT[tab](a, c) : ''}`;
+}, 'ipdlist');
+
+const ICT = {};
+ICT.dia = (a, c) => iaTab(a, c, 'docIA', DOC_IA, 'DOCTOR INITIAL ASSESSMENT', 'Doctor');
+ICT.nia = (a, c) => iaTab(a, c, 'nurIA', NUR_IA, 'NURSING INITIAL ASSESSMENT', 'Nurse');
+function iaTab(a, c, key, F, title, who) {
+  const d = c[key] || {};
+  if (!c[key]) { if (key === 'docIA') { d.cc = a.cc; d.dx = a.dx; d.doc = a.doctor; } const lv = pVisits(a.uhid)[0]; if (lv) { ['bp', 'pulse', 'temp', 'spo2', 'rr'].forEach(k => { if (lv[k] && !d[k]) d[k] = lv[k]; }); if (lv.wt) d.wt = lv.wt; } }
+  return card('', `<div class="row" style="justify-content:space-between"><h3 style="margin:0">${title}</h3><div>${c[key] ? `<span class="muted" style="font-size:12px">Saved by ${esc(c[key]._by)} on ${fdt(c[key]._at)}</span> ` : ''}<button class="btn sm sec" onclick="icIAPrint('${a.id}','${key}')">🖨 Print</button></div></div>
+   <div class="grid" style="margin-top:10px">${F.map(f => fld(f, d[f[0]], 'ia_')).join('')}</div><br>
+   <div class="row"><button class="btn" onclick="icIASave('${a.id}','${key}',true)">Save &amp; Print</button><button class="btn sec" onclick="icIASave('${a.id}','${key}',false)">Save</button></div>`);
+}
+window.icIASave = function (id, key, pr) { const a = getA(id), c = C(a); const F = key === 'docIA' ? DOC_IA : NUR_IA; c[key] = { ...rdF(F, 'ia_'), _by: cur.u, _at: new Date().toISOString() }; audit(key === 'docIA' ? 'Doctor IA saved' : 'Nursing IA saved', a.ipdNo); save(); toast('Saved'); go('ipdchart', { id, tab: key === 'docIA' ? 'dia' : 'nia' }); if (pr) icIAPrint(id, key); };
+window.icIAPrint = function (id, key) { const a = getA(id), c = C(a); if (!c[key]) { alert('Please save the form first'); return; } const F = key === 'docIA' ? DOC_IA : NUR_IA; prtA(a, key === 'docIA' ? 'DOCTOR INITIAL ASSESSMENT' : 'NURSING INITIAL ASSESSMENT', iaPrintBody(F, c[key]), key === 'docIA' ? 'Doctor: ' + esc(c[key].doc || a.doctor) : 'Nurse: ' + esc(c[key].nurse || '')); };
+
+Object.keys(LOGS).forEach(k => { ICT[k] = (a, c) => logTab(a, c, k); });
+function logTab(a, c, k) {
+  const L = LOGS[k]; const rows = c[k].slice().sort((x, y) => String(y.dt).localeCompare(String(x.dt)));
+  const extra = k === 'vitals' && rows.length ? vitTrend(rows) : '';
+  return card(L.t, `<div class="grid">${L.cols.map(f => fld(f, '', 'lg_')).join('')}</div><br>
+   <div class="row"><button class="btn" onclick="icLogAdd('${a.id}','${k}')">+ Add entry</button><button class="btn sec" onclick="icLogPrint('${a.id}','${k}')">🖨 Print ${L.t}</button></div>`)
+   + extra + `<table><tr>${L.cols.map(f => `<th>${f[1]}</th>`).join('')}<th>By</th><th></th></tr>${rows.map(r => `<tr>${L.cols.map(f => `<td style="white-space:pre-wrap">${esc(f[2] === 'dt' ? fdt(r[f[0]]) : r[f[0]])}</td>`).join('')}<td>${esc(r.by)}</td>
+   <td><button class="btn sm red" onclick="icLogDel('${a.id}','${k}','${r.id}')">✕</button></td></tr>`).join('') || `<tr><td colspan="${L.cols.length + 2}" class="muted">No entries yet</td></tr>`}</table>`;
+}
+function vitTrend(rows) { const last = rows.slice(0, 8).reverse(); return card('Last readings', `<div style="display:flex;gap:6px;overflow:auto">${last.map(r => `<div style="min-width:92px;border:1px solid var(--bd);border-radius:6px;padding:6px;font-size:12px"><b>${fdt(r.dt).slice(0, 5)} ${fdt(r.dt).slice(11)}</b><br>BP ${esc(r.bp)}<br>P ${esc(r.pulse)} • T ${esc(r.temp)}<br>SpO₂ ${esc(r.spo2)}</div>`).join('')}</div>`); }
+window.icLogAdd = function (id, k) { const a = getA(id), c = C(a), L = LOGS[k]; const r = rdF(L.cols, 'lg_'); if (!L.cols.slice(1).some(f => r[f[0]])) { alert('Please fill the entry'); return; } r.id = 'L' + Date.now(); r.by = cur.u; c[k].push(r); audit(L.t + ' entry', a.ipdNo); save(); toast('Entry added'); go('ipdchart', { id, tab: k }); };
+window.icLogDel = function (id, k, rid) { if (!needMaster()) return; if (!confirm('Delete this entry?')) return; const a = getA(id), c = C(a); c[k] = c[k].filter(x => x.id !== rid); audit(LOGS[k].t + ' entry deleted', a.ipdNo); save(); go('ipdchart', { id, tab: k }); };
+window.icLogPrint = function (id, k) { const a = getA(id), c = C(a), L = LOGS[k]; const rows = c[k].slice().sort((x, y) => String(x.dt).localeCompare(String(y.dt)));
+  prtA(a, L.p, `<table class="it"><tr><th style="width:28px">Sr</th>${L.cols.map(f => `<th>${f[1]}</th>`).join('')}<th>Sign</th></tr>${rows.map((r, i) => `<tr><td>${i + 1}</td>${L.cols.map(f => `<td style="white-space:pre-wrap">${esc(f[2] === 'dt' ? fdt(r[f[0]]) : r[f[0]])}</td>`).join('')}<td>${esc(r.by)}</td></tr>`).join('')}
+   ${Array.from({ length: Math.max(0, 8 - rows.length) }, () => `<tr><td>&nbsp;</td>${L.cols.map(() => '<td></td>').join('')}<td></td></tr>`).join('')}</table>`); };
+
+/* ---- Drug chart + MAR ---- */
+const ROUTES = ['Oral', 'IV', 'IM', 'SC', 'IV infusion', 'Inhalation / Neb', 'Topical', 'Sublingual', 'Per rectal', 'Eye / Ear drops', 'RT feed'];
+const DFREQ = ['OD', 'BD', 'TDS', 'QID', 'HS', 'SOS', 'Stat', 'Q4H', 'Q6H', 'Q8H', 'Q12H', '1-0-1', '1-0-0', '0-0-1', '1-1-1', '0-1-0', 'Continuous'];
+function perDay(f) { f = String(f || '').toUpperCase().trim(); if (/^\d(-\d){1,3}$/.test(f)) return f.split('-').reduce((s, x) => s + (+x), 0) || 1;
+  return { OD: 1, HS: 1, STAT: 1, SOS: 1, BD: 2, TDS: 3, QID: 4, Q4H: 6, Q6H: 4, Q8H: 3, Q12H: 2, CONTINUOUS: 1 }[f] || 1; }
+ICT.drugs = (a, c) => {
+  const act = c.drugs.filter(d => d.status === 'Active'), stp = c.drugs.filter(d => d.status !== 'Active');
+  const lastGiven = id => { const m = c.mar.filter(x => x.oid === id).sort((x, y) => String(y.dt).localeCompare(String(x.dt)))[0]; return m ? fdt(m.dt) + ' (' + esc(m.by) + ')' : '—'; };
+  const today_ = id => c.mar.filter(x => x.oid === id && String(x.dt).slice(0, 10) === today()).length;
+  const tbl = (L, isAct) => `<table><tr><th>Sr</th><th>Medicine</th><th>Dose</th><th>Route</th><th>Freq.</th><th>Start</th><th>Ordered by</th><th>Today given</th><th>Last given</th><th></th></tr>${L.map((d, i) => `<tr style="${isAct ? '' : 'color:#999'}"><td>${i + 1}</td><td><b>${esc(d.name)}</b>${d.instr ? '<br><span class="muted" style="font-size:11px">' + esc(d.instr) + '</span>' : ''}</td><td>${esc(d.dose)}</td><td>${esc(d.route)}</td><td>${esc(d.freq)}</td><td>${fdt(d.start)}</td><td>${esc(d.doctor)}</td><td>${today_(d.id)} / ${perDay(d.freq)}</td><td style="font-size:12px">${lastGiven(d.id)}</td>
+   <td style="white-space:nowrap">${isAct ? `<button class="btn sm" onclick="icGive('${a.id}','${d.id}')">✔ Given</button> <button class="btn sm sec" onclick="icStop('${a.id}','${d.id}')">Stop</button>` : `<button class="btn sm sec" onclick="icRestart('${a.id}','${d.id}')">Restart</button>`} <button class="btn sm red" onclick="icDrugDel('${a.id}','${d.id}')">✕</button></td></tr>`).join('') || '<tr><td colspan="10" class="muted">None</td></tr>'}</table>`;
+  return card('Add medicine order', `<div class="grid"><div style="grid-column:span 2"><label>Medicine (type — from Medicine Master)</label><input id="dg_n" list="dgl" oninput="icMedAuto()"><datalist id="dgl">${db.meds.map(m => `<option value="${esc(m.name)}">${esc(m.freq)} • ${esc(m.instr)}</option>`).join('')}</datalist></div>
+   <div><label>Dose</label><input id="dg_d" placeholder="e.g. 1 tab, 500 mg, 1 g"></div><div><label>Route</label><select id="dg_r">${ROUTES.map(x => `<option>${x}</option>`).join('')}</select></div>
+   <div><label>Frequency</label><input id="dg_f" list="dgfl" value="BD"><datalist id="dgfl">${DFREQ.map(x => `<option>${x}</option>`).join('')}</datalist></div>
+   <div><label>Start</label><input id="dg_s" type="datetime-local" value="${dtNow()}"></div><div><label>Ordered by</label><select id="dg_doc">${db.doctors.map(d => `<option ${d.name === a.doctor ? 'selected' : ''}>${esc(d.name)}</option>`).join('')}</select></div>
+   <div><label>Instructions</label><input id="dg_i" placeholder="e.g. After food, slow IV"></div></div><br>
+   <div class="row"><button class="btn" onclick="icDrugAdd('${a.id}')">+ Add to drug chart</button><button class="btn sec" onclick="icCopyRx('${a.id}')">Copy from last OPD prescription</button><button class="btn sec" onclick="icDrugPrint('${a.id}')">🖨 Print Drug Chart</button>
+   <button class="btn" style="background:#8e44ad" onclick="go('ipdchart',{id:'${a.id}',tab:'pharm'})">💊 One-click Pharmacy Order</button></div>`)
+   + `<h3>Active medicines (${act.length})</h3>${tbl(act, true)}${stp.length ? `<h3>Stopped medicines</h3>${tbl(stp, false)}` : ''}`;
+};
+window.icMedAuto = function () { const m = db.meds.find(x => x.name.toLowerCase() === val('dg_n').toLowerCase()); if (!m) return; const nm = m.name.toLowerCase();
+  $('#dg_r').value = /^inj/.test(nm) ? 'IV' : /^(syp|tab|cap)/.test(nm) ? 'Oral' : /neb|resp/.test(nm) ? 'Inhalation / Neb' : $('#dg_r').value;
+  if (m.freq && !/as directed/i.test(m.freq)) $('#dg_f').value = m.freq; if (m.instr) $('#dg_i').value = m.instr; if (!val('dg_d')) $('#dg_d').value = /^(tab|cap)/.test(nm) ? '1' : ''; };
+window.icDrugAdd = function (id) { const a = getA(id), c = C(a); const n = val('dg_n'); if (!n) { alert('Enter medicine'); return; }
+  if (!db.meds.some(m => m.name.toLowerCase() === n.toLowerCase())) db.meds.push({ name: n, freq: val('dg_f'), days: '5', instr: val('dg_i') });
+  c.drugs.push({ id: 'D' + Date.now(), name: n, dose: val('dg_d'), route: val('dg_r'), freq: val('dg_f'), start: val('dg_s'), doctor: val('dg_doc'), instr: val('dg_i'), status: 'Active', by: cur.u });
+  audit('Drug order added', a.ipdNo + ' ' + n); save(); toast('Added'); go('ipdchart', { id, tab: 'drugs' }); };
+window.icCopyRx = function (id) { const a = getA(id), c = C(a); const v = pVisits(a.uhid).find(x => (x.rxItems || []).length); if (!v) { alert('No OPD prescription found for this patient'); return; }
+  v.rxItems.forEach((r, i) => c.drugs.push({ id: 'D' + Date.now() + i, name: r.name, dose: /^(tab|cap)/i.test(r.name) ? '1' : '', route: /^inj/i.test(r.name) ? 'IV' : 'Oral', freq: r.freq, start: dtNow(), doctor: a.doctor, instr: r.instr, status: 'Active', by: cur.u }));
+  audit('Drug orders copied from OPD', a.ipdNo); save(); toast(v.rxItems.length + ' medicines copied'); go('ipdchart', { id, tab: 'drugs' }); };
+window.icGive = function (id, oid) { const a = getA(id), c = C(a); const d = c.drugs.find(x => x.id === oid); c.mar.push({ id: 'M' + Date.now(), oid, dt: dtNow(), by: cur.u }); audit('Medicine given', a.ipdNo + ' ' + d.name); save(); toast('Recorded: ' + d.name + ' given'); go('ipdchart', { id, tab: 'drugs' }); };
+window.icStop = function (id, oid) { const a = getA(id), d = C(a).drugs.find(x => x.id === oid); if (!confirm('Stop ' + d.name + '?')) return; d.status = 'Stopped'; d.stopAt = dtNow(); d.stopBy = cur.u; audit('Drug stopped', a.ipdNo + ' ' + d.name); save(); go('ipdchart', { id, tab: 'drugs' }); };
+window.icRestart = function (id, oid) { const a = getA(id), d = C(a).drugs.find(x => x.id === oid); d.status = 'Active'; d.start = dtNow(); save(); go('ipdchart', { id, tab: 'drugs' }); };
+window.icDrugDel = function (id, oid) { if (!needMaster()) return; if (!confirm('Delete this order and its given-record?')) return; const a = getA(id), c = C(a); c.drugs = c.drugs.filter(x => x.id !== oid); c.mar = c.mar.filter(x => x.oid !== oid); audit('Drug order deleted', a.ipdNo); save(); go('ipdchart', { id, tab: 'drugs' }); };
+window.icDrugPrint = function (id) { const a = getA(id), c = C(a);
+  const days = [...new Set(c.mar.map(m => String(m.dt).slice(0, 10)))].sort();
+  const marT = days.length ? `<h4 style="margin:10px 0 4px">Medication administration record</h4><table class="it"><tr><th>Medicine</th>${days.map(d => `<th>${dmy(d).slice(0, 5)}</th>`).join('')}</tr>${c.drugs.map(d => `<tr><td>${esc(d.name)}</td>${days.map(dy => `<td style="font-size:10px">${c.mar.filter(m => m.oid === d.id && String(m.dt).slice(0, 10) === dy).map(m => t12(String(m.dt).slice(11, 16)) + ' ' + esc(m.by)).join('<br>')}</td>`).join('')}</tr>`).join('')}</table>` : '';
+  prtA(a, 'DRUG CHART / MEDICATION ORDERS', `<table class="it"><tr><th>Sr</th><th>Medicine</th><th>Dose</th><th>Route</th><th>Freq.</th><th>Start</th><th>Stop</th><th>Doctor</th><th>Status</th></tr>${c.drugs.map((d, i) => `<tr><td>${i + 1}</td><td><b>${esc(d.name)}</b>${d.instr ? ' — ' + esc(d.instr) : ''}</td><td>${esc(d.dose)}</td><td>${esc(d.route)}</td><td>${esc(d.freq)}</td><td>${fdt(d.start)}</td><td>${fdt(d.stopAt)}</td><td>${esc(d.doctor)}</td><td>${esc(d.status)}</td></tr>`).join('')}</table>${marT}`, 'Doctor / Nurse'); };
+
+/* ---- One-click pharmacy order ---- */
+ICT.pharm = (a, c) => { const act = c.drugs.filter(d => d.status === 'Active');
+  return card('💊 One-click Pharmacy Order (Indent)', `<p class="muted">Takes all <b>active medicines</b> from the drug chart, calculates quantity automatically and prints the order for the pharmacy.</p>
+   <div class="row"><div><label>Supply for (days)</label><input id="ph_days" type="number" min="1" value="${db.settings.indentDays || 1}" style="width:100px"></div>
+   <button class="btn" style="background:#8e44ad" onclick="icIndent('${a.id}')" ${act.length ? '' : 'disabled'}>💊 Create &amp; Print Pharmacy Order (${act.length} medicines)</button></div>
+   ${act.length ? `<table style="margin-top:10px"><tr><th>Medicine</th><th>Dose</th><th>Route</th><th>Freq.</th><th>Qty / day</th></tr>${act.map(d => `<tr><td>${esc(d.name)}</td><td>${esc(d.dose)}</td><td>${esc(d.route)}</td><td>${esc(d.freq)}</td><td>${perDay(d.freq)}</td></tr>`).join('')}</table>` : '<p class="warn">No active medicines. Add them in Drug Chart first.</p>'}`)
+  + `<h3>Previous orders (${c.indents.length})</h3><table><tr><th>Order No.</th><th>Date</th><th>Items</th><th>Days</th><th>By</th><th></th></tr>${c.indents.slice().reverse().map(x => `<tr><td>${esc(x.no)}</td><td>${fdt(x.dt)}</td><td>${x.items.length}</td><td>${x.days}</td><td>${esc(x.by)}</td><td><button class="btn sm" onclick="icIndentPrint('${a.id}','${x.no}')">Reprint</button></td></tr>`).join('') || '<tr><td colspan="6" class="muted">None</td></tr>'}</table>`; };
+window.icIndent = function (id) { const a = getA(id), c = C(a); const days = Math.max(1, +val('ph_days') || 1); db.settings.indentDays = days;
+  const act = c.drugs.filter(d => d.status === 'Active'); if (!act.length) return;
+  const cnt = db.admissions.reduce((s, x) => s + ((x.clin && x.clin.indents) || []).filter(i => String(i.dt).slice(0, 10) === today()).length, 0) + 1;
+  const ind = { no: 'IND-' + today().replace(/-/g, '') + '-' + pad(cnt, 3), dt: dtNow(), days, by: cur.u, items: act.map(d => ({ name: d.name, dose: d.dose, route: d.route, freq: d.freq, qty: perDay(d.freq) * days })) };
+  c.indents.push(ind); audit('Pharmacy order', a.ipdNo + ' ' + ind.no); save(); go('ipdchart', { id, tab: 'pharm' }); icIndentPrint(id, ind.no); };
+window.icIndentPrint = function (id, no) { const a = getA(id), x = C(a).indents.find(i => i.no === no);
+  prtA(a, 'PHARMACY INDENT / MEDICINE ORDER', `<table class="it"><tr><td><b>Order No.:</b> ${esc(x.no)}</td><td><b>Date & time:</b> ${fdt(x.dt)}</td><td><b>Supply for:</b> ${x.days} day(s)</td></tr></table>
+   <table class="it" style="margin-top:6px"><tr><th style="width:30px">Sr</th><th>Medicine</th><th>Dose</th><th>Route</th><th>Freq.</th><th style="width:70px">Qty</th><th style="width:90px">Issued qty</th></tr>${x.items.map((r, i) => `<tr><td>${i + 1}</td><td><b>${esc(r.name)}</b></td><td>${esc(r.dose)}</td><td>${esc(r.route)}</td><td>${esc(r.freq)}</td><td><b>${r.qty}</b></td><td></td></tr>`).join('')}</table>
+   <div style="display:flex;justify-content:space-between;margin-top:30px;font-size:12px"><div>Ordered by (Nurse): ${esc(x.by)}<br><br>______________</div><div>Doctor: ${esc(a.doctor)}<br><br>______________</div><div>Issued by (Pharmacist)<br><br>______________</div></div>`, 'Received by'); };
+
+/* ---- Hooks: chart buttons on admission page and lists ---- */
+const _adm = P.adm;
+P.adm = () => { const h = _adm(); if (!ctx.id) return h; const id = ctx.id;
+  return h.replace('</h2>', `</h2><div class="row" style="margin-bottom:10px;background:#f2f7ff;border:1px solid #c9dcf5;border-radius:8px;padding:8px">
+   <b style="align-self:center;margin-right:6px">📋 Patient Chart:</b>${TABS.map(([k, l]) => `<button class="btn sm sec" onclick="go('ipdchart',{id:'${id}',tab:'${k}'})">${l}</button>`).join('')}</div>`); };
+TH.wrap('admTable', o => (list, s) => o(list, s).replace(/<button class="btn sm" onclick="go\('adm',\{id:'([^']+)'\}\)">Open<\/button>/g, (m, id) => m + ` <button class="btn sm sec" onclick="go('ipdchart',{id:'${id}'})">Chart</button>`));
+const _hist = P.history;
+P.history = () => { const h = _hist(); return ctx.uhid ? h.replace('Print Full History</button>', `Print Full History</button><button class="btn sec" onclick="go('sticker',{uhid:'${ctx.uhid}'})">🏷 Stickers</button>`) : h; };
+
+/* =========================================================
+   3. QUALITY INDICATORS (per patient + report)
+   ========================================================= */
+const QI_EV = [['medErr', 'Medication error'], ['adr', 'Adverse drug reaction'], ['fall', 'Patient fall'], ['ulcer', 'Pressure ulcer developed in hospital'], ['needle', 'Needle-stick injury (staff)'],
+  ['transf', 'Transfusion reaction'], ['cauti', 'CAUTI (catheter urinary infection)'], ['clabsi', 'CLABSI (central line infection)'], ['vap', 'VAP (ventilator pneumonia)'], ['ssi', 'SSI (surgical site infection)'],
+  ['reOT', 'Unplanned return to OT'], ['reICU', 'Return to ICU within 48 hrs'], ['restraint', 'Physical restraint used'], ['consent', 'Informed consent taken'], ['idband', 'ID band applied'], ['dsGiven', 'Discharge summary given to patient']];
+function qiAuto(a) { const c = C(a); const adm = dt(a.admDate, a.admTime); const mins = x => x && x.dt ? Math.round((new Date(x.dt) - adm) / 60000) : null;
+  const prev = pAdms(a.uhid).filter(x => x.id !== a.id && x.status === 'Discharged' && x.dDate && dt(x.dDate, x.dTime) <= adm).sort((x, y) => (y.dDate + y.dTime).localeCompare(x.dDate + x.dTime))[0];
+  return { docMin: mins(c.docIA), nurMin: mins(c.nurIA), los: los(a), lama: /lama|dama/i.test(a.dType || ''), death: /death|expired/i.test(a.dType || ''),
+    readmit: prev ? (adm - dt(prev.dDate, prev.dTime)) / 36e5 <= 72 : false }; }
+const minTxt = m => m === null ? '<span style="color:#b03a2e">Not done</span>' : (m < 60 ? m + ' min' : (m / 60).toFixed(1) + ' hrs');
+ICT.qi = (a, c) => { const q = c.qi, au = qiAuto(a);
+  return card('Automatic (from records)', `<table><tr><th>Indicator</th><th>Value</th></tr>
+   <tr><td>Time to doctor initial assessment</td><td>${minTxt(au.docMin)}</td></tr><tr><td>Time to nursing initial assessment</td><td>${minTxt(au.nurMin)}</td></tr>
+   <tr><td>Length of stay</td><td>${au.los} day(s)</td></tr><tr><td>Re-admission within 72 hrs of last discharge</td><td>${au.readmit ? '<b style="color:#b03a2e">Yes</b>' : 'No'}</td></tr>
+   <tr><td>LAMA / DAMA</td><td>${au.lama ? 'Yes' : 'No'}</td></tr><tr><td>Death</td><td>${au.death ? 'Yes' : 'No'}</td></tr></table>`)
+  + card('Events &amp; compliance for this patient', `<div class="grid">${QI_EV.map(([k, l]) => `<div><label>${l}</label><select id="qi_${k}"><option></option>${YN.map(x => `<option ${q[k] === x ? 'selected' : ''}>${x}</option>`).join('')}</select></div>`).join('')}
+   <div><label>Catheter days</label><input id="qi_cathDays" type="number" value="${esc(q.cathDays)}"></div><div><label>Central line days</label><input id="qi_lineDays" type="number" value="${esc(q.lineDays)}"></div><div><label>Ventilator days</label><input id="qi_ventDays" type="number" value="${esc(q.ventDays)}"></div>
+   <div><label>Discharge process time (minutes)</label><input id="qi_disMin" type="number" value="${esc(q.disMin)}"></div><div><label>Patient satisfaction (1–5)</label><select id="qi_sat"><option></option>${['1', '2', '3', '4', '5'].map(x => `<option ${q.sat === x ? 'selected' : ''}>${x}</option>`).join('')}</select></div>
+   <div class="full"><label>Remarks / incident details</label><textarea id="qi_rem">${esc(q.rem)}</textarea></div></div><br><button class="btn" onclick="icQISave('${a.id}')">Save Quality Data</button>`); };
+window.icQISave = function (id) { const a = getA(id), c = C(a); const q = {}; QI_EV.forEach(([k]) => q[k] = val('qi_' + k)); ['cathDays', 'lineDays', 'ventDays', 'disMin', 'sat', 'rem'].forEach(k => q[k] = val('qi_' + k)); q._by = cur.u; q._at = new Date().toISOString(); c.qi = q; audit('Quality data saved', a.ipdNo); save(); toast('Saved'); go('ipdchart', { id, tab: 'qi' }); };
+TH.addMenuItem('rep', 'qirep', 'Quality Indicator Report');
+TH.page('qirep', () => { const f = ctx.f || today().slice(0, 8) + '01', t = ctx.t || today();
+  const L = db.admissions.filter(a => inR(a.admDate, f, t)); const D = db.admissions.filter(a => a.status === 'Discharged' && inR(a.dDate, f, t)); const n = L.length || 1;
+  const pd = L.reduce((s, a) => s + los(a), 0) || 1; const cnt = k => L.filter(a => (C(a).qi || {})[k] === 'Yes').length; const sum = k => L.reduce((s, a) => s + (+(C(a).qi || {})[k] || 0), 0);
+  const avg = arr => { const v = arr.filter(x => x !== null && !isNaN(x)); return v.length ? (v.reduce((s, x) => s + x, 0) / v.length) : null; };
+  const au = L.map(qiAuto); const docA = avg(au.map(x => x.docMin)), nurA = avg(au.map(x => x.nurMin)); const sat = avg(L.map(a => +(C(a).qi.sat) || null)); const dis = avg(L.map(a => +(C(a).qi.disMin) || null));
+  const per1000 = (x, d) => d ? (x * 1000 / d).toFixed(2) : '—'; const pct = (x, d) => d ? (x * 100 / d).toFixed(1) + '%' : '—';
+  const rows = [
+    ['Admissions in period', L.length, ''], ['Patient days', pd, ''], ['Average length of stay (discharged)', D.length ? (D.reduce((s, a) => s + los(a), 0) / D.length).toFixed(1) + ' days' : '—', ''],
+    ['Average time to doctor initial assessment', docA === null ? '—' : minTxt(Math.round(docA)), 'NABH: initial assessment time'], ['Average time to nursing initial assessment', nurA === null ? '—' : minTxt(Math.round(nurA)), ''],
+    ['Doctor assessment completed', pct(au.filter(x => x.docMin !== null).length, L.length), ''], ['Nursing assessment completed', pct(au.filter(x => x.nurMin !== null).length, L.length), ''],
+    ['Medication errors', cnt('medErr') + ' (' + pct(cnt('medErr'), L.length) + ')', 'per admissions'], ['Adverse drug reactions', cnt('adr') + ' (' + pct(cnt('adr'), L.length) + ')', ''],
+    ['Patient falls', cnt('fall') + ' • ' + per1000(cnt('fall'), pd) + ' /1000 patient days', ''], ['Pressure ulcers', cnt('ulcer') + ' • ' + per1000(cnt('ulcer'), pd) + ' /1000 patient days', ''],
+    ['CAUTI', cnt('cauti') + ' • ' + per1000(cnt('cauti'), sum('cathDays')) + ' /1000 catheter days', ''], ['CLABSI', cnt('clabsi') + ' • ' + per1000(cnt('clabsi'), sum('lineDays')) + ' /1000 line days', ''],
+    ['VAP', cnt('vap') + ' • ' + per1000(cnt('vap'), sum('ventDays')) + ' /1000 ventilator days', ''], ['SSI', cnt('ssi'), ''], ['Transfusion reactions', cnt('transf'), ''], ['Needle-stick injuries', cnt('needle'), ''],
+    ['Unplanned return to OT', cnt('reOT'), ''], ['Return to ICU within 48 hrs', cnt('reICU'), ''], ['Re-admission within 72 hrs', au.filter(x => x.readmit).length + ' (' + pct(au.filter(x => x.readmit).length, L.length) + ')', ''],
+    ['LAMA / DAMA', D.filter(a => /lama|dama/i.test(a.dType)).length + ' (' + pct(D.filter(a => /lama|dama/i.test(a.dType)).length, D.length) + ')', 'of discharges'],
+    ['Mortality', D.filter(a => /death|expired/i.test(a.dType)).length + ' (' + pct(D.filter(a => /death|expired/i.test(a.dType)).length, D.length) + ')', 'of discharges'],
+    ['Informed consent compliance', pct(cnt('consent'), L.filter(a => C(a).qi.consent).length), 'of recorded'], ['ID band compliance', pct(cnt('idband'), L.filter(a => C(a).qi.idband).length), 'of recorded'],
+    ['Average discharge process time', dis === null ? '—' : Math.round(dis) + ' min', ''], ['Average patient satisfaction', sat === null ? '—' : sat.toFixed(2) + ' / 5', '']];
+  return `<h2>Quality Indicator Report</h2><div class="card row"><div><label>Month</label><input type="month" value="${f.slice(0, 7)}" onchange="const[y,m]=this.value.split('-');go('qirep',{f:this.value+'-01',t:this.value+'-'+new Date(y,m,0).getDate()})"></div>
+   <div><label>From</label><input id="qr_f" type="date" value="${f}"></div><div><label>To</label><input id="qr_t" type="date" value="${t}"></div><button class="btn" onclick="go('qirep',{f:val('qr_f'),t:val('qr_t')})">Show</button><button class="btn sec" onclick="printReport()">Print</button>
+   <button class="btn sec" onclick="csv('Quality_Indicators_${f}_to_${t}.csv',[['Indicator','Value','Note'],...${JSON.stringify(rows.map(r => r.map(x => String(x).replace(/<[^>]+>/g, ''))))}])">Export CSV</button></div>
+   <div id="rep"><h3>${esc(db.settings.hospital)} — Quality Indicators ${dmy(f)} to ${dmy(t)}</h3><table><tr><th>Indicator</th><th>Value</th><th>Note</th></tr>${rows.map(r => `<tr><td>${r[0]}</td><td><b>${r[1]}</b></td><td class="muted">${r[2]}</td></tr>`).join('')}</table>
+   <p class="muted" style="font-size:12px">Event data comes from each patient's <b>IPD Chart → Quality Indicators</b> tab.</p></div>`; }, 'qirep');
+
+/* =========================================================
+   4. MRD (Medical Records Department)
+   ========================================================= */
+const MRD_CHECK = ['Admission record & consent', 'Doctor initial assessment', 'Nursing initial assessment', 'Daily progress notes', 'Drug chart / MAR', 'Vitals / TPR chart', 'Investigation reports', 'Procedure / OT notes', 'Discharge summary', 'Final bill', 'MLC papers (if MLC)', 'Death certificate (if death)'];
+function mrdAutoCheck(a) { const c = C(a); return { 'Admission record & consent': true, 'Doctor initial assessment': !!c.docIA, 'Nursing initial assessment': !!c.nurIA, 'Daily progress notes': c.notes.length > 0, 'Drug chart / MAR': c.drugs.length > 0, 'Vitals / TPR chart': c.vitals.length > 0, 'Investigation reports': c.inv.length > 0, 'Discharge summary': !!a.discharge, 'Final bill': a.status === 'Discharged' }; }
+ICT.mrd = (a, c) => mrdForm(a);
+function mrdForm(a) { const m = a.mrd || {}; const auto = mrdAutoCheck(a); const chk = m.check || auto; const y = (a.dDate || today()).slice(0, 4);
+  const nextNo = 'MRD-' + y + '-' + pad(db.admissions.filter(x => x.mrd && String(x.mrd.fileNo).startsWith('MRD-' + y)).length + 1, 4);
+  const ret = m.retain || ((+String(a.dDate || today()).slice(0, 4) + (a.mlc === 'Yes' ? 10 : (+db.settings.mrdYears || 3))) + String(a.dDate || today()).slice(4, 10));
+  return card('MRD file — ' + esc(a.ipdNo), `${a.status !== 'Discharged' ? '<div class="warn">Patient is still admitted — file goes to MRD after discharge.</div><br>' : ''}<div class="grid">
+   <div><label>MRD file number</label><input id="mr_no" value="${esc(m.fileNo || nextNo)}"></div><div><label>Received in MRD on</label><input id="mr_dt" type="date" value="${esc(m.recv || today())}"></div>
+   <div><label>Received by</label><input id="mr_by" value="${esc(m.recvBy || cur.u)}"></div><div><label>Rack / shelf / location</label><input id="mr_rack" value="${esc(m.rack)}" placeholder="e.g. R2-S3-2026"></div>
+   <div><label>Retain until</label><input id="mr_ret" type="date" value="${esc(ret)}"></div><div><label>File status</label><select id="mr_st">${['Complete', 'Incomplete — deficiency', 'Under review', 'Destroyed (as per policy)'].map(x => `<option ${m.status === x ? 'selected' : ''}>${x}</option>`).join('')}</select></div></div>
+   <h4>Completeness checklist ${m.check ? '' : '<span class="muted" style="font-weight:400;font-size:12px">(auto-ticked from records — please verify)</span>'}</h4><div class="grid">${MRD_CHECK.map((k, i) => `<label style="display:flex;gap:8px;font-weight:400;color:var(--tx)"><input type="checkbox" id="mr_c${i}" style="width:auto" ${chk[k] ? 'checked' : ''}> ${k}</label>`).join('')}</div>
+   <div class="full" style="margin-top:8px"><label>Deficiency / remarks</label><textarea id="mr_rem">${esc(m.rem)}</textarea></div><br>
+   <div class="row"><button class="btn" onclick="mrdSave('${a.id}')">Save MRD file</button><button class="btn sec" onclick="mrdLabel('${a.id}')">🖨 Print file cover label</button></div>`)
+   + card('Issue / return of this file', `<div class="row"><div><label>Issued to</label><input id="mi_to" placeholder="Name / department"></div><div><label>Purpose</label><input id="mi_pu" list="mipl" placeholder="e.g. Insurance claim, Court, Audit"><datalist id="mipl">${['Insurance / TPA claim', 'MJPJAY / PMJAY audit', 'Court / legal', 'Police', 'NABH audit', 'Doctor review', 'Patient request (copy)'].map(x => `<option>${x}</option>`).join('')}</datalist></div>
+   <div><label>Date</label><input id="mi_dt" type="date" value="${today()}"></div><button class="btn" onclick="mrdIssue('${a.id}')">Issue file</button></div>
+   <table style="margin-top:8px"><tr><th>Issued to</th><th>Purpose</th><th>Issued on</th><th>Returned on</th><th></th></tr>${(m.issues || []).map((x, i) => `<tr><td>${esc(x.to)}</td><td>${esc(x.pu)}</td><td>${dmy(x.dt)}</td><td>${x.ret ? dmy(x.ret) : '<b style="color:#b03a2e">OUT</b>'}</td><td>${x.ret ? '' : `<button class="btn sm" onclick="mrdReturn('${a.id}',${i})">Mark returned</button>`}</td></tr>`).join('') || '<tr><td colspan="5" class="muted">Not issued</td></tr>'}</table>`); }
+window.mrdSave = function (id) { const a = getA(id); const m = a.mrd || { issues: [] }; Object.assign(m, { fileNo: val('mr_no'), recv: val('mr_dt'), recvBy: val('mr_by'), rack: val('mr_rack'), retain: val('mr_ret'), status: val('mr_st'), rem: val('mr_rem'), check: Object.fromEntries(MRD_CHECK.map((k, i) => [k, $('#mr_c' + i).checked])) });
+  a.mrd = m; audit('MRD file saved', a.ipdNo + ' ' + m.fileNo); save(); toast('MRD file saved'); go(page, ctx); };
+window.mrdIssue = function (id) { const a = getA(id); if (!a.mrd) { alert('Save the MRD file first'); return; } if (!val('mi_to')) { alert('Enter issued to'); return; } (a.mrd.issues = a.mrd.issues || []).push({ to: val('mi_to'), pu: val('mi_pu'), dt: val('mi_dt'), by: cur.u }); audit('MRD file issued', a.ipdNo + ' to ' + val('mi_to')); save(); go(page, ctx); };
+window.mrdReturn = function (id, i) { const a = getA(id); a.mrd.issues[i].ret = today(); a.mrd.issues[i].retBy = cur.u; audit('MRD file returned', a.ipdNo); save(); go(page, ctx); };
+window.mrdLabel = function (id) { const a = getA(id), p = getP(a.uhid) || {}, m = a.mrd || {};
+  $('#printArea').innerHTML = `<div class="pf"><div style="border:2px solid #000;padding:14px;width:120mm">${printHead()}<div style="font-size:22px;font-weight:700;text-align:center;margin:6px 0">${esc(m.fileNo || '')}</div>
+   <table class="it"><tr><td><b>Name</b></td><td>${esc(p.name)}</td></tr><tr><td><b>UHID / IPD</b></td><td>${esc(a.uhid)} / ${esc(a.ipdNo)}</td></tr><tr><td><b>Age / Sex</b></td><td>${ageText(p)} / ${esc(p.gender)}</td></tr>
+   <tr><td><b>Admission – Discharge</b></td><td>${dmy(a.admDate)} – ${dmy(a.dDate)}</td></tr><tr><td><b>Doctor</b></td><td>${esc(a.doctor)}</td></tr><tr><td><b>Diagnosis</b></td><td>${esc((a.discharge || {}).dx || a.dx)}</td></tr>
+   <tr><td><b>Rack</b></td><td>${esc(m.rack)}</td></tr><tr><td><b>Retain until</b></td><td>${dmy(m.retain)}</td></tr>${a.mlc === 'Yes' ? '<tr><td colspan="2" style="text-align:center"><b>MLC — ' + esc(a.mlcNo) + '</b></td></tr>' : ''}</table></div></div>`;
+  setTimeout(() => window.print(), 100); };
+TH.addMenu('mrd', 'MRD', '🗄️');
+TH.addMenuItem('mrd', 'mrdhome', 'MRD Room');
+TH.addMenuItem('mrd', 'mrdfile', 'MRD File (open by IPD No.)');
+TH.page('mrdhome', () => { const tab = ctx.tab || 'pending'; const D = db.admissions.filter(a => a.status === 'Discharged');
+  const pend = D.filter(a => !a.mrd), files = D.filter(a => a.mrd), out = files.filter(a => (a.mrd.issues || []).some(x => !x.ret)), inc = files.filter(a => /Incomplete/.test(a.mrd.status || '')), due = files.filter(a => a.mrd.retain && a.mrd.retain <= today() && !/Destroyed/.test(a.mrd.status));
+  const q = (ctx.q || '').toLowerCase(); const flt = L => L.filter(a => { const p = getP(a.uhid) || {}; return !q || (a.ipdNo + a.uhid + (p.name || '') + ((a.mrd || {}).fileNo || '') + ((a.mrd || {}).rack || '')).toLowerCase().includes(q); });
+  const T = { pending: ['Files pending in MRD', pend], files: ['All MRD files', files], out: ['Files issued (out)', out], inc: ['Incomplete files', inc], due: ['Due for destruction', due] };
+  const L = flt(T[tab][1]).sort((x, y) => (y.dDate || '').localeCompare(x.dDate || ''));
+  return `<h2>🗄️ MRD Room</h2><div class="stats">${Object.entries(T).map(([k, [l, arr]]) => `<div class="stat" style="cursor:pointer;${tab === k ? 'border-color:var(--g);border-width:2px' : ''}" onclick="go('mrdhome',{tab:'${k}'})"><div class="n">${arr.length}</div><div class="l">${l}</div></div>`).join('')}</div>
+  <div class="card row"><div style="flex:1"><label>Search IPD No. / UHID / name / MRD No. / rack</label><input id="mq" value="${esc(ctx.q || '')}" onkeydown="if(event.key==='Enter')go('mrdhome',{tab:'${tab}',q:this.value})"></div><button class="btn" onclick="go('mrdhome',{tab:'${tab}',q:val('mq')})">Search</button></div>
+  <h3>${T[tab][0]}</h3><table><tr><th>MRD No.</th><th>IPD No.</th><th>Name</th><th>Discharged</th><th>Type</th><th>Rack</th><th>Status</th><th></th></tr>${L.map(a => { const m = a.mrd || {}; return `<tr><td>${esc(m.fileNo || '—')}</td><td>${esc(a.ipdNo)}</td><td>${esc((getP(a.uhid) || {}).name)}</td><td>${dmy(a.dDate)}</td><td>${esc(a.dType)}${a.mlc === 'Yes' ? ' • MLC' : ''}</td><td>${esc(m.rack)}</td><td>${esc(m.status || 'Not received')}${(m.issues || []).some(x => !x.ret) ? ' • <b style="color:#b03a2e">OUT</b>' : ''}</td>
+   <td><button class="btn sm" onclick="go('mrdfile',{id:'${a.id}'})">${a.mrd ? 'Open' : 'Receive file'}</button></td></tr>`; }).join('') || '<tr><td colspan="8" class="muted">None</td></tr>'}</table>
+  <div class="card" style="margin-top:12px"><label>Default retention period (years, non-MLC)</label><div class="row"><input id="mry" type="number" value="${db.settings.mrdYears || 3}" style="width:100px"><button class="btn sm" onclick="db.settings.mrdYears=+val('mry')||3;save();toast('Saved')">Save</button><span class="muted" style="font-size:12px">MLC files default to 10 years. Follow your hospital's MRD policy.</span></div></div>`; }, 'mrdhome');
+TH.page('mrdfile', () => { if (!ctx.id) return `<h2>MRD File</h2><div class="card row"><div style="flex:1"><label>Enter IPD No. (e.g. IPD-2026-0001)</label><input id="mfq" onkeydown="if(event.key==='Enter')mrdFind()"></div><button class="btn" onclick="mrdFind()">Open</button></div>`;
+  const a = getA(ctx.id); if (!a) return 'Not found'; const p = getP(a.uhid) || {};
+  return `<h2>MRD File — ${esc(p.name)} <span class="muted" style="font-size:14px">${esc(a.ipdNo)}</span></h2><div class="row" style="margin-bottom:10px"><button class="btn sm sec" onclick="go('mrdhome')">← MRD Room</button><button class="btn sm sec" onclick="go('ipdchart',{id:'${a.id}'})">Open patient chart</button><button class="btn sm sec" onclick="printDischarge('${a.id}')">Discharge summary</button><button class="btn sm sec" onclick="printBill('${a.id}')">Final bill</button></div>${mrdForm(a)}`; }, 'mrdhome');
+window.mrdFind = function () { const q = val('mfq').trim().toUpperCase(); const a = db.admissions.find(x => x.ipdNo.toUpperCase() === q || ((x.mrd || {}).fileNo || '').toUpperCase() === q); if (!a) { alert('Not found'); return; } go('mrdfile', { id: a.id }); };
+
+/* =========================================================
+   5. STICKERS on A4 (label sheets)
+   ========================================================= */
+const LBL = {
+  '65': ['65 labels (38.1 × 21.2 mm)', 5, 13, 38.1, 21.2, 2.5, 0], '40': ['40 labels (48.5 × 25.4 mm)', 4, 10, 48.5, 25.4, 0, 0], '24': ['24 labels (64 × 33.9 mm)', 3, 8, 64, 33.9, 2.5, 0],
+  '21': ['21 labels (63.5 × 38.1 mm)', 3, 7, 63.5, 38.1, 2.5, 0], '16': ['16 labels (99.1 × 34 mm)', 2, 8, 99.1, 34, 2.5, 0], '14': ['14 labels (99.1 × 38.1 mm)', 2, 7, 99.1, 38.1, 2.5, 0],
+  '12': ['12 labels (63.5 × 72 mm)', 3, 4, 63.5, 72, 2.5, 0], '8': ['8 labels (99.1 × 67.7 mm)', 2, 4, 99.1, 67.7, 2.5, 0], '4': ['4 labels (A6 105 × 148 mm)', 2, 2, 105, 148.5, 0, 0], '1': ['Plain A4 — cut manually (3 × 8)', 3, 8, 70, 37, 0, 0]
+};
+const SF = [['name', 'Patient name'], ['uhid', 'UHID'], ['ipd', 'IPD No.'], ['agesex', 'Age / Sex'], ['ward', 'Ward / Bed'], ['doctor', 'Doctor'], ['adm', 'Admission date'], ['bg', 'Blood group'], ['mobile', 'Mobile'], ['hosp', 'Hospital name']];
+TH.setting('stk', { layout: '65', fields: ['name', 'uhid', 'ipd', 'agesex', 'ward', 'adm'], dx: 0, dy: 0, border: true });
+TH.page('sticker', () => { const s = db.settings.stk; const a = ctx.id ? getA(ctx.id) : null; const uhid = a ? a.uhid : ctx.uhid; const p = getP(uhid);
+  if (!p) return `<h2>Patient Stickers</h2><div class="card row"><div style="flex:1"><label>UHID or IPD No.</label><input id="stq" onkeydown="if(event.key==='Enter')stFind()"></div><button class="btn" onclick="stFind()">Open</button></div>`;
+  const L = LBL[s.layout] || LBL['65'];
+  return `<h2>🏷 Patient Stickers — ${esc(p.name)}</h2><div class="card"><div class="grid">
+   <div class="full"><label>Sticker paper (A4 sheet)</label><select id="st_l" onchange="db.settings.stk.layout=this.value;save(true);go('sticker',ctx)">${Object.entries(LBL).map(([k, v]) => `<option value="${k}" ${s.layout === k ? 'selected' : ''}>${v[0]}</option>`).join('')}</select></div>
+   <div><label>How many stickers</label><input id="st_n" type="number" min="1" value="${L[1] * L[2]}"></div><div><label>Start at label number (skip used ones)</label><input id="st_s" type="number" min="1" max="${L[1] * L[2]}" value="1"></div>
+   <div><label>Move right / left (mm)</label><input type="number" step="0.5" value="${s.dx}" onchange="db.settings.stk.dx=+this.value;save(true)"></div><div><label>Move down / up (mm)</label><input type="number" step="0.5" value="${s.dy}" onchange="db.settings.stk.dy=+this.value;save(true)"></div></div>
+   <h4>Print on sticker</h4><div class="row">${SF.map(([k, l]) => `<label style="display:flex;gap:6px;font-weight:400;color:var(--tx);margin-right:14px"><input type="checkbox" class="stf" data-k="${k}" style="width:auto" ${s.fields.includes(k) ? 'checked' : ''} onchange="db.settings.stk.fields=[...document.querySelectorAll('.stf')].filter(x=>x.checked).map(x=>x.dataset.k);save(true)"> ${l}</label>`).join('')}
+   <label style="display:flex;gap:6px;font-weight:400;color:var(--tx)"><input type="checkbox" style="width:auto" ${s.border ? 'checked' : ''} onchange="db.settings.stk.border=this.checked;save(true)"> Print border (for plain paper)</label></div><br>
+   <button class="btn" onclick="stPrint('${esc(uhid)}','${a ? a.id : ''}')">🖨 Print Stickers</button>
+   <p class="muted" style="font-size:12px;margin-bottom:0">In the print window: Paper <b>A4</b>, Margins <b>None</b>, Scale <b>100% / Default</b>. Do a test print on plain paper first, hold it over the sticker sheet, and use “Move” to adjust.</p></div>`; }, 'ipdlist');
+window.stFind = function () { const q = val('stq').trim().toUpperCase(); const a = db.admissions.find(x => x.ipdNo.toUpperCase() === q); if (a) return go('sticker', { id: a.id }); if (getP(q)) return go('sticker', { uhid: q }); alert('Not found'); };
+window.stPrint = function (uhid, aid) { const s = db.settings.stk, L = LBL[s.layout] || LBL['65']; const [, cols, rows, w, h, gx, gy] = L; const per = cols * rows;
+  const p = getP(uhid) || {}; const a = aid ? getA(aid) : (pAdms(uhid).find(x => x.status === 'Admitted') || null);
+  const n = Math.max(1, +val('st_n') || per), start = Math.min(per, Math.max(1, +val('st_s') || 1)) - 1;
+  const ml = (210 - (cols * w + (cols - 1) * gx)) / 2 + (+s.dx || 0), mt = (297 - (rows * h + (rows - 1) * gy)) / 2 + (+s.dy || 0);
+  const lines = []; const F = s.fields;
+  if (F.includes('hosp')) lines.push(`<div style="font-size:.8em">${esc(db.settings.hospital)}</div>`);
+  if (F.includes('name')) lines.push(`<div style="font-weight:700;font-size:1.12em">${esc(p.name)}</div>`);
+  const kv = []; if (F.includes('uhid')) kv.push('UHID: ' + esc(p.uhid)); if (F.includes('ipd') && a) kv.push('IPD: ' + esc(a.ipdNo)); if (kv.length) { if (w < 80) kv.forEach(x => lines.push('<div>' + x + '</div>')); else lines.push('<div>' + kv.join(' &nbsp; ') + '</div>'); }
+  const k2 = []; if (F.includes('agesex')) k2.push(ageText(p) + ' / ' + esc(p.gender)); if (F.includes('bg') && p.bg) k2.push('BG: ' + esc(p.bg)); if (k2.length) lines.push('<div>' + k2.join(' &nbsp; ') + '</div>');
+  if (F.includes('ward') && a) lines.push(`<div>${esc(a.ward)} / ${esc(a.bed)}</div>`); if (F.includes('doctor') && a) lines.push(`<div>${esc(a.doctor)}</div>`);
+  if (F.includes('adm') && a) lines.push(`<div>Adm: ${dmy(a.admDate)}</div>`); if (F.includes('mobile')) lines.push(`<div>Mob: ${esc(p.mobile)}</div>`);
+  const fs = Math.max(1.8, Math.min(4.2, (h - 2) / (lines.length * 1.25 + .3))).toFixed(2);
+  const one = `<div style="font-size:${fs}mm;line-height:1.18;font-family:Arial;width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${lines.join('')}</div>`;
+  let pages = '', idx = start, left = n;
+  while (left > 0) { let cells = ''; for (let i = idx; i < per && left > 0; i++, left--) { const r = Math.floor(i / cols), cI = i % cols;
+      cells += `<div style="position:absolute;left:${(ml + cI * (w + gx)).toFixed(2)}mm;top:${(mt + r * (h + gy)).toFixed(2)}mm;width:${w}mm;height:${h}mm;box-sizing:border-box;padding:1.2mm 2mm;overflow:hidden;${s.border ? 'border:0.2mm dashed #999;' : ''}display:flex;align-items:center">${one}</div>`; }
+    pages += `<div style="position:relative;width:210mm;height:296mm;overflow:hidden;page-break-after:always">${cells}</div>`; idx = 0; }
+  let st = document.getElementById('stkPage'); if (!st) { st = document.createElement('style'); st.id = 'stkPage'; document.head.appendChild(st); }
+  st.textContent = '@page{size:A4;margin:0}@media print{#printArea .pf{padding:0;margin:0}}';
+  $('#printArea').innerHTML = `<div class="pf">${pages}</div>`; audit('Stickers printed', (a ? a.ipdNo : p.uhid) + ' x' + n); save(true);
+  const clean = () => { st.textContent = ''; window.removeEventListener('afterprint', clean); }; window.addEventListener('afterprint', clean); setTimeout(() => window.print(), 150); };
+ICT.stk = (a) => `<div class="card"><p>Print patient stickers on A4 label sheets (65, 40, 24, 21, 16, 14, 12, 8, 4 per sheet or plain A4).</p><button class="btn" onclick="go('sticker',{id:'${a.id}'})">🏷 Open Sticker Printing</button></div>`;
+TH.addMenuItem('ipd', 'sticker', 'Patient Stickers (A4)');
+
+/* =========================================================
+   6. REGISTERS (monthly hospital registers)
+   ========================================================= */
+const PN = uhid => (getP(uhid) || {}); const AS = p => (p.uhid ? ageText(p) + ' / ' + (p.gender || '') : '');
+const allEv = (k, f, t) => db.admissions.flatMap(a => ((a.clin || {})[k] || []).filter(x => inR(x.dt, f, t)).map(x => ({ a, x })));
+const REGS = {
+  opd: ['OPD Register', ['Token', 'Date', 'UHID', 'Name', 'Age/Sex', 'Address', 'Doctor', 'Department', 'New/FU', 'Diagnosis', 'Fee'],
+    (f, t) => db.visits.filter(v => inR(v.date, f, t)).sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time)).map(v => { const p = PN(v.uhid); return [v.token, dmy(v.date), v.uhid, p.name, AS(p), p.address, v.doctor, v.dept, v.type, v.diagnosis, amt(v) || '']; })],
+  newreg: ['New Patient Registration Register', ['UHID', 'Reg. date', 'Name', 'Age/Sex', 'Mobile', 'Address', 'Registered by'],
+    (f, t) => db.patients.filter(p => inR(p.regDate, f, t)).map(p => [p.uhid, dmy(p.regDate), p.name, AS(p), p.mobile, p.address, p.regBy])],
+  adm: ['IPD Admission Register', ['IPD No.', 'Date & time', 'UHID', 'Name', 'Age/Sex', 'Address', 'Ward/Bed', 'Doctor', 'Diagnosis', 'Payment', 'MLC', 'Status'],
+    (f, t) => db.admissions.filter(a => inR(a.admDate, f, t)).sort((a, b) => (a.admDate + a.admTime).localeCompare(b.admDate + b.admTime)).map(a => { const p = PN(a.uhid); return [a.ipdNo, dmy(a.admDate) + ' ' + t12(a.admTime), a.uhid, p.name, AS(p), p.address, a.ward + ' / ' + a.bed, a.doctor, a.dx, a.payType, a.mlc, a.status]; })],
+  dis: ['Discharge Register', ['IPD No.', 'Name', 'Age/Sex', 'Admitted', 'Discharged', 'LOS', 'Type', 'Final diagnosis', 'Condition', 'Doctor'],
+    (f, t) => db.admissions.filter(a => a.status === 'Discharged' && inR(a.dDate, f, t)).map(a => { const p = PN(a.uhid), d = a.discharge || {}; return [a.ipdNo, p.name, AS(p), dmy(a.admDate), dmy(a.dDate) + ' ' + t12(a.dTime), los(a), a.dType, d.dx, d.cond, d.doctor || a.doctor]; })],
+  lama: ['LAMA / DAMA Register', ['IPD No.', 'Name', 'Age/Sex', 'Admitted', 'Left on', 'Type', 'Diagnosis', 'Relative', 'Doctor'],
+    (f, t) => db.admissions.filter(a => /lama|dama/i.test(a.dType || '') && inR(a.dDate, f, t)).map(a => { const p = PN(a.uhid); return [a.ipdNo, p.name, AS(p), dmy(a.admDate), dmy(a.dDate) + ' ' + t12(a.dTime), a.dType, (a.discharge || {}).dx || a.dx, a.relName + ' (' + (a.relRel || '') + ')', a.doctor]; })],
+  death: ['Death Register', ['IPD No.', 'Name', 'Age/Sex', 'Address', 'Admitted', 'Date & time of death', 'Cause / final diagnosis', 'Doctor', 'MLC'],
+    (f, t) => db.admissions.filter(a => /death|expired/i.test(a.dType || '') && inR(a.dDate, f, t)).map(a => { const p = PN(a.uhid); return [a.ipdNo, p.name, AS(p), p.address, dmy(a.admDate), dmy(a.dDate) + ' ' + t12(a.dTime), (a.discharge || {}).dx || a.dx, (a.discharge || {}).doctor || a.doctor, a.mlc === 'Yes' ? 'Yes ' + (a.mlcNo || '') : 'No']; })],
+  mlc: ['MLC Register', ['IPD No.', 'Date & time', 'Name', 'Age/Sex', 'Address', 'MLC No. / Police station', 'Diagnosis', 'Doctor', 'Outcome'],
+    (f, t) => db.admissions.filter(a => a.mlc === 'Yes' && inR(a.admDate, f, t)).map(a => { const p = PN(a.uhid); return [a.ipdNo, dmy(a.admDate) + ' ' + t12(a.admTime), p.name, AS(p), p.address, a.mlcNo, a.dx, a.doctor, a.status === 'Discharged' ? a.dType : 'Admitted']; })],
+  ref: ['Referral (Out) Register', ['IPD No.', 'Name', 'Age/Sex', 'Referred on', 'Referred to', 'Diagnosis', 'Doctor'],
+    (f, t) => db.admissions.filter(a => /refer/i.test(a.dType || '') && inR(a.dDate, f, t)).map(a => { const p = PN(a.uhid), d = a.discharge || {}; return [a.ipdNo, p.name, AS(p), dmy(a.dDate) + ' ' + t12(a.dTime), d.ref, d.dx || a.dx, d.doctor || a.doctor]; })],
+  transfer: ['Bed Transfer Register', ['Date & time', 'IPD No.', 'Name', 'From', 'To', 'Reason', 'By'],
+    (f, t) => db.admissions.flatMap(a => (a.transfers || []).filter(x => inR(x.date, f, t)).map(x => [dmy(x.date) + ' ' + t12(x.time), a.ipdNo, PN(a.uhid).name, x.fromWard + ' / ' + x.fromBed, x.toWard + ' / ' + x.toBed, x.reason, x.by]))],
+  census: ['Daily Census Register', ['Date', 'Admissions', 'Discharges', 'LAMA/DAMA', 'Deaths', 'Patients at midnight', 'Occupancy %'],
+    (f, t) => { const out = [], tb = totalBeds(); let d = new Date(f + 'T12:00'); const e = new Date(t + 'T12:00'); while (d <= e) { const s = d.getFullYear() + '-' + pad(d.getMonth() + 1, 2) + '-' + pad(d.getDate(), 2); const ds = db.admissions.filter(a => a.dDate === s);
+      const n = db.admissions.filter(a => a.admDate <= s && (a.status === 'Admitted' || a.dDate > s)).length; out.push([dmy(s), db.admissions.filter(a => a.admDate === s).length, ds.length, ds.filter(a => /lama|dama/i.test(a.dType)).length, ds.filter(a => /death|expired/i.test(a.dType)).length, n, tb ? Math.round(n * 100 / tb) + '%' : '']); d.setDate(d.getDate() + 1); } return out; }],
+  bills: ['Bill & Receipt Register', ['Date', 'No.', 'Type', 'UHID', 'Name', 'Mode', 'Amount', 'By'], (f, t) => txns(f, t).map(x => [dmy(x.date), x.no, x.src + (x.status && x.status !== 'Paid' ? ' (' + x.status + ')' : ''), x.uhid, x.name, x.mode, x.amt, x.by])],
+  indent: ['Pharmacy Indent Register', ['Order No.', 'Date & time', 'IPD No.', 'Name', 'Ward/Bed', 'Items', 'Days', 'By'],
+    (f, t) => allEv('indents', f, t).map(({ a, x }) => [x.no, fdt(x.dt), a.ipdNo, PN(a.uhid).name, a.ward + ' / ' + a.bed, x.items.map(i => i.name + ' ×' + i.qty).join('; '), x.days, x.by])],
+  inv: ['Investigation Register (IPD)', ['Date & time', 'IPD No.', 'Name', 'Test', 'Result', 'Unit / range', 'By'], (f, t) => allEv('inv', f, t).map(({ a, x }) => [fdt(x.dt), a.ipdNo, PN(a.uhid).name, x.test, x.res, x.unit, x.by])],
+  rbs: ['Blood Sugar (RBS) Register', ['Date & time', 'IPD No.', 'Name', 'Timing', 'Sugar mg/dl', 'Insulin', 'By'], (f, t) => allEv('rbs', f, t).map(({ a, x }) => [fdt(x.dt), a.ipdNo, PN(a.uhid).name, x.when, x.val, x.ins, x.by])],
+  incident: ['Incident / Adverse Event Register', ['IPD No.', 'Name', 'Admitted', 'Event(s)', 'Remarks', 'Recorded by'],
+    (f, t) => db.admissions.filter(a => inR(a.admDate, f, t)).map(a => { const q = C(a).qi; const ev = ['medErr', 'adr', 'fall', 'ulcer', 'needle', 'transf', 'reOT', 'reICU', 'restraint'].filter(k => q[k] === 'Yes').map(k => QI_EV.find(e => e[0] === k)[1]); return ev.length ? [a.ipdNo, PN(a.uhid).name, dmy(a.admDate), ev.join(', '), q.rem, q._by] : null; }).filter(Boolean)],
+  hai: ['Infection Control (HAI) Register', ['IPD No.', 'Name', 'Ward', 'Infection(s)', 'Device days (cath / line / vent)', 'Remarks'],
+    (f, t) => db.admissions.filter(a => inR(a.admDate, f, t)).map(a => { const q = C(a).qi; const ev = ['cauti', 'clabsi', 'vap', 'ssi'].filter(k => q[k] === 'Yes').map(k => k.toUpperCase()); return ev.length ? [a.ipdNo, PN(a.uhid).name, a.ward, ev.join(', '), (q.cathDays || 0) + ' / ' + (q.lineDays || 0) + ' / ' + (q.ventDays || 0), q.rem] : null; }).filter(Boolean)],
+  mrdreg: ['MRD Register (files received)', ['MRD No.', 'Received', 'IPD No.', 'Name', 'Discharged', 'Rack', 'Status', 'Retain until'],
+    (f, t) => db.admissions.filter(a => a.mrd && inR(a.mrd.recv, f, t)).map(a => [a.mrd.fileNo, dmy(a.mrd.recv), a.ipdNo, PN(a.uhid).name, dmy(a.dDate), a.mrd.rack, a.mrd.status, dmy(a.mrd.retain)])],
+  mrdissue: ['MRD Issue / Return Register', ['MRD No.', 'IPD No.', 'Name', 'Issued to', 'Purpose', 'Issued on', 'Returned on'],
+    (f, t) => db.admissions.flatMap(a => ((a.mrd || {}).issues || []).filter(x => inR(x.dt, f, t)).map(x => [a.mrd.fileNo, a.ipdNo, PN(a.uhid).name, x.to, x.pu, dmy(x.dt), x.ret ? dmy(x.ret) : 'OUT']))]
+};
+TH.addMenu('regs', 'REGISTERS', '📚');
+Object.entries(REGS).forEach(([k, [label]]) => { TH.addMenuItem('regs', 'reg_' + k, label); TH.page('reg_' + k, () => regPage(k), 'reg_' + k); });
+TH.addMenuItem('rep', 'registers', 'All Hospital Registers');
+TH.page('registers', () => `<h2>📚 Hospital Registers</h2><p class="muted">All registers are made automatically from your daily entries. Choose a register, pick the month, then Print or Export to Excel.</p>
+ <div class="tiles">${Object.entries(REGS).map(([k, [l]]) => `<div class="tile sm" onclick="go('reg_${k}')"><div class="tl">${l}</div></div>`).join('')}</div>`, 'registers');
+function regPage(k) { const [label, cols, fn] = REGS[k]; const f = ctx.f || today().slice(0, 8) + '01', t = ctx.t || today(); const rows = fn(f, t);
+  return `<h2>${label}</h2><div class="card row"><div><label>Month</label><input type="month" value="${f.slice(0, 7)}" onchange="const[y,m]=this.value.split('-');go('reg_${k}',{f:this.value+'-01',t:this.value+'-'+new Date(y,m,0).getDate()})"></div>
+   <div><label>From</label><input id="rg_f" type="date" value="${f}"></div><div><label>To</label><input id="rg_t" type="date" value="${t}"></div><button class="btn" onclick="go('reg_${k}',{f:val('rg_f'),t:val('rg_t')})">Show</button>
+   <button class="btn sec" onclick="printReport()">🖨 Print</button><button class="btn sec" onclick="regCSV('${k}','${f}','${t}')">Export Excel (CSV)</button><button class="btn sec" onclick="go('registers')">All registers</button></div>
+   <div id="rep"><h3 style="text-align:center">${esc(db.settings.hospital)} — ${label}<br><span style="font-size:13px;font-weight:400">Period: ${dmy(f)} to ${dmy(t)} • Total entries: ${rows.length}</span></h3>
+   <table><tr><th>Sr</th>${cols.map(c => `<th>${c}</th>`).join('')}</tr>${rows.map((r, i) => `<tr><td>${i + 1}</td>${r.map(x => `<td>${esc(x ?? '')}</td>`).join('')}</tr>`).join('') || `<tr><td colspan="${cols.length + 1}" class="muted">No entries in this period</td></tr>`}</table>
+   <div style="display:flex;justify-content:space-between;margin-top:30px;font-size:12px"><div>Prepared by: ______________</div><div>Verified by (MS / Admin): ______________</div></div></div>`; }
+window.regCSV = function (k, f, t) { const [label, cols, fn] = REGS[k]; csv(label.replace(/[^\w]+/g, '_') + '_' + f + '_to_' + t + '.csv', [['Sr', ...cols], ...fn(f, t).map((r, i) => [i + 1, ...r])]); };
+
+/* =========================================================
+   7. ADMIN DATA EDITOR (edit / delete everything)
+   ========================================================= */
+TH.addMenuItem('set', 'admindata', 'ADMIN — Edit / Delete Patient & Bill Data');
+const COLL = { patients: ['Patient', 'uhid'], visits: ['OPD visit', 'id'], admissions: ['IPD admission', 'id'], bills: ['OPD bill', 'id'] };
+TH.page('admindata', () => { if (!isM()) return `<div class="card" style="text-align:center;padding:30px"><h2>🔒 Admin data editor is for Master only</h2><button class="btn" onclick="masterKey()">🔑 Unlock with Master Key</button></div>`;
+  const q = (ctx.q || '').toLowerCase().trim(); const P_ = q ? db.patients.filter(p => (p.uhid + ' ' + p.name + ' ' + p.mobile).toLowerCase().includes(q)).slice(0, 30) : [];
+  const B_ = q ? db.bills.filter(b => b.billNo.toLowerCase().includes(q)) : []; const A_ = q ? db.admissions.filter(a => a.ipdNo.toLowerCase().includes(q)) : [];
+  const V_ = q ? db.visits.filter(v => (v.rcpt || '').toLowerCase().includes(q)) : [];
+  return `<h2>⚙️ ADMIN — Edit / Delete Data</h2><div class="warn">Master only. Every change and delete is recorded in the Audit Trail. <b>Take a backup before deleting.</b></div><br>
+  <div class="card row"><div style="flex:1"><label>Search UHID / name / mobile / IPD No. / bill No. / receipt No.</label><input id="adq" value="${esc(ctx.q || '')}" onkeydown="if(event.key==='Enter')go('admindata',{q:this.value})"></div><button class="btn" onclick="go('admindata',{q:val('adq')})">Search</button></div>
+  ${P_.map(p => { const vs = pVisits(p.uhid), as = pAdms(p.uhid), bs = db.bills.filter(b => b.uhid === p.uhid);
+    return card(`👤 ${esc(p.name)} <span class="muted" style="font-size:13px">${esc(p.uhid)} • ${esc(p.mobile)}</span>`, `<div class="row" style="margin-bottom:8px"><button class="btn sm" onclick="go('adminrec',{c:'patients',id:'${p.uhid}'})">Edit patient details</button><button class="btn sm red" onclick="adDel('patients','${p.uhid}')">Delete patient + all records</button></div>
+     <table><tr><th>Type</th><th>No. / Date</th><th>Details</th><th>Amount</th><th></th></tr>
+     ${vs.map(v => `<tr><td>OPD visit</td><td>${dmy(v.date)} ${esc(v.rcpt || '')}</td><td>${esc(v.doctor)} • ${esc(v.diagnosis)}</td><td>${amt(v) ? rupee(amt(v)) : ''}</td><td>${adBtns('visits', v.id)}</td></tr>`).join('')}
+     ${as.map(a => `<tr><td>IPD admission</td><td>${esc(a.ipdNo)} • ${dmy(a.admDate)}</td><td>${esc(a.ward)} / ${esc(a.bed)} • ${a.status}</td><td>${rupee(ipdTotals(a).net)}</td><td>${adBtns('admissions', a.id)}</td></tr>`).join('')}
+     ${bs.map(b => `<tr><td>OPD bill</td><td>${esc(b.billNo)} • ${dmy(b.date)}</td><td>${b.items.length} items • ${esc(b.status)}${b.cancelled ? ' • CANCELLED' : ''}</td><td>${rupee(b.net)}</td><td>${adBtns('bills', b.id)}</td></tr>`).join('')}
+     ${!vs.length && !as.length && !bs.length ? '<tr><td colspan="5" class="muted">No records</td></tr>' : ''}</table>`); }).join('')}
+  ${[...A_.map(a => ['admissions', a.id, a.ipdNo]), ...B_.map(b => ['bills', b.id, b.billNo]), ...V_.map(v => ['visits', v.id, v.rcpt])].map(([c, id, no]) => card('', `<b>${COLL[c][0]} ${esc(no)}</b> &nbsp; ${adBtns(c, id)}`)).join('')}
+  ${q && !P_.length && !A_.length && !B_.length && !V_.length ? '<p class="muted">Nothing found.</p>' : ''}`; }, 'admindata');
+const adBtns = (c, id) => `<button class="btn sm" onclick="go('adminrec',{c:'${c}',id:'${id}'})">Edit</button> <button class="btn sm red" onclick="adDel('${c}','${id}')">Delete</button>`;
+const findRec = (c, id) => db[c].find(r => String(r[COLL[c][1]]) === String(id));
+let AEF = [];
+function aeField(path, v, label, ro) { const i = AEF.length; const tp = typeof v === 'number' ? 'n' : typeof v === 'boolean' ? 'b' : 's'; AEF.push({ path, tp }); const id = 'ae' + i;
+  if (tp === 'b') return `<div><label>${esc(label)}</label><select id="${id}" ${ro ? 'disabled' : ''}><option value="true" ${v ? 'selected' : ''}>true</option><option value="false" ${v ? '' : 'selected'}>false</option></select></div>`;
+  const long = String(v ?? '').length > 60 || /\n/.test(String(v ?? ''));
+  return long ? `<div class="full"><label>${esc(label)}</label><textarea id="${id}" ${ro ? 'disabled' : ''}>${esc(v ?? '')}</textarea></div>` : `<div><label>${esc(label)}</label><input id="${id}" ${tp === 'n' ? 'type="number" step="any"' : ''} value="${esc(v ?? '')}" ${ro ? 'disabled' : ''}></div>`; }
+function aeObj(o, path, keyF) { let h = '<div class="grid">', subs = '';
+  Object.keys(o).forEach(k => { const v = o[k]; if (k === 'clin' || k === 'mrd' || k.startsWith('_')) return;
+    if (v === null || ['string', 'number', 'boolean'].includes(typeof v)) h += aeField([...path, k], v, k, path.length === 0 && k === keyF);
+    else if (Array.isArray(v) && v.every(x => x && typeof x === 'object' && !Array.isArray(x))) { if (!v.length) return; const cols = [...new Set(v.flatMap(x => Object.keys(x).filter(c => x[c] === null || ['string', 'number', 'boolean'].includes(typeof x[c]))))];
+      subs += `<h4>${esc(k)} (${v.length})</h4><div style="overflow:auto"><table><tr><th>Delete</th>${cols.map(c => `<th>${esc(c)}</th>`).join('')}</tr>${v.map((row, i) => `<tr><td><input type="checkbox" class="aedel" data-path='${JSON.stringify([...path, k, i])}' style="width:auto"></td>${cols.map(c => { const j = AEF.length; AEF.push({ path: [...path, k, i, c], tp: typeof row[c] === 'number' ? 'n' : typeof row[c] === 'boolean' ? 'b' : 's' }); return `<td><input id="ae${j}" value="${esc(row[c] ?? '')}" style="padding:3px 5px;min-width:80px"></td>`; }).join('')}</tr>`).join('')}</table></div>`; }
+    else if (Array.isArray(v)) h += aeField([...path, k], v.join(', '), k + ' (list)'), AEF[AEF.length - 1].tp = 'l';
+    else if (typeof v === 'object') subs += `<h4>${esc(k)}</h4>` + aeObj(v, [...path, k]); });
+  return h + '</div>' + subs; }
+TH.page('adminrec', () => { if (!isM()) return '<p>Master only.</p>'; const r = findRec(ctx.c, ctx.id); if (!r) return '<p>Record not found.</p>'; AEF = [];
+  const body = aeObj(r, [], COLL[ctx.c][1]);
+  return `<h2>Edit ${COLL[ctx.c][0]} — ${esc(ctx.id)}</h2><div class="warn">Edit carefully. Tick <b>Delete</b> on a row (charge, payment, item, transfer…) to remove it. Key number (${COLL[ctx.c][1]}) cannot be changed.</div><br>
+   <div class="card">${body}<br><div class="row"><button class="btn" onclick="adSave()">💾 Save changes</button><button class="btn sec" onclick="go('admindata',{q:'${esc(ctx.c === 'patients' ? ctx.id : (findRec(ctx.c, ctx.id).uhid || ''))}'})">Cancel</button><button class="btn red" onclick="adDel('${ctx.c}','${esc(ctx.id)}')">Delete this record</button></div></div>`; }, 'admindata');
+function setPath(o, p, v) { let x = o; for (let i = 0; i < p.length - 1; i++) x = x[p[i]]; x[p[p.length - 1]] = v; }
+function getPath(o, p) { return p.reduce((x, k) => x == null ? x : x[k], o); }
+window.adSave = function () { if (!isM()) return; const r = findRec(ctx.c, ctx.id); const before = JSON.stringify(r);
+  AEF.forEach((f, i) => { const e = document.getElementById('ae' + i); if (!e || e.disabled) return; let v = e.value;
+    const old = getPath(r, f.path); if (f.tp === 'n' || typeof old === 'number') v = v === '' ? '' : (+v); else if (f.tp === 'b') v = v === 'true'; else if (f.tp === 'l') v = v.split(',').map(x => x.trim()).filter(Boolean);
+    setPath(r, f.path, v); });
+  const dels = [...document.querySelectorAll('.aedel')].filter(c => c.checked).map(c => JSON.parse(c.dataset.path)).sort((a, b) => b[b.length - 1] - a[a.length - 1]);
+  dels.forEach(p => { const arr = getPath(r, p.slice(0, -1)); arr.splice(p[p.length - 1], 1); });
+  if (ctx.c === 'bills') { r.gross = (r.items || []).reduce((s, x) => s + (+x.amt || (+x.qty || 0) * (+x.rate || 0)), 0); (r.items || []).forEach(x => { if (x.qty !== undefined && x.rate !== undefined) x.amt = +((+x.qty || 0) * (+x.rate || 0)).toFixed(2); }); r.gross = (r.items || []).reduce((s, x) => s + (+x.amt || 0), 0); r.net = Math.max(0, r.gross - (+r.disc || 0)); }
+  if (JSON.stringify(r) !== before) { audit('ADMIN edited ' + COLL[ctx.c][0], ctx.id + (dels.length ? ' (' + dels.length + ' rows deleted)' : '')); save(); toast('Saved'); } else toast('No changes');
+  go('adminrec', ctx); };
+window.adDel = function (c, id) { if (!isM()) { masterKey(); return; } const r = findRec(c, id); if (!r) return;
+  if (c === 'patients') { const n = pVisits(id).length + pAdms(id).length + db.bills.filter(b => b.uhid === id).length; if (prompt(`Delete patient ${r.name} (${id}) AND ${n} related records (visits, admissions, bills)?\nType DELETE to confirm.`) !== 'DELETE') return;
+    db.visits = db.visits.filter(v => v.uhid !== id); db.admissions = db.admissions.filter(a => a.uhid !== id); db.bills = db.bills.filter(b => b.uhid !== id); db.patients = db.patients.filter(p => p.uhid !== id); }
+  else { if (c === 'admissions' && r.status === 'Admitted' && !confirm('This patient is still ADMITTED. Delete anyway? (bed will become free)')) return; if (prompt(`Delete ${COLL[c][0]} ${r.ipdNo || r.billNo || r.rcpt || dmy(r.date) || id}?\nType DELETE to confirm.`) !== 'DELETE') return; db[c] = db[c].filter(x => x !== r); }
+  audit('ADMIN deleted ' + COLL[c][0], id + ' ' + (r.name || r.ipdNo || r.billNo || '')); save(); toast('Deleted'); go('admindata', { q: c === 'patients' ? '' : (r.uhid || '') }); };
+
+/* =========================================================
+   8. OWNERSHIP / COPYRIGHT / JURISDICTION
+   ========================================================= */
+TH.setting('legalCity', '');
+const LEGAL_SHORT = () => `© ${new Date().getFullYear()} TRUE HOPE HEALTHCARE SOLUTIONS. All rights reserved. This software is the property of True Hope Healthcare Solutions and is licensed for use only. Unauthorised copying, resale, modification or reverse engineering is prohibited. Subject to ${db.settings.legalCity ? esc(db.settings.legalCity) + ' jurisdiction' : 'the jurisdiction of the courts at the registered office of True Hope Healthcare Solutions'} only.`;
+TH.addMenuItem('set', 'about', 'About, Ownership & Legal');
+TH.page('about', () => `<h2>About, Ownership &amp; Legal Notice</h2><div class="card lgbox">
+ <h3 style="margin-top:0">${esc(db.settings.brandName || 'TRUE HOPE DIGITAL SOLUTIONS')} — Hospital Management Software</h3>
+ <p><b>Developed, owned and published by:</b> TRUE HOPE HEALTHCARE SOLUTIONS<br>${esc(db.settings.brandSupport || '')}</p>
+ <p><b>1. Ownership &amp; copyright.</b> This software, its design, source code, screens, formats, forms, reports and updates are the exclusive intellectual property of True Hope Healthcare Solutions. © ${new Date().getFullYear()} True Hope Healthcare Solutions. All rights reserved.</p>
+ <p><b>2. Licence.</b> The hospital / user is granted a non-exclusive, non-transferable licence to use this software for its own internal hospital work only. The software is not sold; it is licensed.</p>
+ <p><b>3. Restrictions.</b> Copying, sharing, reselling, renting, re-branding, modifying, decompiling or reverse engineering this software (fully or partly), or removing this notice, without written permission of True Hope Healthcare Solutions is strictly prohibited and may lead to civil and criminal action under the Copyright Act, 1957 and the Information Technology Act, 2000.</p>
+ <p><b>4. Data.</b> All patient and hospital data entered belongs to the hospital. The hospital is responsible for keeping regular backups, protecting passwords and maintaining patient confidentiality as per applicable Indian laws, including the Digital Personal Data Protection Act, 2023.</p>
+ <p><b>5. Clinical responsibility.</b> This software is a record-keeping and administrative tool. All clinical decisions, prescriptions and treatment remain the sole responsibility of the treating doctors and the hospital.</p>
+ <p><b>6. Warranty.</b> The software is provided "as is". True Hope Healthcare Solutions is not liable for any loss of data or business arising from misuse, hardware failure, deletion of browser data or failure to take backups.</p>
+ <p><b>7. Jurisdiction.</b> Any dispute is subject to ${db.settings.legalCity ? '<b>' + esc(db.settings.legalCity) + '</b> jurisdiction' : 'the exclusive jurisdiction of the courts at the registered office of True Hope Healthcare Solutions'} only.</p></div>
+ ${isM() ? `<div class="card row"><div><label>Jurisdiction city (for legal note)</label><input id="lgc" value="${esc(db.settings.legalCity)}" placeholder="e.g. Amravati, Maharashtra"></div><button class="btn" onclick="db.settings.legalCity=val('lgc');save();toast('Saved');go('about')">Save</button></div>` : ''}`, null);
+function legalFooter() { const m = document.getElementById('main'); if (m && !document.getElementById('thLegal')) m.insertAdjacentHTML('beforeend', `<div id="thLegal">${LEGAL_SHORT()} <a href="#" onclick="go('about');return false">Legal notice</a></div>`); }
+(function loginLegal() { const s = document.getElementById('lgSup'); if (s && !document.getElementById('thLegalLg')) s.insertAdjacentHTML('afterend', `<div id="thLegalLg" style="font-size:10.5px;color:var(--mut);margin-top:8px;max-width:380px">© ${new Date().getFullYear()} TRUE HOPE HEALTHCARE SOLUTIONS. All rights reserved. Licensed software — unauthorised copying or resale prohibited.</div>`); })();
+
+/* =========================================================
+   9. PAGE HOOK (dropdowns + legal footer on every screen)
+   ========================================================= */
+TH.after('go', () => { try { clEnhance(); } catch (e) { } try { legalFooter(); } catch (e) { } });
+/*TH-SIGN:ccd60f7761e33d66f0d501d70d66ba13*/

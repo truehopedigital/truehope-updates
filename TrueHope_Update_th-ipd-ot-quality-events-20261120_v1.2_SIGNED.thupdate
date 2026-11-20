@@ -1,0 +1,549 @@
+/*TRUEHOPE-UPDATE {"id":"th-ipd-ot-quality-events-20261120","name":"IPD Surgery/OT Panel + NABH Incident & QI Register","version":"1.2","date":"2026-11-20","description":"Checkbox layout fix. Quality & Events module, patient-file QI tab linked to event reports. Surgery & OT file panel inside the IPD patient page, and NABH incident / event reporting with RCA-CAPA, register, print forms and monthly quality indicators."} */
+(function () {
+  if (window.__thIPDQ) return;
+  window.__thIPDQ = true;
+
+  /* ================= helpers ================= */
+  var lastCtx = null, lastPage = "";
+  try { TH.wrap("go", function (orig) { return function (p, ctx) { lastPage = String(p || ""); lastCtx = ctx; return orig.apply(this, arguments); }; }); } catch (e) {}
+  function E(s) { try { return esc(String(s == null ? "" : s)); } catch (e) { return String(s == null ? "" : s); } }
+  function V(x) { return x == null ? "" : (typeof x === "object" ? String(x.name || x.label || "") : String(x)); }
+  function iso(d) { d = d || new Date(); return d.getFullYear() + "-" + ("0" + (d.getMonth() + 1)).slice(-2) + "-" + ("0" + d.getDate()).slice(-2); }
+  function nowTime() { var d = new Date(); return ("0" + d.getHours()).slice(-2) + ":" + ("0" + d.getMinutes()).slice(-2); }
+  function show(s) { if (!s) return ""; var p = String(s).slice(0, 10).split("-"); return p.length === 3 ? p[2] + "-" + p[1] + "-" + p[0] : s; }
+  function normDate(v) {
+    if (!v) return "";
+    var s = String(v), m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (m) return m[1] + "-" + m[2] + "-" + m[3];
+    m = s.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})/);
+    if (m) return m[3] + "-" + ("0" + m[2]).slice(-2) + "-" + ("0" + m[1]).slice(-2);
+    var d = new Date(s); return isNaN(d) ? "" : iso(d);
+  }
+  function adms() { return Array.isArray(db.admissions) ? db.admissions : []; }
+  function patOf(A) { var p = null; try { p = getP(A.uhid); } catch (e) {} return p || {}; }
+  function pinfo(A) {
+    var p = patOf(A), age = "";
+    try { age = ageText(p); } catch (e) {}
+    return {
+      admId: A.id, uhid: V(A.uhid || p.uhid), name: V(p.name || p.pname || p.fullName || A.name),
+      ipd: V(A.ipdNo || A.ipd || A.no || A.id), ward: V(A.ward), bed: V(A.bed || A.bedNo),
+      age: V(age), sex: V(p.sex || p.gender), doctor: V(A.doctor || A.consultant || A.drName)
+    };
+  }
+  function findAdm(ipdText) {
+    if (lastCtx != null) {
+      var c = typeof lastCtx === "object" ? (lastCtx.id || lastCtx.admId) : lastCtx;
+      var a0 = adms().filter(function (a) { return String(a.id) === String(c); })[0];
+      if (a0) return a0;
+    }
+    var t = String(ipdText || "").trim();
+    return adms().filter(function (a) { return [a.ipdNo, a.ipd, a.no, a.id].some(function (v) { return v != null && String(v) === t; }); })[0] || null;
+  }
+  function printHTML(body) {
+    var head = "";
+    try { head = printHead() || ""; } catch (e) {}
+    var pa = document.getElementById("printArea");
+    if (!pa) { pa = document.createElement("div"); pa.id = "printArea"; document.body.appendChild(pa); }
+    pa.innerHTML = head + body;
+    window.print();
+  }
+  function who() { try { var h = document.querySelector("header"); var m = h && h.innerText.match(/([\w.]+)\s*•\s*\w+/); return m ? m[1] : ""; } catch (e) { return ""; } }
+
+  /* ================= style ================= */
+  TH.css([
+    ".thq-panel input[type=checkbox]{width:auto !important;height:auto !important;margin:0 !important;flex:none;accent-color:#0b2545;transform:scale(1.15)}",
+    ".thq-doc label{display:block !important;margin:0}",
+    ".thq-panel{background:#fff;border:1px solid #dbe3ee;border-radius:14px;padding:14px 16px;margin:12px 0;box-shadow:0 2px 10px rgba(15,23,42,.06)}",
+    ".thq-ph{display:flex;align-items:center;gap:10px;flex-wrap:wrap;border-bottom:1px solid #eef2f7;padding-bottom:10px;margin-bottom:10px}",
+    ".thq-ph h3{margin:0;font-size:17px;color:#0b2545;flex:1;display:flex;align-items:center;gap:8px}",
+    ".thq-badge{font-size:11px;font-weight:700;border-radius:20px;padding:2px 9px;background:#e0f2fe;color:#075985}",
+    ".thq-badge.g{background:#dcfce7;color:#166534}.thq-badge.r{background:#fee2e2;color:#991b1b}.thq-badge.a{background:#fef3c7;color:#92400e}",
+    ".thq-stages{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}",
+    ".thq-stage{border:1px solid #e2e8f0;border-radius:12px;overflow:hidden;background:#f8fafc}",
+    ".thq-stage h4{margin:0;padding:7px 10px;font-size:12.5px;color:#fff;letter-spacing:.3px}",
+    ".thq-s1 h4{background:linear-gradient(135deg,#7c3aed,#a855f7)}.thq-s2 h4{background:linear-gradient(135deg,#0369a1,#0ea5e9)}",
+    ".thq-s3 h4{background:linear-gradient(135deg,#0b2545,#1d4f91)}.thq-s4 h4{background:linear-gradient(135deg,#15803d,#22c55e)}",
+    ".thq-doc{display:flex;align-items:center;gap:7px;padding:6px 9px;border-top:1px solid #eef2f7;font-size:12.5px;background:#fff}",
+    ".thq-doc label{flex:1;cursor:pointer;line-height:1.25}.thq-doc small{display:block;color:#94a3b8;font-size:10px}",
+    ".thq-ic{border:1px solid #cbd5e1;background:#fff;border-radius:7px;cursor:pointer;padding:3px 7px;font-size:12px}",
+    ".thq-ic:hover{background:#0b2545;color:#fff;border-color:#0b2545}",
+    ".thq-common{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;align-items:center;font-size:12.5px}",
+    ".thq-chip{display:inline-flex;align-items:center;gap:6px;border:1px solid #e2e8f0;border-radius:20px;padding:4px 6px 4px 10px;background:#fff}",
+    ".thq-ot{margin-top:10px;background:#f0f9ff;border:1px solid #bae6fd;border-radius:10px;padding:8px 10px;font-size:12.5px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}",
+    "@media(max-width:1100px){.thq-stages{grid-template-columns:repeat(2,minmax(0,1fr))}}",
+    /* events */
+    ".thq-form{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px 12px}",
+    ".thq-form label{display:block;font-size:12px;color:#475569}",
+    ".thq-form input,.thq-form select,.thq-form textarea{width:100%;box-sizing:border-box}",
+    ".thq-form textarea{min-height:58px}.thq-form .w2{grid-column:span 2}.thq-form .w4{grid-column:1/-1}",
+    ".thq-sec{grid-column:1/-1;font-weight:700;color:#0b2545;border-bottom:2px solid #e2e8f0;padding:6px 0 3px;margin-top:6px;font-size:13px}",
+    ".thq-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin:8px 0 12px}",
+    ".thq-kpi{border-radius:12px;padding:10px 14px;color:#fff}.thq-kpi small{display:block;font-size:12px;opacity:.9}.thq-kpi b{font-size:22px}",
+    ".thq-k1{background:linear-gradient(135deg,#0b2545,#1d4f91)}.thq-k2{background:linear-gradient(135deg,#b91c1c,#ef4444)}.thq-k3{background:linear-gradient(135deg,#b45309,#f59e0b)}.thq-k4{background:linear-gradient(135deg,#15803d,#22c55e)}",
+    ".thq-t td,.thq-t th{font-size:12.5px;vertical-align:top}",
+    ".thq-pr{font-family:'Segoe UI',Arial,sans-serif;font-size:11.5px;color:#111}",
+    ".thq-pr h2{text-align:center;margin:4px 0 8px;font-size:15px;text-transform:uppercase;border-top:2px solid #0b2545;border-bottom:2px solid #0b2545;padding:4px 0;color:#0b2545}",
+    ".thq-pr table{width:100%;border-collapse:collapse;margin:4px 0 6px}.thq-pr td,.thq-pr th{border:1px solid #666;padding:3px 6px;text-align:left;vertical-align:top}",
+    ".thq-pr th{background:#eef2f7;width:22%}.thq-pr .s{background:#0b2545;color:#fff;font-weight:700;padding:3px 7px;margin-top:6px;-webkit-print-color-adjust:exact;print-color-adjust:exact}",
+    ".thq-pr .sg{display:flex;gap:10px;margin-top:40px}.thq-pr .sg div{flex:1;border-top:1px solid #333;text-align:center;padding-top:3px;font-size:10.5px}"
+  ].join(""));
+
+  /* =====================================================================
+     PART 1 — Surgery & OT File panel inside the IPD patient page
+     ===================================================================== */
+  var STAGES = [
+    { cls: "thq-s1", t: "① Consents", docs: [["consent_surgery", "Surgical consent", "THD-SUR-01"], ["consent_anaesthesia", "Anaesthesia consent", "THD-SUR-02"], ["consent_blood", "Blood transfusion consent", "THD-SUR-03"], ["consent_highrisk", "High-risk consent", "THD-SUR-04"]] },
+    { cls: "thq-s2", t: "② Pre-operative", docs: [["pac", "Pre-anaesthesia check-up (PAC)", "THD-SUR-05"], ["preop_checklist", "Pre-op checklist (ward → OT)", "THD-SUR-06"], ["site_marking", "Surgical site marking", "THD-SUR-08"]] },
+    { cls: "thq-s3", t: "③ In the OT", docs: [["who_checklist", "WHO surgical safety checklist", "THD-SUR-07"], ["anaesthesia_record", "Anaesthesia record", "THD-SUR-09"], ["ot_notes", "Operation notes", "THD-SUR-10"], ["count_sheet", "Swab / needle / instrument count", "THD-SUR-11"], ["implant_record", "Implant record", "THD-SUR-12"]] },
+    { cls: "thq-s4", t: "④ Post-operative", docs: [["recovery", "Recovery record (Aldrete)", "THD-SUR-14"], ["postop_orders", "Post-op orders & monitoring", "THD-SUR-13"]] }
+  ];
+  function otPanel(A) {
+    var hasSD = !!window.thSD, notes = (db.thSurg && db.thSurg.notes && db.thSurg.notes[String(A.id)]) || [];
+    var badge = notes.length ? '<span class="thq-badge g">' + notes.length + " OT note" + (notes.length > 1 ? "s" : "") + "</span>" : '<span class="thq-badge a">No OT note yet</span>';
+    var h = '<div class="thq-panel" data-thq="ot"><div class="thq-ph"><h3>🏥 Surgery &amp; OT File ' + badge + "</h3>";
+    if (!hasSD) return h + '</div><p style="font-size:13px;color:#b45309;margin:0">Install the update “Surgery &amp; OT Documents + Bilingual Documents” to use this panel.</p></div>';
+    h += '<button class="btn sm" type="button" onclick="thQ.otAll(\'' + A.id + '\')">🖨 Print complete OT file</button>' +
+      '<button class="btn sm sec" type="button" onclick="thQ.otSel(\'' + A.id + '\')">Print selected</button>' +
+      '<button class="btn sm sec" type="button" onclick="thQ.otNotes(\'' + A.id + '\')">✍ OT notes</button></div><div class="thq-stages">';
+    STAGES.forEach(function (st) {
+      h += '<div class="thq-stage ' + st.cls + '"><h4>' + st.t + "</h4>" + st.docs.map(function (d) {
+        var id = "thqck_" + d[0];
+        return '<div class="thq-doc"><input type="checkbox" class="thq-ck" id="' + id + '" value="' + d[0] + '" checked><label for="' + id + '">' + d[1] + "<small>" + d[2] + '</small></label><button class="thq-ic" type="button" title="Print" onclick="thQ.ot1(\'' + A.id + "','" + d[0] + "')\">🖨</button></div>";
+      }).join("") + "</div>";
+    });
+    h += '</div><div class="thq-common"><b>Common IPD:</b>' +
+      '<span class="thq-chip">Drug chart (MAR)<button class="thq-ic" type="button" onclick="thQ.ot1(\'' + A.id + "','drug_chart')\">🖨</button></span>" +
+      '<span class="thq-chip">General consent<button class="thq-ic" type="button" onclick="thQ.ot1(\'' + A.id + "','consent_general')\">🖨</button></span>" +
+      '<span style="flex:1"></span><span style="color:#64748b;font-size:11.5px">All documents print with this patient’s details and the selected document language.</span></div>';
+    if (notes.length) {
+      var n = notes[notes.length - 1];
+      h += '<div class="thq-ot"><b>Last OT note:</b> ' + E(show(n.date)) + " · " + E(n.procedure) + (n.surgeon ? " · " + E(n.surgeon) : "") +
+        '<span style="flex:1"></span><button class="thq-ic" type="button" onclick="thQ.ot1(\'' + A.id + "','ot_notes')\">🖨 Print OT note</button></div>";
+    }
+    return h + "</div>";
+  }
+  function useAdm(id) { window.__thSD = window.__thSD || {}; window.__thSD.adm = String(id); window.__thSD.edit = null; }
+
+  /* =====================================================================
+     PART 2 — NABH Incident / Event reporting + QI register
+     ===================================================================== */
+  // [name, linked quality indicator key, sentinel?]
+  var EVENTS = [
+    ["Patient fall", "fall", 0], ["Medication error — prescription", "med", 0], ["Medication error — dispensing", "med", 0], ["Medication error — administration", "med", 0],
+    ["Adverse drug reaction (ADR)", "adr", 0], ["Transfusion reaction", "trf", 0], ["Pressure ulcer developed in hospital", "pu", 0], ["Needle-stick / sharp injury (staff)", "nsi", 0],
+    ["Wrong patient / wrong site / wrong procedure surgery", "wss", 1], ["Retained foreign body after surgery", "wss", 1], ["Unplanned return to OT within 48 hours", "rot", 0],
+    ["Unplanned re-intubation within 48 hours", "rei", 0], ["Unplanned return to ICU within 48 hours", "ricu", 0], ["Surgical site infection (SSI)", "ssi", 0],
+    ["Catheter-associated UTI (CAUTI)", "hai", 0], ["Central line bloodstream infection (CLABSI)", "hai", 0], ["Ventilator-associated pneumonia (VAP)", "hai", 0],
+    ["Patient identification error", "pid", 0], ["Anaesthesia complication", "anc", 0], ["Equipment failure / malfunction", "eq", 0], ["Fire / electrical incident", "fire", 0],
+    ["Violence / security incident", "sec", 0], ["Left against medical advice (LAMA)", "lama", 0], ["Patient absconded", "lama", 0], ["Unexpected death", "death", 1],
+    ["Maternal death", "death", 1], ["Neonatal death", "death", 1], ["Infant abduction / wrong baby handover", "sec", 1], ["Near miss (caught before reaching patient)", "nm", 0],
+    ["Patient / family complaint", "cmp", 0], ["Other", "oth", 0]
+  ];
+  var SEV = ["No harm", "Mild harm", "Moderate harm", "Severe harm", "Death"];
+  var STATUS = ["Open", "Under investigation (RCA)", "CAPA in progress", "Closed"];
+  var LOCS = ["OPD", "Casualty / Emergency", "Ward", "ICU", "NICU / PICU", "OT", "Labour room", "Pharmacy", "Laboratory", "Radiology", "Blood bank / storage", "Kitchen", "Housekeeping", "Other"];
+  var ROOT = ["Communication", "Policy / procedure not followed", "Policy not available", "Training / competence", "Staffing / workload", "Equipment", "Environment / infrastructure", "Patient factors", "Documentation", "Supervision", "Other"];
+  function EV() { if (!Array.isArray(db.thEvents)) db.thEvents = []; return db.thEvents; }
+  function evType(name) { return EVENTS.filter(function (e) { return e[0] === name; })[0] || ["", "oth", 0]; }
+  var SE = window.__thEV = window.__thEV || { edit: null, month: iso().slice(0, 7), status: "", type: "" };
+
+  function opt(list, sel, blank) { return (blank ? '<option value="">' + blank + "</option>" : "") + list.map(function (c) { return "<option" + (c === sel ? " selected" : "") + ">" + E(c) + "</option>"; }).join(""); }
+  function inp(id, label, val, type, cls) { return '<div class="' + (cls || "") + '"><label>' + label + '</label><input id="' + id + '" type="' + (type || "text") + '" value="' + E(val || "") + '"></div>'; }
+  function sel(id, label, list, val, blank, cls, extra) { return '<div class="' + (cls || "") + '"><label>' + label + '</label><select id="' + id + '"' + (extra || "") + ">" + opt(list, val, blank) + "</select></div>"; }
+  function ta(id, label, val, cls) { return '<div class="' + (cls || "w2") + '"><label>' + label + '</label><textarea id="' + id + '">' + E(val || "") + "</textarea></div>"; }
+
+  try { TH.addMenu("qms", "QUALITY & EVENTS", "⚠"); } catch (e) {}
+  try { TH.addMenuItem("qms", "thQIDash", "Quality Dashboard"); } catch (e) {}
+  try { TH.addMenuItem("qms", "thEvents", "Incident / Event Register"); } catch (e) {}
+  try { TH.addMenuItem("qms", "thEventNew", "Report New Event"); } catch (e) {}
+  try { TH.addMenuItem("qms", "thCAPA", "RCA / CAPA Tracker"); } catch (e) {}
+  TH.addMenuItem("rep", "thEvents", "Incident / Event Register (NABH)");
+  TH.addMenuItem("rep", "thQIDash", "Quality Dashboard (NABH)");
+  TH.addMenuItem("ipd", "thEvents", "Report Incident / Event");
+  TH.page("thEventNew", function () { setTimeout(function () { thQ.newEv(); }, 0); return "<h2>Opening new event…</h2>"; });
+  TH.page("thEvents", function () {
+    var list = EV().filter(function (x) { return !x.deleted; });
+    var m = list.filter(function (x) { return (x.date || "").slice(0, 7) === SE.month; });
+    var open = list.filter(function (x) { return x.status !== "Closed"; }).length;
+    var sent = m.filter(function (x) { return x.category === "Sentinel event"; }).length;
+    var e = SE.edit;
+    var h = "<h2>⚠ Incident / Event Register (NABH)</h2>" +
+      '<div class="thq-kpis"><div class="thq-kpi thq-k1"><small>Events this month</small><b>' + m.length + '</b></div><div class="thq-kpi thq-k2"><small>Sentinel (this month)</small><b>' + sent +
+      '</b></div><div class="thq-kpi thq-k3"><small>Open / pending CAPA</small><b>' + open + '</b></div><div class="thq-kpi thq-k4"><small>Near misses (this month)</small><b>' +
+      m.filter(function (x) { return x.category === "Near miss"; }).length + "</b></div></div>";
+    if (e) h += eventForm(e);
+    else h += '<div class="card"><button class="btn" type="button" onclick="thQ.newEv()">+ Report new incident / event</button> <span style="font-size:12px;color:#64748b">Every adverse event, sentinel event, near miss and complaint must be reported within 24 hours (NABH).</span></div>';
+
+    // register
+    var rows = list.filter(function (x) { return (!SE.month || (x.date || "").slice(0, 7) === SE.month) && (!SE.status || x.status === SE.status) && (!SE.type || x.type === SE.type); })
+      .sort(function (a, b) { return (b.date + b.time).localeCompare(a.date + a.time); });
+    h += '<div class="card"><div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end"><h3 style="margin:0;flex:1">Register</h3>' +
+      '<div><label style="font-size:12px">Month</label><br><input type="month" id="thqe_m" value="' + E(SE.month) + '"></div>' +
+      '<div><label style="font-size:12px">Status</label><br><select id="thqe_s">' + opt(STATUS, SE.status, "All") + "</select></div>" +
+      '<div><label style="font-size:12px">Event type</label><br><select id="thqe_t" style="max-width:220px">' + opt(EVENTS.map(function (x) { return x[0]; }), SE.type, "All") + "</select></div>" +
+      '<button class="btn sm" type="button" onclick="thQ.filter()">Show</button><button class="btn sm sec" type="button" onclick="thQ.printReg()">🖨 Print register</button><button class="btn sm sec" type="button" onclick="thQ.csv()">⬇ CSV</button></div>';
+    if (!rows.length) h += '<p style="color:#64748b">No events for this filter.</p>';
+    else h += '<table class="table thq-t" style="margin-top:8px"><tr><th>No.</th><th>Date</th><th>Event</th><th>Category</th><th>Severity</th><th>Patient</th><th>Location</th><th>Status</th><th></th></tr>' +
+      rows.map(function (x) {
+        var sc = x.status === "Closed" ? "g" : x.category === "Sentinel event" ? "r" : "a";
+        return "<tr><td>" + E(x.no) + "</td><td>" + show(x.date) + " " + E(x.time || "") + "</td><td>" + E(x.type) + "</td><td>" + E(x.category) + "</td><td>" + E(x.severity) + "</td><td>" + E(x.ptName || "—") + (x.uhid ? "<br><small>" + E(x.uhid) + "</small>" : "") +
+          "</td><td>" + E(x.location) + '</td><td><span class="thq-badge ' + sc + '">' + E(x.status) + '</span></td><td style="white-space:nowrap"><button class="btn sm sec" type="button" onclick="thQ.editEv(\'' + x.id + "')\">Open</button> " +
+          '<button class="btn sm sec" type="button" onclick="thQ.printEv(\'' + x.id + "')\">🖨</button></td></tr>";
+      }).join("") + "</table>";
+    h += "</div>" + qiTable(SE.month);
+    return h;
+  });
+
+  function eventForm(e) {
+    var types = EVENTS.map(function (x) { return x[0]; });
+    return '<div class="card"><h3 style="margin-top:0">' + (e.id ? "Incident " + E(e.no) : "New incident / event report") + '</h3><div class="thq-form">' +
+      '<div class="thq-sec">A. Event</div>' +
+      inp("thq_date", "Date of event", e.date, "date") + inp("thq_time", "Time", e.time, "time") +
+      sel("thq_type", "Event type", types, e.type, "— select —", "w2", ' onchange="thQ.autoCat()"') +
+      sel("thq_cat", "Category", ["Adverse event", "Sentinel event", "Near miss", "No-harm event", "Complaint"], e.category, "", "") +
+      sel("thq_sev", "Harm / severity", SEV, e.severity, "", "") +
+      sel("thq_loc", "Location / department", LOCS, e.location, "— select —", "") + inp("thq_ward", "Ward / bed", e.wardBed) +
+      '<div class="thq-sec">B. Patient (if involved)</div>' +
+      inp("thq_uhid", "UHID", e.uhid) + inp("thq_pname", "Patient name", e.ptName) + inp("thq_ipd", "IPD no.", e.ipd) + inp("thq_age", "Age / sex", e.ageSex) +
+      '<div class="thq-sec">C. What happened</div>' +
+      ta("thq_desc", "Description of the event (facts only, no blame)", e.desc, "w4") +
+      ta("thq_imm", "Immediate action taken", e.immediate) + ta("thq_inf", "Who was informed (doctor / family / in-charge) and when", e.informed) +
+      inp("thq_wit", "Witness(es)", e.witness, "text", "w2") + inp("thq_rep", "Reported by (name & designation)", e.reportedBy, "text", "w2") +
+      '<div class="thq-sec">D. Investigation (RCA)</div>' +
+      sel("thq_rca", "RCA required?", ["Yes", "No"], e.rcaReq || "No", "", "") + sel("thq_root", "Root cause category", ROOT, e.rootCat, "— select —", "") +
+      inp("thq_rcadate", "RCA date", e.rcaDate, "date") + inp("thq_team", "RCA team", e.rcaTeam) +
+      ta("thq_rcasum", "Root cause analysis — findings (why-why)", e.rcaSummary, "w4") +
+      '<div class="thq-sec">E. CAPA (corrective & preventive action)</div>' +
+      ta("thq_ca", "Corrective action", e.corrective) + ta("thq_pa", "Preventive action", e.preventive) +
+      inp("thq_resp", "Responsible person", e.responsible, "text", "w2") + inp("thq_target", "Target date", e.target, "date") +
+      sel("thq_status", "Status", STATUS, e.status || "Open", "", "") +
+      '<div class="thq-sec">F. Closure</div>' +
+      inp("thq_closed", "Closure date", e.closedOn, "date") + inp("thq_verified", "Verified by (Quality / MS)", e.verifiedBy, "text", "w2") + '<div></div>' +
+      ta("thq_eff", "Effectiveness check / closure remarks", e.closure, "w4") +
+      '</div><div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap"><button class="btn" type="button" onclick="thQ.saveEv(false)">Save</button>' +
+      '<button class="btn sec" type="button" onclick="thQ.saveEv(true)">Save &amp; print form</button>' +
+      '<button class="btn sec" type="button" onclick="thQ.cancelEv()">Cancel</button>' +
+      (e.id ? '<button class="btn sec" type="button" style="margin-left:auto" onclick="thQ.delEv(\'' + e.id + '\')">Delete</button>' : "") + "</div></div>";
+  }
+  function readEv() {
+    var g = function (id) { var el = document.getElementById(id); return el ? el.value.trim() : ""; };
+    return {
+      date: g("thq_date"), time: g("thq_time"), type: g("thq_type"), category: g("thq_cat"), severity: g("thq_sev"), location: g("thq_loc"), wardBed: g("thq_ward"),
+      uhid: g("thq_uhid"), ptName: g("thq_pname"), ipd: g("thq_ipd"), ageSex: g("thq_age"), desc: g("thq_desc"), immediate: g("thq_imm"), informed: g("thq_inf"),
+      witness: g("thq_wit"), reportedBy: g("thq_rep"), rcaReq: g("thq_rca"), rootCat: g("thq_root"), rcaDate: g("thq_rcadate"), rcaTeam: g("thq_team"), rcaSummary: g("thq_rcasum"),
+      corrective: g("thq_ca"), preventive: g("thq_pa"), responsible: g("thq_resp"), target: g("thq_target"), status: g("thq_status"), closedOn: g("thq_closed"),
+      verifiedBy: g("thq_verified"), closure: g("thq_eff")
+    };
+  }
+  function evPrint(x) {
+    function r(a, b, c, d) { return "<tr><th>" + a + "</th><td>" + E(b) + "</td>" + (c ? "<th>" + c + "</th><td>" + E(d) + "</td>" : '<td colspan="2"></td>') + "</tr>"; }
+    function blk(t, v) { return '<div class="s">' + t + '</div><table><tr><td style="height:' + (v ? "auto" : "48px") + ';white-space:pre-wrap">' + E(v || "") + "</td></tr></table>"; }
+    return '<div class="thq-pr"><h2>Incident / Adverse Event Report</h2>' +
+      "<table>" + r("Incident no.", x.no, "Date & time", show(x.date) + " " + (x.time || "")) + r("Event type", x.type, "Category", x.category) +
+      r("Severity", x.severity, "Location", x.location + (x.wardBed ? " / " + x.wardBed : "")) + r("Patient", x.ptName, "UHID / IPD", [x.uhid, x.ipd].filter(Boolean).join(" / ")) +
+      r("Age / sex", x.ageSex, "Reported by", x.reportedBy) + r("Witness", x.witness, "Reported on", show((x.at || "").slice(0, 10))) + "</table>" +
+      blk("Description of event", x.desc) + blk("Immediate action taken", x.immediate) + blk("Informed to", x.informed) +
+      '<div class="s">Root cause analysis</div><table>' + r("RCA required", x.rcaReq, "RCA date", show(x.rcaDate)) + r("Root cause category", x.rootCat, "RCA team", x.rcaTeam) +
+      '<tr><td colspan="4" style="white-space:pre-wrap;height:' + (x.rcaSummary ? "auto" : "48px") + '">' + E(x.rcaSummary || "") + "</td></tr></table>" +
+      '<div class="s">Corrective &amp; preventive action (CAPA)</div><table><tr><th>Corrective</th><td colspan="3" style="white-space:pre-wrap">' + E(x.corrective || "") + "</td></tr>" +
+      '<tr><th>Preventive</th><td colspan="3" style="white-space:pre-wrap">' + E(x.preventive || "") + "</td></tr>" + r("Responsible", x.responsible, "Target date", show(x.target)) + "</table>" +
+      '<div class="s">Closure</div><table>' + r("Status", x.status, "Closure date", show(x.closedOn)) + r("Verified by", x.verifiedBy, "", "") +
+      '<tr><td colspan="4" style="white-space:pre-wrap">' + E(x.closure || "") + "</td></tr></table>" +
+      '<div class="sg"><div>Reported by</div><div>Department in-charge</div><div>Quality manager</div><div>Medical superintendent</div></div>' +
+      '<p style="font-size:9.5px;color:#555;margin-top:8px">Confidential — for quality improvement only (non-punitive reporting). Sentinel events: RCA within 7 days, CAPA within 30 days.</p></div>';
+  }
+
+  /* ---------- monthly quality indicators ---------- */
+  function monthBounds(m) { var y = +m.slice(0, 4), mo = +m.slice(5, 7); return [m + "-01", iso(new Date(y, mo, 0))]; }
+  function denoms(m) {
+    var b = monthBounds(m), a = b[0], z = b[1], adm = 0, pd = 0, sur = 0, opd = 0;
+    adms().forEach(function (A) {
+      var s = normDate(A.date || A.admDate || A.doa || A.admitDate || A.admissionDate), e = normDate(A.dischargeDate || A.dod || A.disDate) || iso();
+      if (!s) return;
+      if (s >= a && s <= z) adm++;
+      var from = s > a ? s : a, to = e < z ? e : z;
+      if (to >= from) pd += Math.round((new Date(to) - new Date(from)) / 864e5) + 1;
+    });
+    var notes = (db.thSurg && db.thSurg.notes) || {};
+    Object.keys(notes).forEach(function (k) { (notes[k] || []).forEach(function (n) { var d = normDate(n.date); if (d >= a && d <= z) sur++; }); });
+    (Array.isArray(db.visits) ? db.visits : []).forEach(function (v) { var d = normDate(v.date || v.visitDate || v.dt); if (d >= a && d <= z) opd++; });
+    return { adm: adm, pd: pd, sur: sur, opd: opd };
+  }
+  var QI = [
+    ["fall", "Patient falls", "pd", 1000, "per 1000 patient-days"], ["med", "Medication errors", "adm", 100, "per 100 admissions"], ["adr", "Adverse drug reactions", "adm", 100, "per 100 admissions"],
+    ["trf", "Transfusion reactions", "adm", 100, "per 100 admissions"], ["pu", "Pressure ulcers (hospital acquired)", "pd", 1000, "per 1000 patient-days"], ["nsi", "Needle-stick injuries", "", 0, "count"],
+    ["rot", "Unplanned return to OT (48 h)", "sur", 100, "per 100 surgeries"], ["ssi", "Surgical site infections", "sur", 100, "per 100 surgeries"], ["wss", "Wrong site / patient / procedure / retained item", "", 0, "count (sentinel)"],
+    ["rei", "Unplanned re-intubation (48 h)", "", 0, "count"], ["ricu", "Unplanned return to ICU (48 h)", "", 0, "count"], ["hai", "Hospital-acquired infections (CAUTI / CLABSI / VAP)", "pd", 1000, "per 1000 patient-days"],
+    ["pid", "Patient identification errors", "", 0, "count"], ["lama", "LAMA / absconding", "adm", 100, "per 100 admissions"], ["death", "Sentinel deaths (unexpected / maternal / neonatal)", "", 0, "count"],
+    ["nm", "Near misses reported", "", 0, "count"], ["cmp", "Patient complaints", "opd", 1000, "per 1000 OPD visits"]
+  ];
+  function qiTable(m) {
+    var d = denoms(m), list = EV().filter(function (x) { return !x.deleted && (x.date || "").slice(0, 7) === m; });
+    var cnt = {};
+    list.forEach(function (x) { var k = evType(x.type)[1]; cnt[k] = (cnt[k] || 0) + 1; });
+    var all = EV().filter(function (x) { return !x.deleted && (x.date || "").slice(0, 7) === m; });
+    var closed30 = all.filter(function (x) { return x.status === "Closed" && x.closedOn && (new Date(x.closedOn) - new Date(x.date)) / 864e5 <= 30; }).length;
+    var dn = { pd: d.pd, adm: d.adm, sur: d.sur, opd: d.opd }, dl = { pd: "patient-days", adm: "admissions", sur: "surgeries", opd: "OPD visits" };
+    return '<div class="card"><div style="display:flex;align-items:center;gap:8px"><h3 style="margin:0;flex:1">📈 Quality indicators — ' + E(m) + "</h3>" +
+      '<button class="btn sm sec" type="button" onclick="thQ.printQI()">🖨 Print QI sheet</button></div>' +
+      '<p style="font-size:12px;color:#64748b;margin:4px 0 8px">Denominators from the software: ' + d.adm + " admissions · " + d.pd + " patient-days · " + d.sur + " surgeries (OT notes) · " + d.opd + " OPD visits.</p>" +
+      '<table class="table thq-t"><tr><th>#</th><th>Indicator</th><th style="text-align:right">Numerator</th><th style="text-align:right">Denominator</th><th style="text-align:right">Rate</th><th>Formula</th></tr>' +
+      QI.map(function (q, i) {
+        var n = cnt[q[0]] || 0, den = q[2] ? dn[q[2]] : "", rate = q[2] ? (den ? (n * q[3] / den).toFixed(2) : "—") : n;
+        return "<tr><td>" + (i + 1) + "</td><td>" + q[1] + '</td><td style="text-align:right">' + n + '</td><td style="text-align:right">' + (q[2] ? den + " " + dl[q[2]] : "—") + '</td><td style="text-align:right"><b>' + rate + "</b></td><td>" + q[4] + "</td></tr>";
+      }).join("") +
+      '<tr><td>' + (QI.length + 1) + '</td><td>Incidents closed with CAPA within 30 days</td><td style="text-align:right">' + closed30 + '</td><td style="text-align:right">' + all.length + ' incidents</td><td style="text-align:right"><b>' +
+      (all.length ? (closed30 * 100 / all.length).toFixed(1) + "%" : "—") + "</b></td><td>% of incidents</td></tr></table></div>";
+  }
+
+  /* ---------- actions ---------- */
+  window.thQ = {
+    ot1: function (admId, k) { if (!window.thSD) return toast("Install Surgery & OT Documents update"); useAdm(admId); thSD.print(k); },
+    otAll: function (admId) { if (!window.thSD) return; useAdm(admId); thSD.printAll("S"); },
+    otSel: function (admId) {
+      if (!window.thSD) return;
+      var ks = Array.prototype.map.call(document.querySelectorAll(".thq-ck:checked"), function (x) { return x.value; });
+      if (!ks.length) return toast("Tick at least one document");
+      useAdm(admId);
+      // reuse the Surgery Docs printer: mark the same keys for its "print selected"
+      var tmp = document.createElement("div");
+      tmp.style.display = "none";
+      tmp.innerHTML = ks.map(function (k) { return '<input type="checkbox" class="thsd-ck" value="' + k + '" checked>'; }).join("");
+      document.body.appendChild(tmp);
+      try { thSD.printSel(); } finally { tmp.remove(); }
+    },
+    otNotes: function (admId) { useAdm(admId); try { go("thSurgDocs"); } catch (e) {} },
+    report: function (admId, type) {
+      var A = adms().filter(function (a) { return String(a.id) === String(admId); })[0], p = A ? pinfo(A) : {};
+      SE.edit = { date: iso(), time: nowTime(), status: "Open", severity: "No harm", uhid: p.uhid, ptName: p.name, ipd: p.ipd, ageSex: [p.age, p.sex].filter(Boolean).join(" / "),
+        wardBed: [p.ward, p.bed].filter(Boolean).join(" / "), location: /icu/i.test(p.ward || "") ? "ICU" : "Ward", reportedBy: who(), admId: A ? A.id : "" };
+      if (type) {
+        var t = evType(type);
+        SE.edit.type = type;
+        SE.edit.category = t[2] ? "Sentinel event" : t[1] === "nm" ? "Near miss" : t[1] === "cmp" ? "Complaint" : "Adverse event";
+        if (t[2]) SE.edit.rcaReq = "Yes";
+      }
+      SE.back = A ? { page: lastPage, ctx: lastCtx } : null;
+      go("thEvents");
+    },
+    newEv: function () { SE.edit = { date: iso(), time: nowTime(), status: "Open", severity: "No harm", reportedBy: who() }; go("thEvents"); },
+    editEv: function (id) { var x = EV().filter(function (y) { return y.id === id; })[0]; if (x) { SE.edit = Object.assign({}, x); go("thEvents"); window.scrollTo(0, 0); } },
+    cancelEv: function () { SE.edit = null; var back = SE.back; SE.back = null; if (back && back.page && back.page !== "thEvents") { try { go(back.page, back.ctx); return; } catch (e) {} } go("thEvents"); },
+    autoCat: function () {
+      var t = evType(document.getElementById("thq_type").value), c = document.getElementById("thq_cat"), r = document.getElementById("thq_rca");
+      c.value = t[2] ? "Sentinel event" : t[1] === "nm" ? "Near miss" : t[1] === "cmp" ? "Complaint" : "Adverse event";
+      if (t[2]) { r.value = "Yes"; document.getElementById("thq_sev").value = /death/i.test(document.getElementById("thq_type").value) ? "Death" : "Severe harm"; }
+    },
+    saveEv: function (andPrint) {
+      var f = readEv();
+      if (!f.date || !f.type) return toast("Enter date and event type");
+      if (!f.desc) return toast("Write what happened");
+      if (f.category === "Sentinel event") f.rcaReq = "Yes";
+      if (f.status === "Closed" && !f.closedOn) f.closedOn = iso();
+      var list = EV(), x;
+      if (SE.edit && SE.edit.id) {
+        x = list.filter(function (y) { return y.id === SE.edit.id; })[0];
+        Object.assign(x, f, { editedAt: new Date().toISOString(), editedBy: who() });
+        try { audit("Incident updated", x.no + " " + f.type + " — " + f.status); } catch (e) {}
+      } else {
+        var n = list.filter(function (y) { return (y.date || "").slice(0, 4) === f.date.slice(0, 4); }).length + 1;
+        x = Object.assign({ id: "EV" + Date.now(), no: "INC/" + f.date.slice(0, 4) + "/" + ("000" + n).slice(-4), at: new Date().toISOString(), by: who() }, f);
+        list.push(x);
+        try { audit("Incident reported", x.no + " " + f.type + " (" + f.category + ")"); } catch (e) {}
+      }
+      save();
+      toast("Incident " + x.no + " saved");
+      SE.edit = null;
+      var back = SE.back; SE.back = null;
+      if (back && back.page && back.page !== "thEvents") { try { go(back.page, back.ctx); } catch (e) { go("thEvents"); } } else go("thEvents");
+      if (andPrint) printHTML(evPrint(x));
+    },
+    delEv: function (id) {
+      var x = EV().filter(function (y) { return y.id === id; })[0];
+      if (!x || !confirm("Delete incident " + x.no + "? (It stays in the audit trail)")) return;
+      x.deleted = true; x.deletedAt = new Date().toISOString(); x.deletedBy = who();
+      save();
+      try { audit("Incident deleted", x.no); } catch (e) {}
+      SE.edit = null; go("thEvents");
+    },
+    printEv: function (id) { var x = EV().filter(function (y) { return y.id === id; })[0]; if (x) printHTML(evPrint(x)); },
+    filter: function () { SE.month = document.getElementById("thqe_m").value; SE.status = document.getElementById("thqe_s").value; SE.type = document.getElementById("thqe_t").value; go("thEvents"); },
+    printReg: function () {
+      var rows = EV().filter(function (x) { return !x.deleted && (!SE.month || (x.date || "").slice(0, 7) === SE.month) && (!SE.status || x.status === SE.status) && (!SE.type || x.type === SE.type); });
+      printHTML('<div class="thq-pr"><h2>Incident / Event Register — ' + E(SE.month || "All") + '</h2><table><tr><th style="width:auto">No.</th><th style="width:auto">Date</th><th style="width:auto">Event</th><th style="width:auto">Category</th><th style="width:auto">Severity</th><th style="width:auto">Patient / UHID</th><th style="width:auto">Location</th><th style="width:auto">Root cause</th><th style="width:auto">CAPA</th><th style="width:auto">Status</th></tr>' +
+        rows.map(function (x) { return "<tr><td>" + E(x.no) + "</td><td>" + show(x.date) + "</td><td>" + E(x.type) + "</td><td>" + E(x.category) + "</td><td>" + E(x.severity) + "</td><td>" + E(x.ptName || "") + " " + E(x.uhid || "") + "</td><td>" + E(x.location) + "</td><td>" + E(x.rootCat || "") + "</td><td>" + E(x.corrective || "") + "</td><td>" + E(x.status) + "</td></tr>"; }).join("") +
+        '</table><div class="sg"><div>Quality manager</div><div>Medical superintendent</div></div></div>');
+    },
+    printQI: function () { printHTML('<div class="thq-pr"><h2>Quality Indicators — ' + E(SE.month) + "</h2>" + qiTable(SE.month).replace(/<button[^>]*>.*?<\/button>/g, "") + '<div class="sg"><div>Quality manager</div><div>Medical superintendent</div></div></div>'); },
+    csv: function () {
+      var rows = [["No", "Date", "Time", "Event", "Category", "Severity", "Location", "Patient", "UHID", "IPD", "Description", "Immediate action", "Root cause", "RCA", "Corrective", "Preventive", "Responsible", "Target", "Status", "Closed on"]].concat(
+        EV().filter(function (x) { return !x.deleted && (!SE.month || (x.date || "").slice(0, 7) === SE.month); }).map(function (x) {
+          return [x.no, show(x.date), x.time, x.type, x.category, x.severity, x.location, x.ptName, x.uhid, x.ipd, x.desc, x.immediate, x.rootCat, x.rcaSummary, x.corrective, x.preventive, x.responsible, show(x.target), x.status, show(x.closedOn)];
+        }));
+      var csv = rows.map(function (r) { return r.map(function (c) { c = String(c == null ? "" : c); return /[",\n]/.test(c) ? '"' + c.replace(/"/g, '""') + '"' : c; }).join(","); }).join("\r\n");
+      var a = document.createElement("a");
+      a.href = URL.createObjectURL(new Blob(["﻿" + csv], { type: "text/csv" }));
+      a.download = "Incident_Register_" + (SE.month || "all") + ".csv";
+      document.body.appendChild(a); a.click(); a.remove();
+    }
+  };
+
+  /* =====================================================================
+     QUALITY DASHBOARD (multi-month) + CAPA tracker
+     ===================================================================== */
+  function monthsBack(n) { var out = [], d = new Date(); d.setDate(1); for (var i = n - 1; i >= 0; i--) { var x = new Date(d.getFullYear(), d.getMonth() - i, 1); out.push(iso(x).slice(0, 7)); } return out; }
+  function qiVals(m) {
+    var d = denoms(m), cnt = {}, list = EV().filter(function (x) { return !x.deleted && (x.date || "").slice(0, 7) === m; });
+    list.forEach(function (x) { var k = evType(x.type)[1]; cnt[k] = (cnt[k] || 0) + 1; });
+    var dn = { pd: d.pd, adm: d.adm, sur: d.sur, opd: d.opd }, out = {};
+    QI.forEach(function (q) { var n = cnt[q[0]] || 0; out[q[0]] = q[2] ? (dn[q[2]] ? +(n * q[3] / dn[q[2]]).toFixed(2) : 0) : n; });
+    out._n = list.length; out._sent = list.filter(function (x) { return x.category === "Sentinel event"; }).length;
+    return out;
+  }
+  TH.page("thQIDash", function () {
+    var months = monthsBack(6), vals = months.map(qiVals), all = EV().filter(function (x) { return !x.deleted; });
+    var today = iso(), open = all.filter(function (x) { return x.status !== "Closed"; });
+    var overdue = open.filter(function (x) { return x.target && x.target < today; });
+    var cur = vals[vals.length - 1];
+    var byLoc = {}, byType = {};
+    all.filter(function (x) { return (x.date || "").slice(0, 7) === months[5]; }).forEach(function (x) { byLoc[x.location || "—"] = (byLoc[x.location || "—"] || 0) + 1; byType[x.type] = (byType[x.type] || 0) + 1; });
+    function barList(o) {
+      var ks = Object.keys(o).sort(function (a, b) { return o[b] - o[a]; }), mx = Math.max.apply(null, ks.map(function (k) { return o[k]; }).concat([1]));
+      return ks.length ? ks.map(function (k) { return '<div style="display:flex;align-items:center;gap:8px;margin:3px 0;font-size:12.5px"><span style="width:45%">' + E(k) + '</span><span style="flex:1;background:#eef2f7;border-radius:6px;height:14px"><span style="display:block;height:14px;border-radius:6px;background:linear-gradient(90deg,#b91c1c,#f97316);width:' + (o[k] * 100 / mx) + '%"></span></span><b>' + o[k] + "</b></div>"; }).join("") : '<p style="color:#64748b">No events this month.</p>';
+    }
+    return "<h2>📈 Quality Dashboard (NABH)</h2>" +
+      '<div class="thq-kpis"><div class="thq-kpi thq-k1"><small>Events this month</small><b>' + cur._n + '</b></div><div class="thq-kpi thq-k2"><small>Sentinel this month</small><b>' + cur._sent +
+      '</b></div><div class="thq-kpi thq-k3"><small>Open RCA / CAPA</small><b>' + open.length + '</b></div><div class="thq-kpi thq-k2"><small>CAPA overdue</small><b>' + overdue.length + "</b></div></div>" +
+      '<div class="card" style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" type="button" onclick="thQ.newEv()">+ Report new event</button><button class="btn sec" type="button" onclick="go(\'thEvents\')">Register &amp; monthly QI</button><button class="btn sec" type="button" onclick="go(\'thCAPA\')">RCA / CAPA tracker</button><button class="btn sec" type="button" onclick="thQ.printTrend()">🖨 Print 6-month trend</button></div>' +
+      '<div class="grid" style="display:grid;grid-template-columns:1fr 1fr;gap:12px"><div class="card"><h3 style="margin-top:0">Events by type — ' + months[5] + "</h3>" + barList(byType) + '</div><div class="card"><h3 style="margin-top:0">Events by location — ' + months[5] + "</h3>" + barList(byLoc) + "</div></div>" +
+      '<div class="card"><h3 style="margin-top:0">6-month indicator trend</h3>' + trendTable(months, vals) + "</div>" +
+      '<div class="card"><h3 style="margin-top:0">Sentinel events (last 6 months)</h3>' + miniList(all.filter(function (x) { return x.category === "Sentinel event" && (x.date || "").slice(0, 7) >= months[0]; })) + "</div>";
+  });
+  function trendTable(months, vals) {
+    return '<table class="table thq-t"><tr><th>Indicator</th><th>Unit</th>' + months.map(function (m) { return '<th style="text-align:right">' + m + "</th>"; }).join("") + "</tr>" +
+      QI.map(function (q) { return "<tr><td>" + q[1] + '</td><td style="font-size:11px;color:#64748b">' + q[4] + "</td>" + vals.map(function (v) { var x = v[q[0]]; return '<td style="text-align:right' + (x ? ";font-weight:700;color:#b91c1c" : "") + '">' + x + "</td>"; }).join("") + "</tr>"; }).join("") + "</table>";
+  }
+  function miniList(rows) {
+    if (!rows.length) return '<p style="color:#15803d">None 👍</p>';
+    return '<table class="table thq-t"><tr><th>No.</th><th>Date</th><th>Event</th><th>Patient</th><th>Status</th><th>Target</th><th></th></tr>' + rows.map(function (x) {
+      var od = x.status !== "Closed" && x.target && x.target < iso();
+      return "<tr><td>" + E(x.no) + "</td><td>" + show(x.date) + "</td><td>" + E(x.type) + "</td><td>" + E(x.ptName || "—") + '</td><td><span class="thq-badge ' + (x.status === "Closed" ? "g" : "a") + '">' + E(x.status) + "</span></td><td" + (od ? ' style="color:#b91c1c;font-weight:700"' : "") + ">" + show(x.target) + (od ? " (overdue)" : "") +
+        '</td><td><button class="btn sm sec" type="button" onclick="thQ.editEv(\'' + x.id + "')\">Open</button></td></tr>";
+    }).join("") + "</table>";
+  }
+  TH.page("thCAPA", function () {
+    var all = EV().filter(function (x) { return !x.deleted; });
+    var open = all.filter(function (x) { return x.status !== "Closed"; }).sort(function (a, b) { return (a.target || "9").localeCompare(b.target || "9"); });
+    var needRca = open.filter(function (x) { return x.rcaReq === "Yes" && !x.rcaSummary; });
+    return "<h2>🛠 RCA / CAPA Tracker</h2>" +
+      '<div class="thq-kpis"><div class="thq-kpi thq-k3"><small>Open items</small><b>' + open.length + '</b></div><div class="thq-kpi thq-k2"><small>RCA pending</small><b>' + needRca.length +
+      '</b></div><div class="thq-kpi thq-k2"><small>CAPA overdue</small><b>' + open.filter(function (x) { return x.target && x.target < iso(); }).length + '</b></div><div class="thq-kpi thq-k4"><small>Closed (all time)</small><b>' + (all.length - open.length) + "</b></div></div>" +
+      '<div class="card"><h3 style="margin-top:0">RCA pending</h3>' + miniList(needRca) + '</div><div class="card"><h3 style="margin-top:0">All open incidents (sorted by target date)</h3>' + miniList(open) + "</div>";
+  });
+  window.thQ.printTrend = function () {
+    var months = monthsBack(6);
+    printHTML('<div class="thq-pr"><h2>Quality Indicators — 6-month trend</h2>' + trendTable(months, months.map(qiVals)) + '<div class="sg"><div>Quality manager</div><div>Medical superintendent</div></div></div>');
+  };
+
+  /* =====================================================================
+     Patient file → Quality Indicators tab: connect "Yes" answers to event reports
+     ===================================================================== */
+  var MAP = [
+    [/medication error/i, "Medication error — administration"], [/adverse drug|\bADR\b/i, "Adverse drug reaction (ADR)"], [/fall/i, "Patient fall"],
+    [/pressure ulcer|bed ?sore/i, "Pressure ulcer developed in hospital"], [/transfusion/i, "Transfusion reaction"], [/needle|sharp/i, "Needle-stick / sharp injury (staff)"],
+    [/return.*ot|re-?exploration/i, "Unplanned return to OT within 48 hours"], [/re-?intubat/i, "Unplanned re-intubation within 48 hours"], [/return.*icu|readmission.*icu/i, "Unplanned return to ICU within 48 hours"],
+    [/surgical site|\bSSI\b/i, "Surgical site infection (SSI)"], [/CAUTI|urinary/i, "Catheter-associated UTI (CAUTI)"], [/CLABSI|blood ?stream/i, "Central line bloodstream infection (CLABSI)"],
+    [/\bVAP\b|ventilator/i, "Ventilator-associated pneumonia (VAP)"], [/identif/i, "Patient identification error"], [/wrong site|wrong patient|wrong procedure/i, "Wrong patient / wrong site / wrong procedure surgery"],
+    [/anaesth|anesth/i, "Anaesthesia complication"], [/LAMA|DAMA|against medical/i, "Left against medical advice (LAMA)"], [/abscond/i, "Patient absconded"],
+    [/death|mortality/i, "Unexpected death"], [/near miss/i, "Near miss (caught before reaching patient)"], [/complain/i, "Patient / family complaint"]
+  ];
+  function mapType(label) { for (var i = 0; i < MAP.length; i++) if (MAP[i][0].test(label)) return MAP[i][1]; return "Other"; }
+  function patientEvents(A) {
+    var p = pinfo(A);
+    return EV().filter(function (x) { return !x.deleted && ((x.admId && String(x.admId) === String(A.id)) || (p.ipd && x.ipd === p.ipd) || (!x.ipd && p.uhid && x.uhid === p.uhid)); });
+  }
+  function chartAdm() {
+    var head = Array.prototype.filter.call(document.querySelectorAll("h1,h2"), function (h) { return /IPD Chart|IPD-/i.test(h.textContent || ""); })[0];
+    if (!head) return null;
+    var m = (head.textContent || "").match(/IPD[-\w\/]*\d/);
+    return findAdm(m ? m[0] : "");
+  }
+  function qiTab() {
+    var box = Array.prototype.filter.call(document.querySelectorAll("h3,h4,b,strong,div"), function (e) { return /^Events & compliance for this patient$/i.test((e.textContent || "").trim()); })[0];
+    if (!box) return;
+    var card = box.closest(".card") || box.parentElement;
+    var A = chartAdm();
+    if (!A) return;
+    var evs = patientEvents(A);
+    // 1. events card for this patient
+    if (!document.querySelector('[data-thq="pev"]')) {
+      card.insertAdjacentHTML("beforebegin", '<div class="thq-panel" data-thq="pev"><div class="thq-ph"><h3>⚠ Incident / event reports — this patient ' +
+        (evs.length ? '<span class="thq-badge r">' + evs.length + "</span>" : '<span class="thq-badge g">None</span>') + "</h3>" +
+        '<button class="btn sm" type="button" onclick="thQ.report(\'' + A.id + '\')">+ Report event</button><button class="btn sm sec" type="button" onclick="go(\'thQIDash\')">Quality dashboard</button></div>' +
+        (evs.length ? '<table class="table thq-t"><tr><th>No.</th><th>Date</th><th>Event</th><th>Severity</th><th>Status</th><th></th></tr>' + evs.map(function (x) {
+          return "<tr><td>" + E(x.no) + "</td><td>" + show(x.date) + " " + E(x.time || "") + "</td><td>" + E(x.type) + "</td><td>" + E(x.severity) + '</td><td><span class="thq-badge ' + (x.status === "Closed" ? "g" : "a") + '">' + E(x.status) +
+            '</span></td><td style="white-space:nowrap"><button class="btn sm sec" type="button" onclick="thQ.editEv(\'' + x.id + "')\">Open</button> <button class=\"btn sm sec\" type=\"button\" onclick=\"thQ.printEv('" + x.id + "')\">🖨</button></td></tr>";
+        }).join("") + "</table>" : '<p style="font-size:12.5px;color:#64748b;margin:0">When any item below is marked <b>Yes</b>, record its details here — NABH needs date, description, action taken, RCA and CAPA for every event.</p>') + "</div>");
+    }
+    // 2. connect every Yes/No question to a detailed event
+    Array.prototype.forEach.call(card.querySelectorAll("select"), function (sl) {
+      var lab = sl.previousElementSibling && !/^(SELECT|INPUT)$/.test(sl.previousElementSibling.tagName) ? sl.previousElementSibling.textContent : (sl.parentElement.querySelector("label") || {}).textContent;
+      lab = (lab || "").trim();
+      if (!lab) return;
+      var type = mapType(lab), done = evs.filter(function (x) { return x.type === type || (type.indexOf("Medication error") === 0 && /^Medication error/.test(x.type)); })[0];
+      var tag = sl.parentElement.querySelector(".thq-tag");
+      var isYes = /^yes/i.test(sl.value);
+      var html = isYes ? (done ? '<span style="color:#15803d">✔ Details recorded (' + E(done.no) + ')</span> <a href="#" onclick="thQ.editEv(\'' + done.id + '\');return false">open</a>'
+        : '<a href="#" style="color:#b91c1c;font-weight:700" onclick="thQ.report(\'' + A.id + "','" + type.replace(/'/g, "\\'") + '\');return false">⚠ Record event details (NABH)</a>') : "";
+      if (!tag) { tag = document.createElement("div"); tag.className = "thq-tag"; tag.style.cssText = "font-size:11.5px;margin-top:3px"; sl.insertAdjacentElement("afterend", tag); }
+      if (tag.innerHTML !== html) tag.innerHTML = html;
+      if (!sl.__thq) {
+        sl.__thq = 1;
+        sl.addEventListener("change", function () {
+          if (/^yes/i.test(sl.value) && !patientEvents(A).some(function (x) { return x.type === type; })) {
+            setTimeout(function () { if (confirm("“" + lab + "” marked YES.\n\nNABH needs full event details (what happened, action taken, RCA, CAPA).\nRecord the details now?")) thQ.report(A.id, type); }, 50);
+          }
+        });
+      }
+    });
+  }
+
+  /* =====================================================================
+     Inject into the IPD patient page
+     ===================================================================== */
+  var busy = false, tm = null;
+  function inject() {
+    if (busy) return;
+    busy = true;
+    try { qiTab(); } catch (e) { console.warn("QI tab:", e); }
+    setTimeout(function () { busy = false; }, 0);
+    var chartLbl = Array.prototype.filter.call(document.querySelectorAll("b,strong,span,div,label"), function (e) { return /^Patient Chart:?$/i.test((e.textContent || "").trim()); })[0];
+    if (!chartLbl) return;
+    var bar = chartLbl.parentElement;
+    var h = Array.prototype.filter.call(document.querySelectorAll("h1,h2"), function (x) { return /IPD/i.test(x.textContent || ""); })[0];
+    var ipdText = h ? (h.textContent || "").split(/\s[—–-]\s/)[0].trim() : "";
+    var A = findAdm(ipdText);
+    if (!A) return;
+    busy = true;
+    try {
+      // 1. buttons in the Patient Chart bar
+      if (!bar.querySelector("[data-thq-btn]")) {
+        var sample = Array.prototype.filter.call(bar.querySelectorAll("button"), function (b) { return !b.hasAttribute("data-thq-btn"); })[0];
+        var cls = sample ? sample.className : "btn sm sec";
+        bar.insertAdjacentHTML("beforeend",
+          '<button type="button" data-thq-btn="1" class="' + E(cls) + '" style="border-color:#0b2545;font-weight:700" onclick="document.querySelector(\'[data-thq=ot]\').scrollIntoView({behavior:\'smooth\'})">🏥 Surgery / OT</button>' +
+          '<button type="button" data-thq-btn="1" class="' + E(cls) + '" style="border-color:#b91c1c;color:#b91c1c;font-weight:700" onclick="thQ.report(\'' + A.id + '\')">⚠ Report Event</button>');
+      }
+      // 2. OT panel after the "Print Form / Consent" card
+      if (!document.querySelector('[data-thq="ot"]')) {
+        var pf = Array.prototype.filter.call(document.querySelectorAll("label,div,span,b"), function (e) { return /^Print Form \/ Consent/i.test((e.textContent || "").trim()) && e.children.length < 3; })[0];
+        var anchor = pf ? (pf.closest(".card") || pf.parentElement) : null;
+        if (!anchor) { var btn = Array.prototype.filter.call(document.querySelectorAll("button"), function (b) { return /Admission Form/i.test(b.textContent || ""); })[0]; anchor = btn ? btn.parentElement : bar; }
+        anchor.insertAdjacentHTML("afterend", otPanel(A));
+      }
+    } catch (e) { console.warn("IPD OT panel:", e); }
+    setTimeout(function () { busy = false; }, 0);
+  }
+  new MutationObserver(function () { if (busy) return; clearTimeout(tm); tm = setTimeout(inject, 150); }).observe(document.documentElement, { childList: true, subtree: true });
+})();
+/*TH-SIGN:d8b625e45c6bb555a81cade2fc660642*/

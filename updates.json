@@ -1,0 +1,277 @@
+{
+ "app": "TRUE HOPE DIGITAL SOLUTIONS",
+ "updated": "2026-11-20",
+ "notice": "",
+ "updates": [
+  {
+   "id": "unlimited-storage-idb",
+   "name": "Unlimited Storage (IndexedDB)",
+   "version": "1.3",
+   "date": "2026-11-19",
+   "desc": "Moves all hospital data from the small 5 MB browser storage into Chrome's large IndexedDB database (hundreds of MB / GB). Adds a storage meter and early warning",
+   "file": "TrueHope_Update_unlimited-storage-idb_v1.3_SIGNED.thupdate",
+   "hospitals": []
+  },
+  {
+   "id": "doctor-digital-signature",
+   "name": "Doctor Digital Signature",
+   "version": "1.0",
+   "date": "2026-11-18",
+   "desc": "Upload each doctor's signature once — it prints automatically on OPD form, discharge summary, admission record and forms ({{doctor_sign}}).",
+   "file": "TrueHope_Update_doctor-digital-signature_v1.0_SIGNED.thupdate",
+   "hospitals": []
+  },
+  {
+   "id": "auto-backup-folder",
+   "name": "Auto Backup Folder (auto-create)",
+   "version": "1.0",
+   "date": "2026-11-18",
+   "desc": "Creates its own backup folder TrueHope_Hospital_Backup automatically, saves every hour and on logout; falls back to Downloads if Chrome refuses.",
+   "file": "TrueHope_Update_auto-backup-folder_v1.0_SIGNED.thupdate",
+   "hospitals": []
+  },
+  {
+   "id": "appearance-theme-studio",
+   "name": "Appearance & Theme Studio",
+   "version": "1.0",
+   "date": "2026-11-18",
+   "desc": "Change the look of the software: ready themes, colours, background photo (login / home / all pages), font, size, rounded corners, dark mode, header logo, home c",
+   "file": "TrueHope_Update_appearance-theme-studio_v1.0_SIGNED.thupdate",
+   "hospitals": []
+  },
+  {
+   "id": "ipd-clinical-mrd-registers",
+   "name": "IPD Clinical Chart, MRD, Registers, Quality, Admin & Stickers",
+   "version": "1.0",
+   "date": "2026-11-18",
+   "desc": "Doctor/Nursing assessment, daily notes, drug chart, vitals, handover, RBS, investigations, one-click pharmacy order, MRD, quality indicators, hospital registers",
+   "file": "TrueHope_Update_ipd-clinical-mrd-registers_v1.0_SIGNED.thupdate",
+   "hospitals": []
+  },
+  {
+   "id": "certificates-blank-forms",
+   "name": "Certificates & Blank Forms (lines till footer)",
+   "version": "1.0",
+   "date": "2026-11-19",
+   "desc": "OPD Certificates menu (15 types, auto-filled from patient), Blank Forms for every form, and automatic writing lines / rows till the page footer on blank prints.",
+   "file": "TrueHope_Update_certificates-blank-forms_v1.0_SIGNED.thupdate",
+   "hospitals": []
+  },
+  {
+   "id": "nabh-bilingual-consents",
+   "name": "NABH Bilingual Consent Forms (English + Marathi)",
+   "version": "1.1",
+   "date": "2026-11-19",
+   "desc": "Adds 20 NABH consent forms & formats in English + Marathi to Forms & Consents — auto-filled with patient / IPD details, ask-fields, signature areas.",
+   "file": "TrueHope_Update_nabh-bilingual-consents_v1.1_SIGNED.thupdate",
+   "hospitals": []
+  },
+  {
+   "id": "hospital-modules-pack",
+   "name": "Hospital Modules: MRD Checklist, HR, Store, Pharmacy, Pathology, Radiology",
+   "version": "1.5",
+   "date": "2026-11-19",
+   "desc": "v1.5: fixes Patient Stickers printing the Store indent (module functions renamed so they never replace built-in ones). v1.4: urine/stool parameters use their ow",
+   "file": "TrueHope_Update_hospital-modules-pack_v1.5_SIGNED.thupdate",
+   "hospitals": []
+  },
+  {
+   "id": "letterhead-printing",
+   "name": "Letterhead Printing (ask on every print)",
+   "version": "1.0",
+   "date": "2026-11-19",
+   "desc": "Before every print asks: plain paper (with hospital header) or pre-printed letterhead (header removed, top and bottom space kept). Spaces set in SETTING MENU → ",
+   "file": "TrueHope_Update_letterhead-printing_v1.0_SIGNED.thupdate",
+   "hospitals": []
+  },
+  {
+   "id": "hover-effects",
+   "name": "Hover Effects (icons & menu)",
+   "version": "1.1",
+   "date": "2026-11-19",
+   "desc": "Choose what happens when the mouse touches a home icon or menu item: lift, grow, glow, colour fill, icon bounce or none — with speed, colour, and your own sideb",
+   "file": "TrueHope_Update_hover-effects_v1.1_SIGNED.thupdate",
+   "hospitals": []
+  },
+  {
+   "id": "icon-button-designer",
+   "name": "Icon & Button Designer",
+   "version": "1.0",
+   "date": "2026-11-19",
+   "desc": "Set size, shape, colour and design of home icons and all buttons (and left menu) with live preview and ready-made designs. SETTING MENU → Icon & Button Designer",
+   "file": "TrueHope_Update_icon-button-designer_v1.0_SIGNED.thupdate",
+   "hospitals": []
+  },
+  {
+   "id": "th-dashboard-statistics-v1",
+   "name": "Dashboard - Graphs, Pie Charts & Statistics",
+   "version": "1.0",
+   "date": "2026-11-19",
+   "desc": "New Dashboard menu with KPI tiles, trend graphs, pie/donut charts and hospital statistics (OPD, IPD, revenue, schemes, doctors, wards) - works fully offline",
+   "file": "TrueHope_Update_th-dashboard-statistics-v1_v1.0_SIGNED.thupdate",
+   "hospitals": []
+  },
+  {
+   "id": "th-ward-type-icu-fix-20261120",
+   "name": "Ward Type Options + Add Ward Fix",
+   "version": "1.0",
+   "date": "2026-11-20",
+   "desc": "Adds all ward types (ICU, NICU, PICU, HDU, Semi-Private, Deluxe etc.) to Ward & Bed Master and fixes saving of new wards like ICU.",
+   "file": "TrueHope_Update_th-ward-type-icu-fix-20261120_v1.0_SIGNED.thupdate",
+   "hospitals": []
+  },
+  {
+   "id": "th-password-eye-20261120",
+   "name": "Show Password Eye Button",
+   "version": "1.0",
+   "date": "2026-11-20",
+   "desc": "Adds an eye button next to every password box (login, change password, users) to show or hide the password.",
+   "file": "TrueHope_Update_th-password-eye-20261120_v1.0_SIGNED.thupdate",
+   "hospitals": []
+  },
+  {
+   "id": "th-pro-login-20261120",
+   "name": "Professional Login Screen",
+   "version": "2.3",
+   "date": "2026-11-20",
+   "desc": "Design settings now fully applied (button, box colours). Fixed login stuck after v1.0. Compact professional login: typed username (user list hidden), caps-lock ",
+   "file": "TrueHope_Update_th-pro-login-20261120_v2.3_SIGNED.thupdate",
+   "hospitals": []
+  },
+  {
+   "id": "th-print-preview-20261120",
+   "name": "Print Preview",
+   "version": "2.1",
+   "date": "2026-11-20",
+   "desc": "v2.1: page 2 keeps the header space blank by default (no hospital name repeated). v2.0: a section that does not fit continues in the SAME box on the next page (",
+   "file": "TrueHope_Update_th-print-preview-20261120_v2.1_SIGNED.thupdate",
+   "hospitals": []
+  },
+  {
+   "id": "th-surgery-docs-bilingual-20261120",
+   "name": "Surgery & OT Documents + Bilingual Documents",
+   "version": "1.2",
+   "date": "2026-11-20",
+   "desc": "Professional Surgery & OT screen. Language dropdown + Gujarati built in. NABH surgery/OT documents (consents, PAC, WHO checklist, OT notes with one-click defaul",
+   "file": "TrueHope_Update_th-surgery-docs-bilingual-20261120_v1.2_SIGNED.thupdate",
+   "hospitals": []
+  },
+  {
+   "id": "th-health-check-20261120",
+   "name": "System Health Check (auto problem finder)",
+   "version": "1.2",
+   "date": "2026-11-20",
+   "desc": "Checks every box, dropdown and button + suggestions. One-click auto test of every screen, every print and the data; live error log, slow-button detector, and a ",
+   "file": "TrueHope_Update_th-health-check-20261120_v1.2_SIGNED.thupdate",
+   "hospitals": []
+  },
+  {
+   "id": "th-layout-designer-20261120",
+   "name": "Layout Designer (drag & drop menus and buttons)",
+   "version": "1.1",
+   "date": "2026-11-20",
+   "desc": "Home tiles drag & drop, sub-menu fix. Drag & drop to re-order main menus, sub-menus and screen buttons, move options between menus, rename or hide anything, the",
+   "file": "TrueHope_Update_th-layout-designer-20261120_v1.1_SIGNED.thupdate",
+   "hospitals": []
+  },
+  {
+   "id": "th-daily-expenses-20261120",
+   "name": "Daily Expenses + Expense Reports",
+   "version": "1.4",
+   "date": "2026-11-20",
+   "desc": "Expense cards only on main dashboard (not Quality Dashboard). Expense section placed below dashboard filters, follows selected dates. Dashboard is one direct me",
+   "file": "TrueHope_Update_th-daily-expenses-20261120_v1.4_SIGNED.thupdate",
+   "hospitals": []
+  },
+  {
+   "id": "th-ipd-ot-quality-events-20261120",
+   "name": "IPD Surgery/OT Panel + NABH Incident & QI Register",
+   "version": "1.2",
+   "date": "2026-11-20",
+   "desc": "Checkbox layout fix. Quality & Events module, patient-file QI tab linked to event reports. Surgery & OT file panel inside the IPD patient page, and NABH inciden",
+   "file": "TrueHope_Update_th-ipd-ot-quality-events-20261120_v1.2_SIGNED.thupdate",
+   "hospitals": []
+  },
+  {
+   "id": "th-tpa-schemes-20261120",
+   "name": "TPA / MJPJAY / PMJAY / Insurance Module",
+   "version": "1.1",
+   "date": "2026-11-20",
+   "desc": "v1.1: neat hospital header on prints, Plain paper / Letterhead option. TPA & scheme cases for IPD and Day Care patients: beneficiary/policy details, package, pr",
+   "file": "TrueHope_Update_th-tpa-schemes-20261120_v1.1_SIGNED.thupdate",
+   "hospitals": []
+  },
+  {
+   "id": "th-daycare-20261120",
+   "name": "Day Care Module",
+   "version": "1.1",
+   "date": "2026-11-20",
+   "desc": "v1.1: neat hospital header on prints, Plain paper / Letterhead option. Separate Day Care module: admission with UHID + Day Care No. (DC/YYYY/NNNN), bed/chair bo",
+   "file": "TrueHope_Update_th-daycare-20261120_v1.1_SIGNED.thupdate",
+   "hospitals": []
+  },
+  {
+   "id": "th-vitals-pad-20261120",
+   "name": "Vitals Pad (quick entry)",
+   "version": "1.0",
+   "date": "2026-11-20",
+   "desc": "🩺 Vitals Pad button on IPD Vitals Chart and Day Care nursing: big tap-friendly screen to enter BP, pulse, temp, RR, SpO2, pain, intake/output with tap-to-pick v",
+   "file": "TrueHope_Update_th-vitals-pad-20261120_v1.0_SIGNED.thupdate",
+   "hospitals": []
+  },
+  {
+   "id": "th-drug-mar-20261120",
+   "name": "Drug Chart — dose-wise tick, Paper MAR, NABH drug names",
+   "version": "1.4",
+   "date": "2026-11-20",
+   "desc": "v1.4: edit name / time / note of an already ticked dose (change kept in history). v1.3: Diagnosis & Allergies on MAR (from admission / patient record, editable ",
+   "file": "TrueHope_Update_th-drug-mar-20261120_v1.4_SIGNED.thupdate",
+   "hospitals": []
+  },
+  {
+   "id": "th-updates-button-20261120",
+   "name": "Software Updates button (top bar)",
+   "version": "1.1",
+   "date": "2026-11-20",
+   "desc": "v1.1: works from every page (Home too). Adds a ⬆ Software Updates button next to Home in the top bar — one click opens the Software Updates page.",
+   "file": "TrueHope_Update_th-updates-button-20261120_v1.1_SIGNED.thupdate",
+   "hospitals": []
+  },
+  {
+   "id": "th-smart-picker-20261120",
+   "name": "Smart Picker (multi-select lists)",
+   "version": "1.0",
+   "date": "2026-11-20",
+   "desc": "Replaces every pick-list (complaints, findings, diagnosis, advice, medicines, doctors…) with a professional picker: search, tick many options, add your own, OK ",
+   "file": "TrueHope_Update_th-smart-picker-20261120_v1.0_SIGNED.thupdate",
+   "hospitals": []
+  },
+  {
+   "id": "th-facility-mgmt-20261120",
+   "name": "Facility Management & Safety (FMS)",
+   "version": "1.1",
+   "date": "2026-11-20",
+   "desc": "25 facility modules with configurable checklist engine (daily-annual, C/NC/NA, remarks, photos, assignee, reviewer & approval, auto next date, pending/overdue a",
+   "file": "TrueHope_Update_th-facility-mgmt-20261120_v1.1_SIGNED.thupdate",
+   "hospitals": []
+  },
+  {
+   "id": "nabh-qpc-ch9-registers",
+   "name": "NABH Chapter 9 - Quality of Patient Care (QPC 1-18) Registers",
+   "version": "1.2",
+   "date": "2026-11-20",
+   "desc": "Adverse event, meeting, surgery/OT, ICU APACHE and ACS/STEMI registers linked with OPD/IPD patient data, auto monthly QPC 1-18 report (print ready)",
+   "file": "TrueHope_Update_nabh-qpc-ch9-registers_v1.2_SIGNED.thupdate",
+   "hospitals": []
+  },
+  {
+   "id": "th-auto-update-github",
+   "name": "Online Auto Update (GitHub)",
+   "version": "1.0",
+   "date": "2026-11-20",
+   "desc": "When internet is available, checks the TRUE HOPE online update server once a day and installs new SIGNED updates automatically. Works offline as before.",
+   "file": "TrueHope_Update_th-auto-update-github_v1.0_SIGNED.thupdate",
+   "hospitals": []
+  }
+ ]
+}

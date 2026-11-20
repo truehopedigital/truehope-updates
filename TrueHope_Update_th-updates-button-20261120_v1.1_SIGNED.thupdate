@@ -1,0 +1,82 @@
+/*TRUEHOPE-UPDATE {"id":"th-updates-button-20261120","name":"Software Updates button (top bar)","version":"1.1","date":"2026-11-20","description":"v1.1: works from every page (Home too). Adds a ⬆ Software Updates button next to Home in the top bar — one click opens the Software Updates page."} */
+(function () {
+  if (window.__thUpdBtn) return;
+  window.__thUpdBtn = true;
+
+  TH.css([
+    ".thub-btn{margin-left:8px !important;white-space:nowrap}",
+    ".thub-btn .thub-n{display:inline-block;background:#16a34a;color:#fff;border-radius:10px;font-size:10.5px;font-weight:800;padding:0 6px;margin-left:5px;line-height:16px}"
+  ].join(""));
+
+  var LS = "thUpdatesPageKey";
+  function findLink() {
+    var els = Array.prototype.filter.call(document.querySelectorAll("a, li, div, span, button"), function (e) {
+      return e.children.length < 3 && !e.closest(".thub-btn") && /^\s*Software Updates/i.test(e.textContent || "");
+    });
+    els = els.filter(function (e) { return !els.some(function (o) { return o !== e && e.contains(o); }); });   // innermost element (the real link)
+    return els.sort(function (a, b) { return a.textContent.length - b.textContent.length; })[0] || null;
+  }
+  function keyFrom(el) {
+    for (var n = el, i = 0; n && i < 3; n = n.parentElement, i++) {
+      var oc = n.getAttribute && (n.getAttribute("onclick") || n.getAttribute("data-page") || n.getAttribute("data-go") || n.getAttribute("href") || "");
+      var m = String(oc).match(/go\(\s*['"]([\w-]+)['"]/) || String(oc).match(/^#?([\w-]+)$/);
+      if (m && m[1] && !/^(javascript|void)$/i.test(m[1])) return m[1];
+    }
+    return "";
+  }
+  function keyFromScripts() {
+    var txt = Array.prototype.map.call(document.querySelectorAll("script:not([src])"), function (s) { return s.textContent; }).join("\n");
+    var res = [/go\(\s*['"]([\w-]+)['"]\s*\)[^\n]{0,120}?Software Updates/i, /['"]([\w-]+)['"]\s*,\s*['"][^'"]{0,6}Software Updates/i, /([\w-]+)['"]?\s*:\s*['"][^'"]{0,6}Software Updates/i, /Software Updates[^\n]{0,80}?go\(\s*['"]([\w-]+)['"]/i];
+    for (var i = 0; i < res.length; i++) { var m = txt.match(res[i]); if (m) return m[1]; }
+    return "";
+  }
+  function remember(k) { if (k) { try { localStorage.setItem(LS, k); } catch (e) {} } }
+  function cached() { try { return localStorage.getItem(LS) || ""; } catch (e) { return ""; } }
+  function goKey(k) { if (!k || typeof go !== "function") return false; try { go(k); window.scrollTo(0, 0); return !!findLink() || true; } catch (e) { return false; } }
+  function openUpdates() {
+    var el = findLink();
+    if (el) { remember(keyFrom(el)); el.click(); window.scrollTo(0, 0); return; }
+    var k = cached() || keyFromScripts();
+    if (k && goKey(k)) { remember(k); return; }
+    // open SETTING MENU, then click the link
+    var cands = Array.prototype.filter.call(document.querySelectorAll("a, li, div, span, button"), function (e) { return e.children.length < 4 && /^\W*SETTING MENU\W*$/i.test((e.textContent || "").trim()); });
+    var sm = cands.filter(function (e) { return !cands.some(function (o) { return o !== e && e.contains(o); }); })[0];
+    if (sm) {
+      sm.click();
+      setTimeout(function () {
+        var l = findLink();
+        if (l) { remember(keyFrom(l)); l.click(); window.scrollTo(0, 0); }
+        else { try { toast("Open SETTING MENU > Software Updates once — after that this button works from every page"); } catch (e) {} }
+      }, 250);
+      return;
+    }
+    try { toast("Open SETTING MENU > Software Updates once — after that this button works from every page"); } catch (e) {}
+  }
+  // learn the page key whenever the Software Updates link is on screen
+  setInterval(function () { if (!cached()) { var l = findLink(); if (l) remember(keyFrom(l)); } }, 3000);
+  window.thOpenUpdates = openUpdates;
+
+  var busy = false, tm = null;
+  function inject() {
+    if (busy || document.querySelector(".thub-btn")) return;
+    var home = Array.prototype.filter.call(document.querySelectorAll("header button, header a, button, a"), function (b) {
+      return /^\W*Home\s*$/i.test((b.textContent || "").trim()) && b.getBoundingClientRect().top < 140;
+    })[0];
+    if (!home) return;
+    busy = true;
+    try {
+      var b = document.createElement(home.tagName === "A" ? "a" : "button");
+      if (b.tagName === "BUTTON") b.type = "button";
+      b.className = home.className + " thub-btn";
+      if (home.getAttribute("style")) b.setAttribute("style", home.getAttribute("style"));
+      b.title = "Install / manage software updates";
+      b.innerHTML = "⬆ Software Updates";
+      b.onclick = function (e) { e.preventDefault(); openUpdates(); };
+      home.insertAdjacentElement("afterend", b);
+    } catch (e) { console.warn("Updates button:", e); }
+    setTimeout(function () { busy = false; }, 0);
+  }
+  new MutationObserver(function () { if (busy) return; clearTimeout(tm); tm = setTimeout(inject, 200); }).observe(document.documentElement, { childList: true, subtree: true });
+  setTimeout(inject, 500);
+})();
+/*TH-SIGN:910467916f216df6e53173585d5054de*/
