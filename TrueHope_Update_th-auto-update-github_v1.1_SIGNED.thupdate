@@ -1,0 +1,131 @@
+/*TRUEHOPE-UPDATE {"id":"th-auto-update-github","name":"Online Auto Update (GitHub)","version":"1.1","date":"2026-11-21","description":"v1.1: correct local date in Last check / History. When internet is available, checks the TRUE HOPE online update server once a day and installs new SIGNED updates automatically. Works offline as before."} */
+(function () {
+  'use strict';
+  var MANIFEST = 'https://truehopedigital.github.io/truehope-updates/updates.json';
+  var BASE = MANIFEST.replace(/[^\/]*$/, '');
+  var busy = false;
+
+  function E(v) { return String(v == null ? '' : v).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+  function st() { var s = db.settings; if (!s.autoUpd || typeof s.autoUpd !== 'object') s.autoUpd = { on: true, mode: 'auto' }; return s.autoUpd; }
+  function nm(x) { return String(x || '').toUpperCase().replace(/[^\p{L}\p{N}]/gu, ''); }
+  function master() { try { return typeof isM === 'function' ? isM() : true; } catch (e) { return true; } }
+  function licOk() { try { if (typeof window.licState !== 'function') return true; var r = window.licState(); return !!(r && r.ok); } catch (e) { return true; } }
+  function newer(a, b) { try { return verNewer(String(a), String(b)); } catch (e) { return String(a) !== String(b); } }
+  function nowTxt(iso) { try { var d = new Date(iso), p = function (n) { return String(n).padStart(2, '0'); }; return p(d.getDate()) + '-' + p(d.getMonth() + 1) + '-' + d.getFullYear() + ' ' + p(d.getHours()) + ':' + p(d.getMinutes()); } catch (e) { return iso || ''; } }
+
+  async function getJSON() {
+    var r = await fetch(MANIFEST + '?t=' + Date.now(), { cache: 'no-store' });
+    if (!r.ok) throw new Error('update server answered ' + r.status);
+    return r.json();
+  }
+  async function getText(file) {
+    var r = await fetch(BASE + encodeURIComponent(file) + '?t=' + Date.now(), { cache: 'no-store' });
+    if (!r.ok) throw new Error('file not found on server (' + r.status + ')');
+    return r.text();
+  }
+  function wanted(m) {
+    var hosp = nm(db.settings.hospital), del = db.deletedAddons || [];
+    return (m.updates || []).filter(function (u) {
+      if (!u || !u.id || !u.file) return false;
+      if (del.indexOf(u.id) >= 0) return false;                       // removed by this hospital: never forced back
+      if (u.hospitals && u.hospitals.length && u.hospitals.map(nm).indexOf(hosp) < 0) return false;
+      var ex = (db.addons || []).find(function (a) { return a.id === u.id; });
+      return !ex || newer(u.version || '1.0', ex.version);
+    });
+  }
+
+  function banner(kind, list) {
+    var old = document.getElementById('thAutoUpdBar'); if (old) old.remove();
+    var b = document.createElement('div');
+    b.id = 'thAutoUpdBar';
+    b.style.cssText = 'position:fixed;right:16px;bottom:56px;z-index:99999;background:#0b6b3a;color:#fff;padding:12px 16px;border-radius:10px;box-shadow:0 6px 20px rgba(0,0,0,.25);font:14px Segoe UI,Arial;max-width:420px';
+    var txt = kind === 'done'
+      ? '✅ ' + list.length + ' software update(s) installed:<br><small>' + list.map(E).join('<br>') + '</small>'
+      : '⬆ ' + list.length + ' new software update(s) available.';
+    var btn = kind === 'done' ? 'Apply now (reload)' : 'Install now';
+    b.innerHTML = txt + '<div style="margin-top:8px;display:flex;gap:8px"><button id="thAuB1" style="background:#fff;color:#0b6b3a;border:0;border-radius:6px;padding:6px 12px;font-weight:600;cursor:pointer">' + btn +
+      '</button><button id="thAuB2" style="background:transparent;color:#fff;border:1px solid #fff;border-radius:6px;padding:6px 12px;cursor:pointer">Later</button></div>';
+    document.body.appendChild(b);
+    document.getElementById('thAuB1').onclick = function () { if (kind === 'done') location.reload(); else { b.remove(); check(true); } };
+    document.getElementById('thAuB2').onclick = function () { b.remove(); };
+  }
+
+  async function check(manual) {
+    if (busy || typeof db === 'undefined' || !db || !db.settings) return;
+    var s = st();
+    if (!manual && (!s.on || s.last === today())) return;
+    if (!navigator.onLine) { if (manual) alert('Internet is not connected. Connect to internet and try again.'); return; }
+    busy = true;
+    try {
+      var m = await getJSON();
+      s.last = today(); s.lastAt = new Date().toISOString(); s.notice = String(m.notice || '');
+      var list = wanted(m);
+      if (!list.length) { s.result = 'Software is up to date'; save(); if (manual) toast('Software is up to date'); return; }
+      if (!licOk()) { s.result = list.length + ' update(s) available, but the software license is not active. Renew the license to receive updates.'; save(); if (manual) alert(s.result); return; }
+      if (s.mode === 'ask' && !manual) { s.result = list.length + ' update(s) available'; save(); banner('ask', list.map(function (u) { return u.name || u.id; })); return; }
+      var done = [], fail = [];
+      for (var i = 0; i < list.length; i++) {
+        var u = list[i];
+        try {
+          var txt = await getText(u.file);
+          var a = parseAddon(txt, u.file);                 // checks the TRUE HOPE signature (License Lock)
+          if (a.id !== u.id) throw new Error('file does not match the list');
+          var ex = db.addons.find(function (x) { return x.id === a.id; });
+          if (ex && !newer(a.version, ex.version)) continue;
+          if (ex) Object.assign(ex, a); else db.addons.push(a);
+          try { audit('Online update installed', a.name + ' v' + a.version); } catch (e) {}
+          done.push(a.name + ' v' + a.version);
+        } catch (e) { fail.push((u.name || u.file) + ': ' + e.message); }
+      }
+      s.result = (done.length ? 'Installed: ' + done.join(', ') + '. ' : '') + (fail.length ? 'Failed: ' + fail.join('; ') : '') || 'Software is up to date';
+      s.history = [{ at: s.lastAt, done: done, fail: fail }].concat(s.history || []).slice(0, 20);
+      save(true);
+      if (done.length) banner('done', done);
+      else if (manual && fail.length) alert('Some updates could not be installed:\n' + fail.join('\n'));
+    } catch (e) {
+      s.result = 'Could not check: ' + e.message; try { save(); } catch (x) {}
+      if (manual) alert('Could not reach the update server.\n' + e.message);
+    } finally {
+      busy = false;
+      if (manual) try { go('autoupd'); } catch (e) {}
+    }
+  }
+
+  window.THAutoUpd = {
+    check: function () { check(true); },
+    set: function () {
+      if (!master()) { alert('Only the Master login can change this.'); return; }
+      var s = st();
+      s.on = !!document.getElementById('au_on').checked;
+      s.mode = document.getElementById('au_mode').value === 'ask' ? 'ask' : 'auto';
+      save(); try { audit('Online update settings', (s.on ? 'ON' : 'OFF') + ' / ' + s.mode); } catch (e) {}
+      toast('Saved'); go('autoupd');
+    }
+  };
+
+  TH.page('autoupd', function () {
+    var s = st(), h = s.history || [];
+    return '<h2>Online Updates (internet)</h2>' +
+      '<div class="card"><p style="margin-top:0">When this PC has internet, the software checks the TRUE HOPE update server <b>once a day</b> and installs new updates. ' +
+      'Only updates signed by TRUE HOPE are accepted. Without internet the software keeps working normally.</p>' +
+      '<div class="row" style="gap:16px;align-items:center;flex-wrap:wrap">' +
+      '<label style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="au_on" style="width:auto"' + (s.on ? ' checked' : '') + '> Check for updates automatically</label>' +
+      '<label>Mode <select id="au_mode"><option value="auto"' + (s.mode !== 'ask' ? ' selected' : '') + '>Install automatically</option><option value="ask"' + (s.mode === 'ask' ? ' selected' : '') + '>Ask me first</option></select></label>' +
+      '<button class="btn sec" onclick="THAutoUpd.set()">Save</button>' +
+      '<button class="btn" onclick="THAutoUpd.check()">Check for updates now</button></div></div>' +
+      '<div class="card"><table class="table"><tr><th style="width:200px">Last check</th><td>' + E(s.lastAt ? nowTxt(s.lastAt) : 'Not checked yet') + '</td></tr>' +
+      '<tr><th>Result</th><td>' + E(s.result || '-') + '</td></tr>' +
+      (s.notice ? '<tr><th>Message from TRUE HOPE</th><td>' + E(s.notice) + '</td></tr>' : '') +
+      '<tr><th>Installed updates</th><td>' + (db.addons || []).length + '</td></tr>' +
+      '<tr><th>Update server</th><td style="font-size:12px">' + E(MANIFEST) + '</td></tr></table></div>' +
+      (h.length ? '<div class="card"><h3 style="margin-top:0">History</h3><table class="table"><tr><th>When</th><th>Installed</th><th>Failed</th></tr>' +
+        h.map(function (x) { return '<tr><td>' + E(nowTxt(x.at)) + '</td><td>' + E((x.done || []).join(', ') || '-') + '</td><td>' + E((x.fail || []).join('; ') || '-') + '</td></tr>'; }).join('') + '</table></div>' : '');
+  });
+  TH.addMenuItem('set', 'autoupd', 'Online Updates (internet)');
+
+  setTimeout(function () { check(false); }, 20000);           // 20 seconds after start
+  setInterval(function () { check(false); }, 3 * 60 * 60 * 1000);
+  window.addEventListener('online', function () { setTimeout(function () { check(false); }, 5000); });
+})();
+/*TH-SIG2:tlplb7PIXLs0j4PwKgw/IY+532HQ5ggl2oHgNhP/RP+lnbCArB3jumXu1M6b57WMh/INHVAKYz+++P99Jy2p1g==*/
+/*TH-SIGN:e41d5a0121da64129d1fa48be8600062*/

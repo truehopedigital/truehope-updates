@@ -267,10 +267,10 @@
   {
    "id": "th-auto-update-github",
    "name": "Online Auto Update (GitHub)",
-   "version": "1.0",
-   "date": "2026-11-20",
-   "desc": "When internet is available, checks the TRUE HOPE online update server once a day and installs new SIGNED updates automatically. Works offline as before.",
-   "file": "TrueHope_Update_th-auto-update-github_v1.0_SIGNED.thupdate",
+   "version": "1.1",
+   "date": "2026-11-21",
+   "desc": "v1.1: correct local date in Last check / History. When internet is available, checks the TRUE HOPE online update server once a day and installs new SIGNED updat",
+   "file": "TrueHope_Update_th-auto-update-github_v1.1_SIGNED.thupdate",
    "hospitals": []
   }
  ]
