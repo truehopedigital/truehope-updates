@@ -183,4 +183,5 @@
     try { addWard(card); } catch (err) { toast("Add ward error: " + err.message); console.error(err); }
   }, true);
 })();
-/*TH-SIGN:518f0a13f815a92b8cab1c3c163231df*/
+/*TH-SIG2:i+qihNjoUw/VfLHIbcS4skDk7IlEWKuvoFe9755v+pdOb7oAeDdfugxapdEF8NTti/5M35fL1o+fMNHgAXNUnQ==*/
+/*TH-SIGN:e4269850ccb4373d948d3e351f75904b*/

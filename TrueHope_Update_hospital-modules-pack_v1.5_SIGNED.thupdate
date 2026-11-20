@@ -587,4 +587,5 @@ if (typeof _admP === 'function') P.adm = function () {
 };
 TH.after('printBill', (r, id) => { try { const a = getA(id); if (a && !a.billFinal) { const pf = document.querySelector('#printArea .pf'); if (pf) pf.insertAdjacentHTML('afterbegin', '<div style="text-align:right;font-size:11px;font-weight:700;border:1px solid #000;display:inline-block;float:right;padding:2px 6px">PROVISIONAL — bill not finalised</div>') } } catch (e) { } });
 window.THMOD = { C, mrdPct, stQty, phStock, ym };
-/*TH-SIGN:6af9e06b796b7f83d5a904c261463921*/
+/*TH-SIG2:Yw6XUOeND/LtKMez2ZDwgk+97szXcxU0i2uM2E4jBTPX2FL1u7Bsy6S7MmpggDKaGwp4gxvumo1EZTXoDcc7YQ==*/
+/*TH-SIGN:b2136160f8e509adbe7aaea2bfd1ee00*/

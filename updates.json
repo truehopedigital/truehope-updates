@@ -1,6 +1,6 @@
 {
  "app": "TRUE HOPE DIGITAL SOLUTIONS",
- "updated": "2026-11-20",
+ "updated": "2026-11-21",
  "notice": "",
  "updates": [
   {
@@ -215,7 +215,7 @@
    "name": "Vitals Pad (quick entry)",
    "version": "1.0",
    "date": "2026-11-20",
-   "desc": "🩺 Vitals Pad button on IPD Vitals Chart and Day Care nursing: big tap-friendly screen to enter BP, pulse, temp, RR, SpO2, pain, intake/output with tap-to-pick v",
+   "desc": "🩺 Vitals Pad button on IPD Vitals Chart and Day Care nursing: big tap-friendly screen to enter BP, pulse, temp, RR, SpO2, pain, intake/output with tap-to-pick ",
    "file": "TrueHope_Update_th-vitals-pad-20261120_v1.0_SIGNED.thupdate",
    "hospitals": []
   },

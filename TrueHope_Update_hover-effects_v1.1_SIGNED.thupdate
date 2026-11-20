@@ -48,4 +48,5 @@ const hvMC = () => ({ on: $('#hv_mon').checked, bg: val('hv_mbg'), tx: val('hv_m
 window.hvPrev = () => hvApply(val('hv_t'), val('hv_m'), val('hv_s'), hvCol(), hvMC());
 window.hvSave = function () { const mc = hvMC(); Object.assign(db.settings, { hvTile: val('hv_t'), hvMenu: val('hv_m'), hvSpeed: val('hv_s'), hvColor: hvCol(), hvMOn: mc.on, hvMBg: mc.bg, hvMTx: mc.tx }); save(true); hvApply(); audit('Hover effects changed', db.settings.hvTile + ' / ' + db.settings.hvMenu); toast('Saved'); };
 window.hvReset = function () { Object.assign(db.settings, { hvTile: 'lift', hvMenu: 'light', hvSpeed: 'normal', hvColor: '', hvMOn: false, hvMBg: '#11795a', hvMTx: '#ffffff' }); save(true); hvApply(); go('hoverfx') };
-/*TH-SIGN:91baa339c63e0339373554391eabde35*/
+/*TH-SIG2:u3AHvAZJNdKjGsNPZqDIw7n0D/BrMapbkx9rjsHTSjRL9Kbwgc9S9SvxgDvUDr6vf5YeEeIiDD9Md3SEdBGfQQ==*/
+/*TH-SIGN:43f26faa5fdc38952c78ed894779ba73*/

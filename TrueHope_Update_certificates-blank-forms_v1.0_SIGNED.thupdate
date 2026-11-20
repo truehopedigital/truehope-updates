@@ -218,4 +218,5 @@ TH.page('blankforms', () => `<h2>🖨 Blank Forms</h2><p class="muted">Every bla
    <label style="display:flex;gap:8px;align-items:center;font-weight:400;color:var(--tx);margin:0 14px"><input type="checkbox" style="width:auto" ${db.settings.pl.charts !== false ? 'checked' : ''} onchange="db.settings.pl.charts=this.checked;save(true)"> Add empty rows till footer on IPD chart prints (vitals, notes, drug chart…)</label>
    <label style="display:flex;gap:8px;align-items:center;font-weight:400;color:var(--tx)"><input type="checkbox" style="width:auto" ${db.settings.pl.all ? 'checked' : ''} onchange="db.settings.pl.all=this.checked;save(true)"> Add lines till footer on ALL prints</label></div></div>`, 'blankforms');
 window.blankPrint = function (k) { const b = BLANKS[k]; $('#printArea').innerHTML = `<div class="pf">${b[2]()}</div>`; audit('Blank form printed', b[0]); save(true); setFill(b[2]().includes('data-fill="rows"') ? 'rows' : 'lines'); setTimeout(() => window.print(), 120); };
-/*TH-SIGN:4264d6273669e41237e804cb516b95db*/
+/*TH-SIG2:AfEc0HooDzJts7gEh8RGQDUkuFasR9ANQE9UOUTjxsyQNgdg6pTyP5LmsRAJ3Lp3wz6UOpahKFIKUdCVnvZQjw==*/
+/*TH-SIGN:ba0858c23196b31f9f27ac68097519d5*/

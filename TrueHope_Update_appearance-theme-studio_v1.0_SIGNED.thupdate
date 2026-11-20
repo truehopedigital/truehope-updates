@@ -191,4 +191,5 @@ TH.page('appearance', () => {
 }, 'appearance');
 
 applyUI();
-/*TH-SIGN:8d1421463267a0039dae18d7f412ba20*/
+/*TH-SIG2:HlKiEw2yPzVYSpU5ESYQeM1mAQ+QxBG5b+68YDOkMqWiH09kS6Sc9Bqo6kDCHfbKO8YED15V8Gh/Va/ZaeZalw==*/
+/*TH-SIGN:9aefba912cb915fd2801999d38a7dd29*/

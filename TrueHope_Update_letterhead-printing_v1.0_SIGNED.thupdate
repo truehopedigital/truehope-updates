@@ -50,4 +50,5 @@ window.lhSave = function (test) {
   db.settings.lhTop = Math.max(0, Math.min(120, +val('lh_t') || 0)); db.settings.lhBot = Math.max(0, Math.min(80, +val('lh_b') || 0)); db.settings.lhAsk = val('lh_a') === '1'; save(true); toast('Saved');
   if (test) { $('#printArea').innerHTML = `<div class="pf">${printHead()}<h3 style="text-align:center">TEST PRINT</h3><p>This is a test page. On letterhead paper the text should start just below your printed header.</p>${'<p>Line of sample text for checking the page layout.</p>'.repeat(6)}<p style="text-align:center">— end —</p></div>`; setTimeout(() => window.print(), 100) }
 };
-/*TH-SIGN:5f21c161fef2e9b18135f7647ea0e44b*/
+/*TH-SIG2:EadOMrEvcZ9qv8qCrn7R2rFfnRfxsdVqSKGPyonir41i3HxKxWi6wAMbAgWpqGllsHyF8YvRY8CLoHQOlaaGRw==*/
+/*TH-SIGN:7fbc6ad7808c675e17bc098946b579d6*/

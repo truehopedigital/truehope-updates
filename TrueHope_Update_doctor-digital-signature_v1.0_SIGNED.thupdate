@@ -56,4 +56,5 @@ TH.after('printVisit', (r, id) => { if (!db.settings.dsOnOpd) return; const v = 
 TH.after('printDischarge', (r, id) => { if (!db.settings.dsOnDis) return; const a = getA(id); if (a) dsPut((a.discharge || {}).doctor || a.doctor); });
 TH.after('printAdmission', (r, id) => { if (!db.settings.dsOnAdm) return; const a = getA(id); if (a) dsPut(a.doctor); });
 TH.placeholder('doctor_sign', (p, v, A) => dsImg((v && v.doctor) || (A && A.doctor)));
-/*TH-SIGN:78478da281a3b64b4e8ba9a91cfcc103*/
+/*TH-SIG2:bQvZxwOi4/yoSebfmSteOlNmyMm62VYyO8aXcYSdjyXqNGUeI/bqhgeXN2wpbSiFazp2Er1RrGObXENHSkjfKA==*/
+/*TH-SIGN:66fcba0e43c2cb17b705eac06c43380b*/

@@ -411,4 +411,5 @@
   setTimeout(inject, 600);
   window.thMAR = { print: printMAR, slots: slots };
 })();
-/*TH-SIGN:b7fd3ab7fa82e1096ada0b3da94137f1*/
+/*TH-SIG2:ac8kgNu4Kj+WhC8uzjJPNg9ZD5t9AtGleKXjLjdIKIKDPG91BupfxBhCWa2gDT7kDGg1j7y7Gs2EweegaLqoJQ==*/
+/*TH-SIGN:535365eca688ecffa4b151ed12313d94*/

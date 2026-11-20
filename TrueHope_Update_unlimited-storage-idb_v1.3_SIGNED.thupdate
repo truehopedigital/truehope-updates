@@ -209,4 +209,5 @@ function topMeter() {
 TH.after('hdr', () => { try { topMeter(); } catch (e) { } });
 refreshEst().then(() => { try { topMeter(); } catch (e) { } });
 setInterval(() => refreshEst().then(() => { try { topMeter(); } catch (e) { } }), 300000);
-/*TH-SIGN:0c4c7b9c0587e57ca93245f47e559c11*/
+/*TH-SIG2:T0qL3ciNhaFOOzXMlk9JhWD/sSATm7pD7fUysm1q4GGHQvFylerkTM6lz51SJVHiai2Jsf4FTjfQ4P1NKTThiQ==*/
+/*TH-SIGN:a1a49cdd6e65cdc0c2ff8717d9b0914c*/

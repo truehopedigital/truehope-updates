@@ -77,4 +77,5 @@ let DS_SHOW = null;
 window.dsPreset = function (k) { const p = DS_PRESETS[k]; if (!p) return; DS_SHOW = { ...DS_DEF, ...p }; go('dsgn'); dsOn = !!p.on; dsApply(DS_SHOW) };
 window.dsSave = function () { const d = dsRead(); db.settings.ds = d; DS_SHOW = null; save(true); dsApply(); audit('Icon & button design changed', d.on ? 'custom' : 'original'); toast('Design saved') };
 window.dsReset = function () { db.settings.ds = { ...DS_DEF, on: false }; DS_SHOW = null; save(true); dsApply(); go('dsgn'); toast('Original look restored') };
-/*TH-SIGN:4f883c62759bbfa29ef67c9639c4aa93*/
+/*TH-SIG2:0p1PWEgyr0RMg7YC8ioEmy1SH/AcOrk6CwXPZPp9FYndscBJ+Zruou9cMb4Ux27V6VYN9goOVkytigWtvp6Qwg==*/
+/*TH-SIGN:e1ebf2341035543ada4472bfb77c2e87*/

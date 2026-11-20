@@ -104,4 +104,5 @@ window.autoBkCard = function () {
    ${s.bkOn ? `<button class="btn sec red" onclick="db.settings.bkOn=false;save(true);bkInd('Auto-backup OFF');go('backup')">Turn OFF</button>` : ''}</div>
   <p class="muted" style="font-size:12px;margin-bottom:0">Backup files are named like <b>TrueHope_AutoBackup_2026-11-18_10h.json</b>. If Chrome asks <b>"Download multiple files?"</b> — click <b>Allow</b>. To restore: Restore below → pick the latest backup file.</p></div>`;
 };
-/*TH-SIGN:56c764cc918de6430f6c16b22ccab2a0*/
+/*TH-SIG2:95fjaDICsXss7RjGfqEIdhw8oUCCwV3LQdwlfyhQBqHJU6D+HF9lmJwCGtJSGJR7N2FP0XFZUgqekYAsm0upXw==*/
+/*TH-SIGN:989e066f620fa66155dfe3d2e3f79f0a*/

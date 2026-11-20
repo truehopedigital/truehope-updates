@@ -15,4 +15,5 @@ TPLS.forEach(t => {
 if (added || upd) { save(true); setTimeout(() => toast('NABH consent pack: ' + added + ' forms added' + (upd ? ', ' + upd + ' updated' : '')), 800); }
 });
 TH.css(".t .mr{font-family:'Nirmala UI','Mangal','Arial Unicode MS',sans-serif}");
-/*TH-SIGN:daeb745ceaf355548cf2a4fb916a67a7*/
+/*TH-SIG2:utTg3bertv98X5lxu0E0P2zhtcwfBgybIX3Y6HFbymDmys5hf8De/woyet0eLeMCBlBdldXf2MVBzkVLZKtITA==*/
+/*TH-SIGN:498c86625b4c8aa1566a28a4169d791c*/

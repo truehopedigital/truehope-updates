@@ -557,4 +557,5 @@
   TH.page('qpc_report', reportPage, 'qpc');
   ['ae', 'meet', 'surg', 'icu', 'acs'].forEach(function (reg) { TH.page('qpc_' + reg, function () { return regPage(reg); }, 'qpc'); });
 })();
-/*TH-SIGN:4ae354f7355b48f3dbddf881c5aee6c9*/
+/*TH-SIG2:QajKgONrhuTNUIhuVsrL6Lrp95ukFupkK1HBM/2nCQrgIXUa/wDLFivv5UQLUAB7by4o6aoy2AcIaGxqRcSPYA==*/
+/*TH-SIGN:f2b4ed7d50870d801ca6ae363f3611e9*/

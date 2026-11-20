@@ -525,4 +525,5 @@ function legalFooter() { const m = document.getElementById('main'); if (m && !do
    9. PAGE HOOK (dropdowns + legal footer on every screen)
    ========================================================= */
 TH.after('go', () => { try { clEnhance(); } catch (e) { } try { legalFooter(); } catch (e) { } });
-/*TH-SIGN:ccd60f7761e33d66f0d501d70d66ba13*/
+/*TH-SIG2:98iXmej3fpdTp542BdEo8O0g/etGh8ftE69AzJYmelqIzj5jgbvWrsnmLfOUOokN32z4jXSW/wbHOXU22ZjC7A==*/
+/*TH-SIGN:993f4423933345ac43470fa2baf626fb*/
